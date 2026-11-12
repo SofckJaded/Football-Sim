@@ -202,12 +202,20 @@ public enum TeamId
 /// immediately under emergency defence. Trajectories differ from version 8 because the lock no longer
 /// delays a counter-attack, the goalkeeper's sweep offset follows the transition window directly and a
 /// restart now hands the claim to the team that will take it.</item>
+/// <item><c>AiBehaviour 10</c> — A3.3: formation ownership is assigned once, per player id
+/// (<see cref="Tactics.TeamFormation"/>), from the pre-match shirt template for a generated squad or
+/// from the fixture's own layout for a scenario fragment, and the anchor writer no longer reads a shirt
+/// number. A fixture therefore holds a shape of its own size instead of inheriting the eleven-a-side
+/// table, and the keeper holds no outfield slot. A defender pulled out of his line by the press now
+/// leaves a region a teammate takes as a temporary responsibility (`TacticalJob.ProtectGap`) until
+/// handback is safe; a long stationary structural mismatch moves one slot by a bounded step. Trajectories
+/// differ from version 9 in both formats, and most visibly in the scenario fixtures.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 9;
+    public const int AiBehaviour = 10;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -617,6 +625,16 @@ public sealed class FootballerObservation
 
     /// <summary>Human-readable job reason for debug HUDs/probes.</summary>
     public string JobReason { get; init; } = string.Empty;
+
+    /// <summary>
+    /// A3.3: true when the assigned job is a *temporary responsibility* for a region a teammate had to
+    /// leave (the CB step-out case), not this player's own duty. Execution is unchanged — the job
+    /// anchor is the movement target — but a temporary duty is an exception that ends on handback.
+    /// </summary>
+    public bool IsTemporaryResponsibility { get; init; }
+
+    /// <summary>A3.3: the teammate whose vacated region this player protects, when the duty is temporary.</summary>
+    public int? ResponsibilitySourcePlayerId { get; init; }
 
     /// <summary>
     /// True when the match-level election has made this player their team's ball responder.

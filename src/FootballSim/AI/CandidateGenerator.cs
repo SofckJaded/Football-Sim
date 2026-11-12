@@ -891,6 +891,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         TacticalJob.Overlap => 0.94f,
         TacticalJob.DefensiveCover => 0.90f,
         TacticalJob.CoverDefender => 0.99f,
+        TacticalJob.ProtectGap => 0.98f,
         TacticalJob.Marker => 0.97f,
         _ => 0.90f
     };

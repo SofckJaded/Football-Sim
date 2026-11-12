@@ -53,6 +53,8 @@ public sealed class TeamTacticalCoordinator
     private readonly PitchDimensions _pitch;
     private readonly TeamTacticalProfile _homeProfile;
     private readonly TeamTacticalProfile _awayProfile;
+    private readonly TeamFormation _homeFormation;
+    private readonly TeamFormation _awayFormation;
 
     private TeamId? _confirmedPossessingTeam = TeamId.Home;
     private TeamId? _claimTeam = TeamId.Home;
@@ -73,10 +75,40 @@ public sealed class TeamTacticalCoordinator
         _pitch = pitch;
         _homeProfile = homeProfile ?? new TeamTacticalProfile();
         _awayProfile = awayProfile ?? new TeamTacticalProfile();
+        _homeFormation = new TeamFormation(TeamId.Home, pitch);
+        _awayFormation = new TeamFormation(TeamId.Away, pitch);
         RebuildContexts(homeAttackDirX: 1f, ballX: 0f);
     }
 
     public TeamId? ConfirmedPossessingTeam => _confirmedPossessingTeam;
+
+    /// <summary>Home team's owned nominal formation (A3.3).</summary>
+    public TeamFormation HomeFormation => _homeFormation;
+
+    /// <summary>Away team's owned nominal formation (A3.3).</summary>
+    public TeamFormation AwayFormation => _awayFormation;
+
+    /// <summary>Either team's nominal formation, by team.</summary>
+    public TeamFormation FormationFor(TeamId team) => team == TeamId.Home ? _homeFormation : _awayFormation;
+
+    /// <summary>
+    /// Owns each player's place in the team's formation (A3.3). Called once, after the squad or the
+    /// fixture has been created: a generated squad uses the pre-match shirt template, a scenario
+    /// fragment its own layout. Nothing else assigns nominal ownership, and nothing re-derives it per
+    /// tick — that is the whole point of the ownership model.
+    /// </summary>
+    public void AssignFormations(IReadOnlyList<FootballerState> players, int teamSize, bool fromPositions, float homeAttackDirX)
+    {
+        if (fromPositions)
+        {
+            _homeFormation.AssignFromPositions(players, homeAttackDirX);
+            _awayFormation.AssignFromPositions(players, -homeAttackDirX);
+            return;
+        }
+
+        _homeFormation.AssignFromShirts(players, teamSize);
+        _awayFormation.AssignFromShirts(players, teamSize);
+    }
 
     /// <summary>Home team's resolved tactical context for the current tick (A3.1).</summary>
     public TeamContext HomeContext { get; private set; }
@@ -192,16 +224,16 @@ public sealed class TeamTacticalCoordinator
     }
 
     /// <summary>
-    /// Writes every active player's formation anchor from his team's context. The anchors are the
-    /// structural fallback and the constraint the job coordinator works around, not a second world
-    /// model; the context reads above own every decision that used to be folded into the old state enum.
+    /// Writes every active player's formation anchor from his team's context and the slot he owns
+    /// (A3.3). The anchors are the structural fallback and the constraint the job coordinator works
+    /// around, not a second world model; the context reads above own every decision that used to be
+    /// folded into the old state enum.
     /// </summary>
     public void UpdateTeamAnchors(
         IReadOnlyList<FootballerState> players,
         BallState ball,
         float homeAttackDirX,
-        float dt,
-        int teamSize)
+        float dt)
     {
         _elapsedTime += dt;
 
@@ -211,10 +243,38 @@ public sealed class TeamTacticalCoordinator
 
             TeamTacticalProfile profile = p.Team == TeamId.Home ? _homeProfile : _awayProfile;
             TeamContext context = p.Team == TeamId.Home ? HomeContext : AwayContext;
+            TeamFormation formation = p.Team == TeamId.Home ? _homeFormation : _awayFormation;
             float attackDirX = p.Team == TeamId.Home ? homeAttackDirX : -homeAttackDirX;
 
-            p.TacticalAnchor = ComputePlayerAnchor(p, teamSize, ball, profile, context, attackDirX);
+            // The keeper is not part of the outfield formation (A3.3): his position is his own line,
+            // and he holds no slot that a teammate could inherit or protect.
+            if (p.Role == TacticalRole.Goalkeeper)
+            {
+                p.TacticalAnchor = ComputeGoalkeeperAnchor(ball, profile, context, attackDirX);
+                continue;
+            }
+
+            NominalSlot slot = SlotFor(p, formation, attackDirX);
+            p.TacticalAnchor = ComputePlayerAnchor(p, slot, ball, profile, context, attackDirX);
         }
+    }
+
+    /// <summary>
+    /// The slot this player owns, or a first assignment derived from where he stands. A coordinator
+    /// built without <see cref="AssignFormations"/> (a probe, a bare unit test) still needs a place:
+    /// it is derived once and held, exactly as a fixture's layout would be.
+    /// </summary>
+    private NominalSlot SlotFor(FootballerState player, TeamFormation formation, float attackDirX)
+    {
+        if (formation.TryGet(player.Id, out NominalSlot slot)) return slot;
+
+        float progress = player.Position.X * attackDirX;
+        slot = new NominalSlot(
+            player.Role,
+            Math.Clamp(progress / (_pitch.HalfLength * TeamFormation.NormXToWorldScale), -1f, 1f),
+            Math.Clamp(player.Position.Z / _pitch.HalfWidth, -1f, 1f));
+        formation.Assign(player.Id, slot);
+        return slot;
     }
 
     /// <summary>
@@ -343,7 +403,7 @@ public sealed class TeamTacticalCoordinator
 
     private Vector3 ComputePlayerAnchor(
         FootballerState player,
-        int teamSize,
+        in NominalSlot slot,
         BallState ball,
         TeamTacticalProfile profile,
         in TeamContext context,
@@ -351,19 +411,8 @@ public sealed class TeamTacticalCoordinator
     {
         bool attacking = context.Phase == TeamPhase.Attacking;
 
-        if (player.Role == TacticalRole.Goalkeeper)
-        {
-            float gkBaseX = -attackDirX * (_pitch.HalfLength - 2.5f);
-            // A keeper steps up with the side he is playing behind, but not during a counter-attack:
-            // the ball is about to go the other way and the goal is the thing to protect.
-            float sweepOffset = attacking && context.Transition != TransitionMode.CounterAttack
-                ? attackDirX * (4.5f * profile.DefensiveLineHeight01)
-                : 0f;
-            float gkZ = Math.Clamp(ball.Position.Z * 0.14f, -3.1f, 3.1f);
-            return new Vector3(gkBaseX + sweepOffset, 0f, gkZ);
-        }
-
-        (float baseNormX, float baseNormZ) = GetBaseFormationSlot(player.ShirtNumber, teamSize);
+        float baseNormX = slot.NormX;
+        float baseNormZ = slot.NormZ;
 
         float ballNormX = Math.Clamp((ball.Position.X * attackDirX) / _pitch.HalfLength, -1f, 1f);
         float lineShift = (profile.DefensiveLineHeight01 - 0.5f) * 18.0f;
@@ -373,7 +422,7 @@ public sealed class TeamTacticalCoordinator
         float roleAttackPush = 0f;
         if (attacking)
         {
-            roleAttackPush = player.Role switch
+            roleAttackPush = slot.Role switch
             {
                 TacticalRole.Striker => 10.0f + 5.0f * MathF.Sin(_elapsedTime * 1.4f + player.Id),
                 TacticalRole.Winger => 9.0f + 4.5f * MathF.Cos(_elapsedTime * 1.3f + player.Id),
@@ -384,7 +433,7 @@ public sealed class TeamTacticalCoordinator
         }
 
         float worldX = attackDirX * (
-            baseNormX * (_pitch.HalfLength * 0.78f) * longitudinalCompression +
+            baseNormX * (_pitch.HalfLength * TeamFormation.NormXToWorldScale) * longitudinalCompression +
             ballNormX * 11.5f +
             lineShift +
             (attacking ? roleAttackPush * 0.65f : -4.0f));
@@ -406,6 +455,31 @@ public sealed class TeamTacticalCoordinator
         return new Vector3(worldX, 0f, worldZ);
     }
 
+    /// <summary>
+    /// The keeper's own line. He steps up with the side he plays behind, but never during a
+    /// counter-attack: the ball is about to go the other way and the goal is the thing to protect.
+    /// </summary>
+    private Vector3 ComputeGoalkeeperAnchor(
+        BallState ball,
+        TeamTacticalProfile profile,
+        in TeamContext context,
+        float attackDirX)
+    {
+        float gkBaseX = -attackDirX * (_pitch.HalfLength - 2.5f);
+        float sweepOffset = context.Phase == TeamPhase.Attacking &&
+                            context.Transition != TransitionMode.CounterAttack
+            ? attackDirX * (4.5f * profile.DefensiveLineHeight01)
+            : 0f;
+        float gkZ = Math.Clamp(ball.Position.Z * 0.14f, -3.1f, 3.1f);
+        return new Vector3(gkBaseX + sweepOffset, 0f, gkZ);
+    }
+
+    /// <summary>
+    /// The pre-match template: which role and normalized slot a shirt number starts with, for a
+    /// generated squad. This is read **once**, at setup (<see cref="TeamFormation.AssignFromShirts"/>,
+    /// and kickoff placement), and never in a per-tick path: after ownership is assigned, a player's
+    /// place in the formation comes from his slot, not from his shirt (A3.3).
+    /// </summary>
     public static (TacticalRole Role, float NormX, float NormZ) GetFormationRoleAndSlot(int shirtNumber, int teamSize)
     {
         if (shirtNumber == 1) return (TacticalRole.Goalkeeper, -0.95f, 0.0f);
@@ -435,11 +509,5 @@ public sealed class TeamTacticalCoordinator
             11 => (TacticalRole.Winger, 0.38f, -0.75f),
             _ => (TacticalRole.CentralMidfielder, 0.0f, 0.0f)
         };
-    }
-
-    private static (float NormX, float NormZ) GetBaseFormationSlot(int shirtNumber, int teamSize)
-    {
-        var (_, nx, nz) = GetFormationRoleAndSlot(shirtNumber, teamSize);
-        return (nx, nz);
     }
 }

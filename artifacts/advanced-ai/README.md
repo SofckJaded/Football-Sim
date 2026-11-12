@@ -472,6 +472,68 @@ context resolution is free.
 
 ---
 
+## 2026-11-12 — A3.3 formation ownership and temporary responsibility (simulation version `ai10-rs1`)
+
+- **Ownership replaced the shirt table.** `TeamFormation` assigns one `NominalSlot` per player id, once:
+  the pre-match template for a generated squad, the fixture's own layout for a scenario. The anchor
+  writer reads the slot, so a role can no longer be derived from a number, and an unbalanced fixture
+  holds a shape of its own size.
+- **A vacated line is protected.** A line player pulled out of his line by the press leaves the slot he
+  owns; the nearest eligible line player takes it as a temporary responsibility (`ProtectGap`) and hands
+  it back when the line is whole again (or the press ends, the ball leaves, the hold expires, the passage
+  turns over, or either player leaves the pitch).
+- **The `cb-step-out` fixture was tightened** so the centre-back really is the elected presser (the
+  defensive midfielder was moved to the far side of the ball). The protection appears at tick ≈151,
+  targets #102's slot and is handed back at ≈343.
+
+### 11v11 headless match — `a3-formation-ownership-11v11-2026-11-12.txt`
+
+| Metric | ai9-rs1 | ai10-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 33 456 ms | 31 428 ms |
+| Ticks | 326 430 | 326 326 |
+| Score | 9 – 7 | **8 – 4** |
+| Possession | 50.4 / 49.6 | 49.0 / 51.0 |
+| Controlled ball | 49.0 / 51.0 | 47.6 / 52.4 |
+| Passes | 859 / 832 (74 % / 76 %) | 839 / 867 (73 % / 75 %) |
+| Shots | 72 / 60 | 73 / 53 |
+| Width | 43.6 / 40.6 m | 43.1 / 40.8 m |
+| Kicks executed | 1849 / 2115 | 1862 / 2092 |
+
+**Reading:** the conceded total fell from 7 to 4 and the away side took 7 fewer shots, which is the
+direction the gap protection is supposed to move a match in. The magnitude is a match-level
+observation; A3.4–A3.6 rebuild the rest of the structure and A9.2's ablations are where this gets
+attributed to a mechanism.
+
+### Tactical differentiation gate — `a3-formation-ownership-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **3.34 m** — the largest since A1 and the first 5/5 since `ai8`. **GATE: PASS.**
+
+### Performance — `a3-formation-ownership-perf-2026-11-12.txt`
+
+| Metric | ai9-rs1 | ai10-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 124.1 µs | 118.9 µs |
+| p50 / p95 | 90.8 / 347.2 µs | 92.5 / 308.4 µs |
+| p99 / max | 469.5 / 1345.9 µs | 428.9 / 833.0 µs |
+| Allocated per tick | 61 268 B | 62 262 B |
+
+The mechanism allocates nothing per tick: slots are a dictionary of structs written at setup, the
+responsibility is a struct, and both the vacancy search and the mismatch review reuse the lists the
+assignment pass already made. The ≈1 KB/tick rise is the trajectory, as before.
+
+### One gate changed sign on the way, and was traced rather than re-stated
+
+The first version measured "out of his line" from the *slot*, which in a real match sits behind the
+defending shape (the shape carries the line height and ball terms). That made every defending centre-back
+a vacancy, the possession side's protection duties pulled it narrower, and
+`Phase6_PossessionTeam_ExhibitsWiderShape_ThanDirectCounterTeam` failed at 90 s (40.2 m vs 41.6 m).
+Measuring the line from the shape anchor and protecting the slot removed the false vacancies; the same
+90-second test now passes and the multi-seed gate is 5/5 at 3.34 m.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

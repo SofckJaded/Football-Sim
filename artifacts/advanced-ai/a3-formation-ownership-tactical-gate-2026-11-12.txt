@@ -1,0 +1,8 @@
+=== Phase 6 & 9 Multi-Seed Tactical Differentiation Batch (Possession vs Direct Counter) ===
+Seed 5001: FT clock 240s | Score 0-0 | Passes 35 vs 42 (completed 27 vs 31) | Shots 4 vs 2 | Width 44.0m vs 39.7m (wider) | Possession 52.2% | Played=yes
+Seed 5002: FT clock 240s | Score 0-0 | Passes 33 vs 33 (completed 23 vs 27) | Shots 6 vs 6 | Width 44.1m vs 41.1m (wider) | Possession 52.2% | Played=yes
+Seed 5003: FT clock 240s | Score 1-1 | Passes 37 vs 37 (completed 28 vs 29) | Shots 8 vs 7 | Width 43.1m vs 40.2m (wider) | Possession 49.3% | Played=yes
+Seed 5004: FT clock 240s | Score 0-0 | Passes 42 vs 38 (completed 34 vs 28) | Shots 9 vs 0 | Width 43.9m vs 40.5m (wider) | Possession 52.5% | Played=yes
+Seed 5005: FT clock 240s | Score 1-0 | Passes 47 vs 28 (completed 30 vs 19) | Shots 2 vs 4 | Width 44.2m vs 41.0m (wider) | Possession 54.0% | Played=yes
+Width separation : mean 3.34 m, wider on 5/5 seeds (gate: majority and mean > 0.5 m)
+GATE: PASS

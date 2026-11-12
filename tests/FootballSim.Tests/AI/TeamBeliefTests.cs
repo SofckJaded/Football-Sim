@@ -97,7 +97,10 @@ public sealed class TeamBeliefTests
                 players, ball, BallPossessionSnapshot.Loose, possessingTeam: TeamId.Home,
                 homeResponderId: null, awayResponderId: null, homeDirX: 1f, tick: 2,
                 TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
-                belief, new TeamBelief(TeamId.Away));
+                belief, new TeamBelief(TeamId.Away),
+                // No ownership in this leak test: the gap mechanism is A3.3's subject, not this one.
+                new TeamFormation(TeamId.Home, new PitchDimensions()),
+                new TeamFormation(TeamId.Away, new PitchDimensions()));
 
             return (new Dictionary<int, TeamJobAssignment>(jobs.Assignments), TeamBelief.FromTruth(TeamId.Home, players));
         }

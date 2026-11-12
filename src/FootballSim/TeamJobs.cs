@@ -35,6 +35,12 @@ public enum TacticalJob
     Presser,
     /// <summary>Out of possession: cover behind the presser.</summary>
     CoverDefender,
+    /// <summary>
+    /// Out of possession: temporarily protect the region a line player vacated when he stepped out
+    /// (A3.3). This is a *temporary responsibility*, not the owner's own duty: he holds it until
+    /// handback is safe and then returns to his own job.
+    /// </summary>
+    ProtectGap,
     /// <summary>Out of possession: mark a dangerous attacker goal-side.</summary>
     Marker,
     /// <summary>Out of possession: hold the defensive line.</summary>
@@ -46,6 +52,31 @@ public readonly record struct TeamJobAssignment(
     TacticalJob Job,
     Vector3 Anchor,
     int? TargetPlayerId,
+    string Reason)
+{
+    /// <summary>
+    /// A3.3: the teammate whose vacated region this job protects, when the job is a temporary
+    /// responsibility. Null for the player's own duty.
+    /// </summary>
+    public int? SourcePlayerId { get; init; }
+
+    /// <summary>A3.3: true when the job is an exception layered on another player's region.</summary>
+    public bool IsTemporary { get; init; }
+}
+
+/// <summary>
+/// A3.3: a region held on behalf of a teammate who had to leave it. The owner keeps it until handback
+/// is safe — the source is back in the region, the press that pulled him out has ended, the ball has
+/// left the area, the owner or source left the pitch, or the hold expires. A3.5 generalises this into
+/// coverage requests with bids and cascades; this is the single bounded instance the CB step-out gate
+/// needs, and it is deliberately one per team so it cannot reshuffle the side.
+/// </summary>
+public readonly record struct TemporaryResponsibility(
+    TeamId Team,
+    int OwnerPlayerId,
+    int SourcePlayerId,
+    Vector3 Region,
+    int AcquiredTick,
     string Reason);
 
 /// <summary>
@@ -58,9 +89,31 @@ public sealed class TeamJobCoordinator
     private const int RecomputeIntervalTicks = 6;
     private const int MinimumHoldTicks = 42;
 
+    /// <summary>A temporary responsibility never outlives this window, whatever else happens (A3.3).</summary>
+    private const int MaxResponsibilityHoldTicks = 720;
+
+    /// <summary>
+    /// How far out of the line a pressing defender must be before his slot counts as vacated, measured
+    /// from the shape anchor he was given (metres). Below this the press has not really left a hole.
+    /// </summary>
+    private const float VacateDistanceMeters = 7f;
+
+    /// <summary>The source is back in the region once he is this close to it, in metres.</summary>
+    private const float HandbackDistanceMeters = 6f;
+
+    /// <summary>A gap further than this from the ball is not in play and is not worth covering.</summary>
+    private const float MaxVacancyDistanceMeters = 32f;
+
+    /// <summary>The slot must be at least this far goal-side of the ball to be a gap, in metres.</summary>
+    private const float SlotGoalSideMarginMeters = 4f;
+
+    /// <summary>Largest distance a line player may travel to take a protection job.</summary>
+    private const float MaxProtectorTravelMeters = 20f;
+
     private readonly PitchDimensions _pitch;
     private readonly Dictionary<int, TeamJobAssignment> _assignments = new();
     private readonly Dictionary<int, int> _assignedAtTick = new();
+    private readonly Dictionary<TeamId, TemporaryResponsibility> _responsibilities = new();
     private TeamId? _lastPossessionTeam;
     private int _lastRecomputeTick = -RecomputeIntervalTicks;
 
@@ -70,6 +123,16 @@ public sealed class TeamJobCoordinator
     }
 
     public IReadOnlyDictionary<int, TeamJobAssignment> Assignments => _assignments;
+
+    /// <summary>The temporary responsibility <paramref name="team"/> is currently holding, if any (A3.3).</summary>
+    public TemporaryResponsibility? ResponsibilityOf(TeamId team) =>
+        _responsibilities.TryGetValue(team, out TemporaryResponsibility responsibility) ? responsibility : null;
+
+    /// <summary>Lifetime count of temporary responsibilities created. Diagnostics and tests.</summary>
+    public int ResponsibilityAssignments { get; private set; }
+
+    /// <summary>Lifetime count of temporary responsibilities released. Diagnostics and tests.</summary>
+    public int ResponsibilityHandbacks { get; private set; }
 
     public TeamJobAssignment? Get(int playerId) =>
         _assignments.TryGetValue(playerId, out TeamJobAssignment assignment) ? assignment : null;
@@ -93,7 +156,9 @@ public sealed class TeamJobCoordinator
         TeamTacticalProfile homeProfile,
         TeamTacticalProfile awayProfile,
         TeamBelief homeOpponents,
-        TeamBelief awayOpponents)
+        TeamBelief awayOpponents,
+        TeamFormation homeFormation,
+        TeamFormation awayFormation)
     {
         bool urgent = possessingTeam != _lastPossessionTeam;
         if (!urgent && tick - _lastRecomputeTick < RecomputeIntervalTicks)
@@ -106,10 +171,19 @@ public sealed class TeamJobCoordinator
         {
             _assignments.Clear();
             _assignedAtTick.Clear();
+            // A turnover invalidates every temporary responsibility: the region it protected belonged
+            // to the passage that just ended (A3.3, A3 exit gate "turnovers void duties").
+            if (_responsibilities.Count > 0)
+            {
+                ResponsibilityHandbacks += _responsibilities.Count;
+                _responsibilities.Clear();
+            }
         }
 
-        AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick, homeProfile, homeOpponents);
-        AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick, awayProfile, awayOpponents);
+        AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick,
+            homeProfile, homeOpponents, homeFormation);
+        AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick,
+            awayProfile, awayOpponents, awayFormation);
     }
 
     private void AssignTeam(
@@ -122,7 +196,8 @@ public sealed class TeamJobCoordinator
         float attackDirX,
         int tick,
         TeamTacticalProfile profile,
-        TeamBelief opponents)
+        TeamBelief opponents,
+        TeamFormation formation)
     {
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
         // Width jobs must respect the team profile: a possession side stretches the pitch, a direct
@@ -157,6 +232,14 @@ public sealed class TeamJobCoordinator
                 _assignments.Remove(id);
                 _assignedAtTick.Remove(id);
             }
+        }
+
+        // A responsibility whose owner or source is no longer on the pitch cannot be held.
+        if (_responsibilities.TryGetValue(team, out TemporaryResponsibility held) &&
+            (Find(players, held.OwnerPlayerId) is not { IsActiveOnPitch: true } ||
+             Find(players, held.SourcePlayerId) is not { IsActiveOnPitch: true }))
+        {
+            ReleaseResponsibility(team);
         }
 
         var counts = new Dictionary<TacticalJob, int>();
@@ -215,6 +298,13 @@ public sealed class TeamJobCoordinator
             taken.Add(responder.Id);
             available.RemoveAll(p => p.Id == responder.Id);
         }
+
+        // A3.3: if the press has pulled a line player out of his line, a teammate takes a temporary
+        // responsibility for the slot he left and holds it until handback is safe. This runs before the
+        // normal jobs so the responsibility can claim a player the incumbent pass kept on the line: the
+        // line has to slide, and that is the point of the mechanism.
+        MaintainResponsibility(team, players, formation, ballXZ, attackDirX, tick, inPossession,
+            responderId, taken, available);
 
         float offsideLineProj = ComputeOffsideLineProj(opponents, ball, attackDirX);
         float referenceProj = referenceXZ.X * attackDirX;
@@ -312,6 +402,195 @@ public sealed class TeamJobCoordinator
         {
             Assign(player, TacticalJob.Shape, AnchorOf(player), null, "Team shape", tick);
         }
+
+        // A3.3: slow structural reassignment. Only a player whose duty *is* his own nominal shape can
+        // be mismatched: a contextual job is a duty elsewhere, not an ownership error. The review is
+        // per-player, bounded and triggered by a long stationary displacement, never by a tick's drift.
+        foreach (FootballerState player in players)
+        {
+            if (player.Team != team || !player.IsActiveOnPitch) continue;
+            if (!_assignments.TryGetValue(player.Id, out TeamJobAssignment duty)) continue;
+
+            bool onOwnDuty = !duty.IsTemporary &&
+                             duty.Job is TacticalJob.Shape or TacticalJob.DefensiveLine;
+            formation.ReviewMismatch(player, attackDirX, tick, onOwnDuty);
+        }
+    }
+
+    /// <summary>
+    /// A3.3: creates, keeps or hands back the team's temporary responsibility.
+    ///
+    /// A line player pulled more than <see cref="VacateDistanceMeters"/> out of the shape he was given,
+    /// by the press job, leaves a gap behind him: the slot he owns, provided that slot is goal-side of
+    /// the ball and inside play range. One teammate — a line player who can slide across, chosen
+    /// deterministically — owns that region until handback is safe. Keeping the incumbent owner while
+    /// the gap is still vacated is what makes the hold stable; releasing on handback is what returns
+    /// him to his own duty.
+    /// </summary>
+    private void MaintainResponsibility(
+        TeamId team,
+        IReadOnlyList<FootballerState> players,
+        TeamFormation formation,
+        Vector2 ballXZ,
+        float attackDirX,
+        int tick,
+        bool inPossession,
+        int? responderId,
+        HashSet<int> taken,
+        List<FootballerState> available)
+    {
+        bool held = _responsibilities.TryGetValue(team, out TemporaryResponsibility responsibility);
+
+        if (inPossession)
+        {
+            // We have the ball again: nothing about the old passage's gap is a duty any more.
+            if (held) ReleaseResponsibility(team);
+            return;
+        }
+
+        if (held)
+        {
+            FootballerState? source = Find(players, responsibility.SourcePlayerId);
+            FootballerState? owner = Find(players, responsibility.OwnerPlayerId);
+            bool stillVacated = source is { IsActiveOnPitch: true } &&
+                                owner is { IsActiveOnPitch: true } &&
+                                PressesStill(source.Id) &&
+                                tick - responsibility.AcquiredTick <= MaxResponsibilityHoldTicks &&
+                                PlanarDistance(new Vector2(source.Position.X, source.Position.Z),
+                                    AnchorXZ(source)) > HandbackDistanceMeters &&
+                                Vector2.Distance(ballXZ, new Vector2(responsibility.Region.X, responsibility.Region.Z)) <=
+                                MaxVacancyDistanceMeters;
+
+            if (stillVacated)
+            {
+                // Sticky: the same owner keeps the same region while it is still vacated. The gap is the
+                // slot he owns, and a slot does not move, so nothing jitters while he is away.
+                Assign(owner!, TacticalJob.ProtectGap, responsibility.Region, null, responsibility.Reason, tick,
+                    sourcePlayerId: responsibility.SourcePlayerId, temporary: true);
+                taken.Add(owner!.Id);
+                available.RemoveAll(p => p.Id == owner.Id);
+                return;
+            }
+
+            ReleaseResponsibility(team);
+        }
+
+        Vacancy? vacancy = FindVacancy(team, players, formation, ballXZ, attackDirX);
+        if (vacancy is not Vacancy gap) return;
+
+        FootballerState? protector = ChooseProtector(team, players, formation, gap, attackDirX, responderId);
+        if (protector is null) return;
+
+        string reason = $"Protect #{gap.SourcePlayerId}'s vacated gap";
+        var assigned = new TemporaryResponsibility(team, protector.Id, gap.SourcePlayerId, gap.Region, tick, reason);
+        _responsibilities[team] = assigned;
+        ResponsibilityAssignments++;
+
+        Assign(protector, TacticalJob.ProtectGap, gap.Region, null, reason, tick,
+            sourcePlayerId: gap.SourcePlayerId, temporary: true);
+        taken.Add(protector.Id);
+        available.RemoveAll(p => p.Id == protector.Id);
+    }
+
+    private bool PressesStill(int playerId) =>
+        _assignments.TryGetValue(playerId, out TeamJobAssignment assignment) &&
+        assignment.Job == TacticalJob.Presser;
+
+    /// <summary>
+    /// The most consequential vacated gap: the nearest one to the ball, ties by player id.
+    ///
+    /// The two references are deliberately different. *Is he out of the line* is measured against the
+    /// shape anchor he was given, because that anchor already carries the line height and the ball
+    /// terms the side is playing with — a high line is not a vacancy. *What must be protected* is the
+    /// slot he owns, because that is the region of the formation that is now empty and it does not move
+    /// while the ball does.
+    /// </summary>
+    private Vacancy? FindVacancy(
+        TeamId team,
+        IReadOnlyList<FootballerState> players,
+        TeamFormation formation,
+        Vector2 ballXZ,
+        float attackDirX)
+    {
+        Vacancy? best = null;
+        float bestSlotToBall = float.MaxValue;
+
+        foreach (FootballerState player in players)
+        {
+            if (player.Team != team || !player.IsActiveOnPitch) continue;
+            if (player.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder))
+                continue;
+            if (!PressesStill(player.Id)) continue;
+            if (!formation.TryGetWorldAnchor(player.Id, attackDirX, out Vector3 region)) continue;
+
+            float slotToBall = Vector2.Distance(ballXZ, new Vector2(region.X, region.Z));
+            if (slotToBall > MaxVacancyDistanceMeters) continue;
+
+            // The slot must be goal-side of the ball, or there is no gap behind the press to cover.
+            if (region.X * attackDirX >= ballXZ.X * attackDirX - SlotGoalSideMarginMeters) continue;
+
+            float displaced = PlanarDistance(new Vector2(player.Position.X, player.Position.Z), AnchorXZ(player));
+            if (displaced < VacateDistanceMeters) continue;
+
+            if (slotToBall >= bestSlotToBall) continue;
+            bestSlotToBall = slotToBall;
+            best = new Vacancy(player.Id, region);
+        }
+
+        return best;
+    }
+
+    /// <summary>The nearest eligible line player who can slide into the gap, deterministically.</summary>
+    private FootballerState? ChooseProtector(
+        TeamId team,
+        IReadOnlyList<FootballerState> players,
+        TeamFormation formation,
+        Vacancy gap,
+        float attackDirX,
+        int? responderId)
+    {
+        Vector2 regionXZ = new(gap.Region.X, gap.Region.Z);
+        FootballerState? best = null;
+        float bestScore = float.MinValue;
+
+        foreach (FootballerState player in players)
+        {
+            if (player.Team != team || !player.IsActiveOnPitch) continue;
+            if (player.Id == gap.SourcePlayerId || player.Id == responderId) continue;
+            if (player.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder))
+                continue;
+            if (_assignments.TryGetValue(player.Id, out TeamJobAssignment duty) &&
+                duty.Job is TacticalJob.Marker or TacticalJob.BallResponder or TacticalJob.ProtectGap)
+                continue;
+
+            Vector2 playerXZ = new(player.Position.X, player.Position.Z);
+            float travel = Vector2.Distance(playerXZ, regionXZ);
+            if (travel > MaxProtectorTravelMeters) continue;
+
+            float score = RoleFit(TacticalJob.ProtectGap, player.Role) * 1.25f +
+                          (1f - travel / MaxProtectorTravelMeters) * 0.8f;
+
+            // Prefer the man whose own slot is nearest: he slides along the line rather than
+            // abandoning the far side of it.
+            if (formation.TryGetWorldAnchor(player.Id, attackDirX, out Vector3 ownSlot))
+            {
+                score += Math.Clamp(
+                    1f - Vector2.Distance(new Vector2(ownSlot.X, ownSlot.Z), regionXZ) / 25f, 0f, 1f) * 0.5f;
+            }
+
+            if (score > bestScore || (MathF.Abs(score - bestScore) < 1e-4f && best is not null && player.Id < best.Id))
+            {
+                bestScore = score;
+                best = player;
+            }
+        }
+
+        return best;
+    }
+
+    private void ReleaseResponsibility(TeamId team)
+    {
+        if (_responsibilities.Remove(team)) ResponsibilityHandbacks++;
     }
 
     private void AssignMarkers(
@@ -443,9 +722,21 @@ public sealed class TeamJobCoordinator
         counts[job] = counts.GetValueOrDefault(job) + 1;
     }
 
-    private void Assign(FootballerState player, TacticalJob job, Vector3 anchor, int? targetPlayerId, string reason, int tick)
+    private void Assign(
+        FootballerState player,
+        TacticalJob job,
+        Vector3 anchor,
+        int? targetPlayerId,
+        string reason,
+        int tick,
+        int? sourcePlayerId = null,
+        bool temporary = false)
     {
-        _assignments[player.Id] = new TeamJobAssignment(job, anchor, targetPlayerId, reason);
+        _assignments[player.Id] = new TeamJobAssignment(job, anchor, targetPlayerId, reason)
+        {
+            SourcePlayerId = sourcePlayerId,
+            IsTemporary = temporary
+        };
         _assignedAtTick[player.Id] = tick;
     }
 
@@ -471,11 +762,17 @@ public sealed class TeamJobCoordinator
         TacticalJob.DefensiveCover => 20f,
         TacticalJob.CoverDefender => 18f,
         TacticalJob.Marker => 18f,
+        TacticalJob.ProtectGap => MaxProtectorTravelMeters,
         _ => 30f
     };
 
+    /// <summary>
+    /// Jobs that follow the ball and must never be kept by incumbency: the responder jobs, and a
+    /// temporary responsibility, whose life is owned by <see cref="MaintainResponsibility"/> and must
+    /// end with the handback rather than outlive it (A3.3).
+    /// </summary>
     private static bool IsResponderJob(TacticalJob job) =>
-        job is TacticalJob.BallResponder or TacticalJob.Presser;
+        job is TacticalJob.BallResponder or TacticalJob.Presser or TacticalJob.ProtectGap;
 
     private static bool JobMatchesPhase(TacticalJob job, bool inPossession) =>
         inPossession
@@ -483,7 +780,7 @@ public sealed class TeamJobCoordinator
                 or TacticalJob.FarSideWidth or TacticalJob.DepthRun or TacticalJob.Overlap
                 or TacticalJob.DefensiveCover or TacticalJob.Shape
             : job is TacticalJob.Presser or TacticalJob.CoverDefender or TacticalJob.Marker
-                or TacticalJob.DefensiveLine or TacticalJob.Shape;
+                or TacticalJob.DefensiveLine or TacticalJob.ProtectGap or TacticalJob.Shape;
 
     private static float RoleFit(TacticalJob job, TacticalRole role) => job switch
     {
@@ -505,6 +802,9 @@ public sealed class TeamJobCoordinator
             : role is TacticalRole.Winger ? 0.7f : 0.2f,
         TacticalJob.CoverDefender => role is TacticalRole.CenterBack or TacticalRole.DefensiveMidfielder ? 1.0f
             : role is TacticalRole.FullBack ? 0.6f : 0.2f,
+        TacticalJob.ProtectGap => role is TacticalRole.CenterBack ? 1.0f
+            : role is TacticalRole.DefensiveMidfielder ? 0.9f
+            : role is TacticalRole.FullBack ? 0.75f : 0.2f,
         TacticalJob.Marker => role is TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder ? 1.0f : 0.4f,
         TacticalJob.DefensiveLine => role is TacticalRole.CenterBack or TacticalRole.FullBack ? 1.0f : 0.3f,
         _ => 0.3f
@@ -519,6 +819,7 @@ public sealed class TeamJobCoordinator
         TacticalJob.Overlap => "Overlap the wide carrier",
         TacticalJob.DefensiveCover => "Cover behind the ball",
         TacticalJob.CoverDefender => "Cover behind the presser",
+        TacticalJob.ProtectGap => "Protect a vacated gap",
         TacticalJob.Presser => "Press the ball",
         TacticalJob.BallResponder => "Collect the pass",
         TacticalJob.Marker => "Mark an attacker",
@@ -542,6 +843,20 @@ public sealed class TeamJobCoordinator
 
     private static Vector3 AnchorOf(FootballerState player) =>
         player.TacticalAnchor == Vector3.Zero ? player.Position : player.TacticalAnchor;
+
+    /// <summary>A part of the shape a teammate had to leave, and the world region that stands in for it.</summary>
+    private readonly record struct Vacancy(int SourcePlayerId, Vector3 Region);
+
+    /// <summary>The point the shape wants this player at, for "is he out of the line" tests.</summary>
+    private static Vector2 AnchorXZ(FootballerState player) =>
+        new(player.TacticalAnchor.X, player.TacticalAnchor.Z);
+
+    private static float PlanarDistance(Vector2 a, Vector2 b)
+    {
+        float dx = a.X - b.X;
+        float dy = a.Y - b.Y;
+        return MathF.Sqrt(dx * dx + dy * dy);
+    }
 
     private Vector2 Onside(Vector2 target, float maxProj, float attackDirX)
     {

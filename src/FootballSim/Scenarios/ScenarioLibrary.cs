@@ -114,7 +114,12 @@ public static class ScenarioLibrary
     public const int StepOutHomeCb = 102;
     public const int StepOutAwayCarrier = 201;
 
-    /// <summary>The away carrier is allowed to receive between the lines; a centre-back must leave the back four.</summary>
+    /// <summary>
+    /// The away carrier receives between the lines and the *centre-back* has to step out to him: the
+    /// defensive midfielder is deliberately on the far side of the ball so he is not the natural
+    /// presser. That leaves the back line with a vacated region behind the stepping defender — the
+    /// gap A3.3's temporary responsibility has to cover, and hand back when he returns.
+    /// </summary>
     public static MatchScenario CenterBackStepsOut()
     {
         var scenario = new MatchScenario
@@ -129,7 +134,7 @@ public static class ScenarioLibrary
         scenario.Add(Player(101, TeamId.Home, TacticalRole.Goalkeeper, -48f, 0f, 1));
         scenario.Add(Player(StepOutHomeCb, TeamId.Home, TacticalRole.CenterBack, -20f, -8f, 4));
         scenario.Add(Player(103, TeamId.Home, TacticalRole.CenterBack, -22f, 6f, 5));
-        scenario.Add(Player(106, TeamId.Home, TacticalRole.DefensiveMidfielder, -14f, -2f, 6));
+        scenario.Add(Player(106, TeamId.Home, TacticalRole.DefensiveMidfielder, -6f, 16f, 6));
         scenario.Add(Player(StepOutAwayCarrier, TeamId.Away, TacticalRole.CentralMidfielder, -6f, -10f, 8));
         scenario.Add(Player(209, TeamId.Away, TacticalRole.Striker, -8f, 2f, 9));
         scenario.Add(Player(207, TeamId.Away, TacticalRole.Winger, 6f, 26f, 7));

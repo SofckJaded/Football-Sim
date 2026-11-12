@@ -222,6 +222,8 @@ public sealed class PerceptionSystem
             TacticalJobAnchor = job?.Anchor,
             JobTargetPlayerId = job?.TargetPlayerId,
             JobReason = job?.Reason ?? string.Empty,
+            IsTemporaryResponsibility = job?.IsTemporary ?? false,
+            ResponsibilitySourcePlayerId = job?.SourcePlayerId,
             TacticalAnchorPosition = self.TacticalAnchor,
             AttackingDirectionX = attackingDirX,
             MatchTimeSeconds = matchTimeSeconds,

@@ -429,7 +429,8 @@ public class GameplayFeelTests
         jobs.Update(players, ball, possession, TeamId.Home, homeResponderId: null, awayResponderId: null,
             homeDirX: 1f, tick: 0,
             TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
-            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away),
+            new TeamFormation(TeamId.Home, pitch), new TeamFormation(TeamId.Away, pitch));
 
         foreach (var (playerId, assignment) in jobs.Assignments)
         {

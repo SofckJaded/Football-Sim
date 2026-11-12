@@ -158,6 +158,9 @@ public sealed class MatchSimulationEngine
 
             InitializeSquads();
             _rulesEngine.StartMatch(_players, Ball);
+            _tacticalCoordinator.AssignFormations(
+                _players, _config.PlayersPerTeam, fromPositions: false,
+                _rulesEngine.GetHomeAttackDirectionX());
         }
         else
         {
@@ -166,6 +169,13 @@ public sealed class MatchSimulationEngine
             _rulesEngine.StartScenario(
                 scenario.MatchClockSeconds, scenario.Period, scenario.HomeScore, scenario.AwayScore,
                 $"Scenario '{scenario.Name}'");
+
+            // A3.3: a fragment owns the formation it describes. Assigning it from the fixture's layout
+            // is also what lets an unbalanced side (3v2, 4v3) hold a shape of its own size instead of
+            // inheriting shirts 1..N of the eleven-a-side table.
+            _tacticalCoordinator.AssignFormations(
+                _players, _config.PlayersPerTeam, fromPositions: true,
+                _rulesEngine.GetHomeAttackDirectionX());
 
             BallPossessionSnapshot seeded = scenario.CreatePossessionSnapshot();
             _possessionTracker.Seed(seeded);
@@ -524,7 +534,7 @@ public sealed class MatchSimulationEngine
             if (CurrentTick % 4 == 1)
             {
                 _tacticalCoordinator.UpdateTeamAnchors(
-                    _players, Ball, homeDirX, dt * 4f, _config.PlayersPerTeam);
+                    _players, Ball, homeDirX, dt * 4f);
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.
@@ -540,7 +550,8 @@ public sealed class MatchSimulationEngine
                 _ballResponderElection.GetResponder(TeamId.Home),
                 _ballResponderElection.GetResponder(TeamId.Away),
                 homeDirX, CurrentTick, _config.HomeProfile, _config.AwayProfile,
-                _homeBelief, _awayBelief);
+                _homeBelief, _awayBelief,
+                _tacticalCoordinator.HomeFormation, _tacticalCoordinator.AwayFormation);
 
             foreach (var p in _players)
             {
@@ -706,6 +717,9 @@ public sealed class MatchSimulationEngine
             {
                 resettable.ResetForPhase(AiResetReason.PlayerRemoved);
             }
+            // A3.3: a player who left the pitch cannot own a place in the formation. The players who
+            // remain keep their own slots, which is what keeps the shape plausible with ten men.
+            _tacticalCoordinator.FormationFor(player.Team).Remove(player.Id);
             _perceptionSystem.Forget(player.Id);
             LastAiResetReason = AiResetReason.PlayerRemoved;
             LastAiResetTick = CurrentTick;

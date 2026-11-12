@@ -620,9 +620,14 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var jobs = new TeamJobCoordinator(pitch);
     // The probe is a labelled diagnostic, so its job assignments are allowed to read the truth view
     // (A2.6); the match itself passes a team belief here.
+    var homeFormation = new TeamFormation(TeamId.Home, pitch);
+    homeFormation.AssignFromPositions(players, 1f);
+    var awayFormation = new TeamFormation(TeamId.Away, pitch);
+    awayFormation.AssignFromPositions(players, -1f);
     jobs.Update(players, ball, homePossession, TeamId.Home, null, 15, 1f, 0,
         TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
-        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players));
+        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players),
+        homeFormation, awayFormation);
 
     var carrier = players.Single(p => p.Id == 8);
     Vector2 carrierXZ = new(carrier.Position.X, carrier.Position.Z);
@@ -651,7 +656,8 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var awayPossession = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, 15, null);
     jobs.Update(players, turnoverBall, awayPossession, TeamId.Away, 6, null, 1f, 60,
         TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
-        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players));
+        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players),
+        homeFormation, awayFormation);
 
     object TeamJobsDiag(TeamId team) => players
         .Where(p => p.Team == team && p.Role != TacticalRole.Goalkeeper)
