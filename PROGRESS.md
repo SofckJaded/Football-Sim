@@ -5,6 +5,44 @@ changed, where, and what proves it. Details that a future session needs go in `R
 
 ---
 
+## 2026-11-12 — Session 1, batch 2: A0 complete (fixtures, trace, performance)
+
+- **A0.3 scenario library** — `src/FootballSim/Scenarios/ScenarioLibrary.cs`: the ten required fixtures
+  as named factories with a stated intent each (`build-up-3v2`, `wide-overload-4v3`, `cb-step-out`,
+  `rear-pressure-reception`, `high-line-run`, `winger-fullback`, `counterattack-3v3`, `touchline-press`,
+  `box-cross`, `keeper-sweep-race`). Plus `ScenarioRunner` / `ScenarioRunResult`: steps a fixture, stops
+  at full time or budget, and returns final state, contact attempts, executed contacts, rule events and
+  (optionally) the decision trace. New `--scenario <key> [ticks]` CLI mode so a behaviour can be
+  reproduced without writing a test.
+  - 11 new tests (`ScenarioLibraryTests`): ten scenarios × (start state, seeded ball on tick 1, identical
+    two-engine replay), plus targeted invariants (ball genuinely in flight to its intended receiver, the
+    high-line striker onside at the start) and runner behaviour (budget stop, early full-time stop).
+- **A0.4 decision trace** — `src/FootballSim/AI/DecisionTrace.cs`:
+  - `DecisionTraceEntry` (tick, player, team, role, duty, job reason, chosen action, utility, runner-up,
+    runner-up utility, candidate count, target player, target point) and a bounded
+    `DecisionTraceBuffer` (4 096 entries, oldest dropped, off by default).
+  - `MatchSimulationEngine.DecisionTrace`; the engine records the utility AI's own candidate set (so the
+    runner-up and margin are real), and any other controller by its debug summary.
+  - `MatchSimulationEngine.ContactLog` (bounded 4 096): executed contacts, kept separately from the
+    chosen action. This is the "chosen vs executed" split the A0 gate asks for.
+  - `KnowledgeAgeTicks`, `CandidateKey`, `IntentId` are null by design and documented as belonging to
+    A2.2 / A1.1 / A1.2 — a zero would look like a measurement.
+  - 8 tests (`DecisionTraceTests`) including "trace does not change the simulation" (byte-identical run
+    with tracing on vs off) and the capacity bound.
+- **A0.5 performance sample** — `--perf` CLI mode (warm-up, percentiles, allocation per tick, GC counts,
+  budget verdict). Release 11v11, 20 000 ticks: mean **101.7 µs**, p50/p95/p99 **68.5/273.6/343.3 µs**,
+  max 963.7 µs, **41 727 bytes allocated per tick**, 50 gen-0 collections. Recorded in
+  `artifacts/advanced-ai/a0-perf-2026-11-12.txt` and summarised in that directory's README.
+  - The allocation figure is a real finding, not a surprise to hide: it is now the first entry in a new
+    "Advanced AI — baseline measurements and known limitations" section of `docs/KNOWN_ISSUES.md`,
+    alongside the shirt-keyed anchor limitation and the scenario-history limitation.
+- **A0 exit gate passed.** Suite **246/246 green**. Milestone A1 is next.
+- **Two A0.5 sub-items deliberately deferred with reasons recorded in `TASKS.md`:** rendered clips
+  (belong to A9.4, need a human at the machine) and a per-phase tick breakdown (A9.3). Neither is a
+  condition of the A0 exit gate.
+
+---
+
 ## 2026-11-12 — Session 1, batch 1: A0.1 baseline + A0.2 scenario seam
 
 - **A0.1 baseline captured** (`artifacts/advanced-ai/`):
@@ -37,6 +75,7 @@ changed, where, and what proves it. Details that a future session needs go in `R
     reacts, a scenario still reaches full time, and normal match construction is unchanged.
   - Suite now **203/203 green**. `README.md` test count corrected from 180 to 203.
 
+---
 
 ## 2026-11-12 — Session 1, batch 0: repository bootstrap
 

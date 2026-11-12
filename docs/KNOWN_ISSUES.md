@@ -56,6 +56,33 @@
   with a fallback into the real squad; never index `Players[playerId - 1]` again (a 5-a-side match has
   ten players, so the default striker id #9 is not a valid array index).
 
+## Advanced AI — baseline measurements and known limitations
+
+Recorded 2026-11-12 before any advanced-AI behaviour change. Numbers are on the reference machine
+documented in `artifacts/advanced-ai/README.md`.
+
+- **The AI allocates far more than it should.** A Release 11v11 tick allocates **41.7 KB** (mean over
+  20 000 ticks, diagnostics off), which is 2.5 MB/s of garbage and 50 gen-0 collections per 20 000 ticks.
+  Wall time is fine today (mean 102 µs, p99 343 µs against a 16 667 µs budget), so this is headroom being
+  spent, not a current stall. It becomes a real constraint once A2–A6 add spatial caches and candidate
+  sets; A9.3 owns the fix. Do not add per-tick LINQ or per-candidate lists on top of this.
+- **Per-tick spikes reach ~1 ms at p-max** (964 µs measured). One slow tick is invisible at 60 Hz, but it
+  is the number to watch when the utility set grows.
+- **Tactical anchors are keyed by shirt number, not by role.** `TeamTacticalCoordinator.ComputePlayerAnchor`
+  reads `GetFormationRoleAndSlot(player.ShirtNumber, teamSize)`. A player whose explicit `TacticalRole`
+  differs from the slot for their shirt will be anchored at the slot's position. Scenario fixtures must
+  therefore assign realistic shirt numbers; A3.3 replaces this with real responsibility ownership.
+- **Unbalanced scenario sides inherit a full-size anchor table.** `teamSize` is `PlayersPerTeam`, so a
+  3v2 fixture uses the 5-a-side slot table for both teams. Acceptable for short probes; A3 fixes the
+  structural model.
+- **A scenario starts with no history.** Perception memory (A2.2) does not exist yet, so a fragment's
+  first ticks have no aged knowledge to reason from. Scenario assertions must not assume reaction
+  history that the engine has not built up.
+- **The decision trace is deliberately incomplete.** It records tick, player, duty, chosen action, the
+  runner-up and the margin, plus executed contacts. `KnowledgeAgeTicks`, `CandidateKey` and `IntentId`
+  are null until A2.2, A1.1 and A1.2 respectively — a zero would read as a measurement the code cannot
+  make. The inspector does not yet render the trace.
+
 ## Tooling and documentation
 
 - **Toolchain pinning is partial.** `global.json` pins .NET SDK 8.0.x (`rollForward: latestFeature`) and

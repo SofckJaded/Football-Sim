@@ -59,9 +59,32 @@ the possession side was wider on **5/5** seeds, mean width separation **1.92 m**
 Per-seed ball-territory and pass numbers vary widely (31–46 passes, 44–54 % possession), which is the
 variance the plan's "≥ 8 paired seeds" rule exists for.
 
-## Still to capture (A0.5 proper)
+## 2026-11-12 — Release performance sample (A0.5, part 1)
 
-- Allocation measurements and AI-only tick cost breakdown (p50 / p95 / p99).
+`dotnet run --project src\FootballSim.Headless -c Release -- --perf 20000`
+→ `a0-perf-2026-11-12.txt`
+
+11v11, 22 active players, diagnostics off, 2 000 warm-up ticks then 20 000 measured.
+
+| Metric | Value |
+| :--- | :--- |
+| Per-tick mean | 101.7 µs |
+| p50 / p95 | 68.5 / 273.6 µs |
+| p99 / max | 343.3 / 963.7 µs |
+| Fixed-step budget | 16 666.7 µs (60 Hz) |
+| Total | 2 034.2 ms for 20 000 ticks |
+| **Allocated per tick** | **41 727 bytes** |
+| GC collections (gen0/1/2) | 50 / 0 / 0 |
+
+Reading: the tick loop has roughly **50×** headroom against the 60 Hz budget, which is what makes an
+expanded utility set affordable. The allocation figure is the opposite story — 2.5 MB/s of garbage — and
+is the first thing A9.3 has to fix before A2–A6 start caching per-player spatial data. See
+`docs/KNOWN_ISSUES.md`.
+
+## Still to capture (A0.5, part 2)
+
+- A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
+  regression can be attributed to a subsystem.
 - 5v5 baseline.
-- Short rendered clips from the Godot client.
+- Short rendered clips from the Godot client (needs a human at the machine; tracked as part of A9.4).
 - Fixed development seed set + a separate held-out seed set, recorded per matchup.

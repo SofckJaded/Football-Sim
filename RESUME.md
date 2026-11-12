@@ -2,85 +2,90 @@
 
 Read this after `AGENTS.md`; do not re-derive state from the planning document.
 
-**Last updated:** 2026-11-12 (session 1, after batch 1)
+**Last updated:** 2026-11-12 (session 1, after batch 2)
 
 ---
 
 ## Current goal
 
-Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` in batches, starting at **A0**. Nothing from A1
-onward starts until the A0 exit gate passes.
+Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` in batches. **A0 is complete and its exit gate
+passed.** The current milestone is **A1 — runtime seams without changing tactical policy**.
 
 ## Active batch
 
-**Batch 2 — A0.3, first half: scenario fixtures 1–5 plus a scenario runner.**
-Milestone A0 is 2/5 tasks done (A0.1, A0.2).
+**Batch 3 — A1.4 (contact-time offside geometry) then A1.3 (RNG isolation).**
+A0: 5/5 tasks. A1: 0/5 tasks.
 
 ## Last completed task
 
-**A0.2** — explicit scenario world. `src/FootballSim/Scenarios/` (`MatchScenario`, `ScenarioPlayer`,
-`ScenarioCommands`, `FixedCommandController`, `ScriptedCommandController`),
-`MatchSimulationEngine(MatchScenario)`, `BallPossessionTracker.Seed`,
-`TeamTacticalCoordinator.SeedPossession`, `MatchRulesEngine.StartScenario`.
-12 tests in `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs`. Suite 203/203 green.
+**A0.5** — Release performance sample. Also completed in batch 2: A0.3 (ten scenario fixtures +
+`ScenarioRunner` + `--scenario` CLI) and A0.4 (bounded decision trace, deliberate split between chosen
+action and executed contact). Suite **246/246 green**.
 
 ## Next recommended batch
 
-Batch 2 (A0.3 part 1). Build reusable fixtures under `tests/FootballSim.Tests/Scenarios/`:
+Batch 3, in this order:
 
-| # | Fixture | Home | Away | Key starting condition |
-| :-- | :--- | :--- | :--- | :--- |
-| 1 | 3v2 build-up | GK, CB, CM (carrier) | CB, CM | home controls centrally |
-| 2 | 4v3 wide overload | GK, CB, FB, W + CM | 3 | ball with wide full-back |
-| 3 | CB steps out | 4 | 3 | defender is pulled out of line |
-| 4 | Rear-pressure reception | GK, CB, DM (in flight pass) | presser behind receiver | `InFlightPass` |
-| 5 | High line run | 4, runner in behind | 3 + GK high | attacker ahead of the line |
-
-Then a `ScenarioRunner` helper (step N live ticks, stop at full time, return a `ScenarioRunResult`
-with final positions, possession, contacts, events) so assertions stop re-implementing loop code.
-
-Each fixture also gets one determinism/golden-shape test. Do **not** write tactical assertions yet —
-that is A0.3's exit gate and needs A0.4's trace to be meaningful.
+1. **A1.4 — capture offside geometry at the contact.** Today `MatchRulesEngine` reads the live
+   `BallState` when it processes the contact, after `BallPhysicsSolver.Step` has already advanced the
+   ball. Introduce a `ContactGeometrySnapshot` taken at the moment the contact is made (ball position,
+   owning player positions, contact tick/order) and judge Law 11 from it. Must preserve: event ordering,
+   restart-origin stamping (`StampRestartOrigin`), the deliberate-play/save distinction, and every
+   existing offside exemption test. The proof is an invariant test: **moving the ball after the contact
+   but before the rules tick must not change the offside verdict.**
+2. **A1.3 — separate RNG streams.** Today one `SeededRandom(_config.Seed)` is shared by perception,
+   decisions and physical execution, so adding a perception query shifts every subsequent physics
+   sample. Split into derived match-local streams via a documented integer seed mixer, and prove:
+   diagnostics on/off are identical, two interleaved matches in one process are independent, and an
+   existing recorded-command replay still reproduces exactly.
+3. If both land cleanly, start **A1.1** by extracting the perception block out of `PerceptionSystem`
+   unchanged (behaviour-preserving commit), before touching candidate identity.
 
 ## Files currently relevant
 
-- `src/FootballSim/Scenarios/MatchScenario.cs` — the seam. Read `Validate()` first: it states what a
-  fixture may and may not assume.
-- `src/FootballSim/Scenarios/ScenarioControllers.cs` — `ScenarioCommands.Move/Hold/MoveToward`.
-- `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs` — fixture pattern (`ThreeVersusTwo`),
-  `FindById` helper, determinism test shape to copy.
-- `src/FootballSim/TacticsAndTeamAI.cs` — anchors still keyed by shirt number; `teamSize` now comes from
-  `PlayersPerTeam`.
-- `src/FootballSim/TeamJobs.cs` — job assignment; scenarios inherit real jobs, not scenario-specific ones.
+| File | Why |
+| :--- | :--- |
+| `src/FootballSim/RulesAndGoalkeeper.cs` | `StepRules`, `SnapshotOffsidePositions`, `StampRestartOrigin`, `StartScenario` (added in A0.2) |
+| `src/FootballSim/FootballerLocomotion.cs` | where `BallContactEvent` is created (line ~1285) — the snapshot belongs beside it |
+| `src/FootballSim/MatchEngine.cs` | tick order: decisions → execution → stamp → statistics → possession → physics → rules |
+| `src/FootballSim/CorePrimitives.cs` | `BallContactEvent`, `ControllerSourceType`, `SeededRandom` |
+| `src/FootballSim/AI/DecisionTrace.cs` | trace buffer pattern to reuse for any new bounded log |
+| `src/FootballSim/Scenarios/` | `ScenarioLibrary`, `ScenarioRunner` — fixtures for A1 proofs |
+| `tests/FootballSim.Tests/AuditRegressionTests.cs` | existing offside/restart/replay regressions that must stay green |
+| `docs/DECISIONS.md` | append a decision record for any design choice that a reader would otherwise re-litigate |
 
 ## Known blockers / risks
 
-- **Anchor table is shirt-keyed, not role-keyed.** `ComputePlayerAnchor` uses
-  `GetFormationRoleAndSlot(ShirtNumber, teamSize)`, so a scenario player's tactical anchor depends on
-  their shirt number even though their `TacticalRole` is explicit. Assign realistic shirts in fixtures
-  until A3 replaces formation ownership.
-- **Unbalanced sides inherit a 5v5 anchor table.** With 3 home / 2 away, `PlayersPerTeam = 3` selects
-  the 5-a-side slot table for both teams. Fine for short probes, wrong for anything else — A3's job.
-- **Scenario controllers are stateful.** A `MatchScenario` holding a `ScriptedCommandController` must
-  not be reused for two engines (the script will be half-consumed). Build a fresh fixture per engine.
-- **`KeeperHeld` start is implemented but untested.** It sets `Ball.HeldByPlayerId`; prove it with a
-  keeper test before relying on it.
-- No git identity is configured globally on this machine; each clone needs `git config --local user.name/user.email`.
+- **Tick ordering is delicate.** `_rulesEngine.StepRules` runs *after* `_ballSolver.Step`, which is
+  exactly why the offside snapshot is stale. Reordering the tick is *not* the fix (physics and rules
+  both depend on this order); capture geometry instead.
+- **One shared RNG.** Splitting streams changes every recorded trajectory, so the existing
+  byte-identical replay tests will fail by design unless the split preserves the *existing* stream for
+  the existing consumers. Keep the legacy stream as stream 0 and derive new streams for new consumers;
+  a change of physics trajectories is a versioned behaviour change, not a refactor.
+- **46 files of audit regressions** pin current behaviour. Any refactor that "tidies" a formula will
+  break them; that is the suite working, not an obstacle to route around.
+- **41.7 KB allocated per tick** (measured) is the headroom A1 extraction must not enlarge.
+- No git identity is configured globally on this machine.
 
 ## Important decisions
 
-- Scenario ownership is seeded directly (`BallPossessionTracker.Seed`) rather than faked with a synthetic
-  contact event, because a fake contact would also fire statistics and rule handlers.
-- `MatchRulesEngine.StartScenario` takes primitives, not a `MatchScenario`, so the rules engine stays
-  free of the scenario type.
-- Scenario matches skip the even-team-count part of `SimulationConfigValidation.Validate` (3v2 is
-  deliberately unbalanced) but still validate pitch, profiles, attributes, tendencies and every player.
-- Baseline evidence lives in `artifacts/advanced-ai/`; the reference machine is recorded in its README.
+- A0's two deferred items (rendered clips → A9.4, per-phase tick breakdown → A9.3) are recorded in
+  `TASKS.md` with reasons; do not silently drop them.
+- Controller decisions are traced by reading `TacticalUtilityAiController.LastCandidates` at the engine
+  level rather than by adding a callback to the controller. Keep the engine as the single observer until
+  A1.2 introduces a real intent object.
+- Scenario ownership is seeded directly, never faked with a synthetic contact event (a fake contact would
+  also fire statistics and rule handlers).
+- `MatchRulesEngine.StartScenario` takes primitives, not a `MatchScenario`, to keep the rules engine free
+  of the scenario type.
 
 ## What not to redo
 
-- Do not re-run the baseline suite or the tactical gate to confirm they pass — recorded for 2026-11-12.
-- Do not re-read `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` end to end; read the A0 section only.
-- Do not add tactical assertions to scenario tests before the trace exists.
-- Do not "fix" the wide-anchor limitation by rewriting `TacticsAndTeamAI` now — A3 owns structural
-  ownership and will replace it.
+- Do not re-run the baseline suite, the tactical gate or the perf sample to confirm them — all recorded
+  for 2026-11-12 under `artifacts/advanced-ai/`.
+- Do not re-read the planning document end to end; read the A1 section only.
+- Do not add tactical assertions to scenario tests yet; the trace exists, but the behaviours it would
+  assert (support, cover, timing) are A3–A6 work.
+- Do not "fix" the wide/shirt-keyed anchors — A3.3 owns structural ownership.
+- Do not delete or weaken any of the 246 tests to make a refactor pass.

@@ -78,6 +78,7 @@ public sealed class MatchSimulationEngine
     private readonly Dictionary<int, IFootballerController> _controllers = new();
     private readonly Dictionary<int, FootballerObservation> _latestObservations = new();
     private readonly MatchCommunicationContext _communication = new();
+    private readonly List<BallContactEvent> _contactLog = new();
 
     private double _homeTerritoryAccum;
     private double _awayTerritoryAccum;
@@ -191,6 +192,26 @@ public sealed class MatchSimulationEngine
     /// refused and why (audit F17). Diagnostics/tests read this instead of inferring from commands.
     /// </summary>
     public IReadOnlyList<BallContactAttempt> LastContactAttempts => _executionSystem.ContactAttempts;
+
+    /// <summary>
+    /// Executed contacts, oldest first, bounded to <see cref="MaxContactLogEntries"/>. This exists
+    /// because the execution layer's per-tick event list is consumed and cleared by the rules engine
+    /// and statistics on the same tick, so nothing outside the engine could observe what actually
+    /// happened without replaying the tick.
+    ///
+    /// It is diagnostics only: no decision reads it. Keeping it bounded means a long match cannot grow
+    /// the log without limit, and the oldest entries are dropped first.
+    /// </summary>
+    public IReadOnlyList<BallContactEvent> ContactLog => _contactLog;
+
+    public const int MaxContactLogEntries = 4096;
+
+    /// <summary>
+    /// Bounded log of controller decisions. Off by default; enable it from a test or a diagnostic tool
+    /// before stepping. Recording allocates nothing beyond the entry itself and never consumes
+    /// simulation randomness.
+    /// </summary>
+    public DecisionTraceBuffer DecisionTrace { get; } = new();
 
     /// <summary>Statistics tracker fed by the execution contacts (audit F17).</summary>
     public MatchStatisticsTracker Statistics => _statistics;
@@ -477,6 +498,9 @@ public sealed class MatchSimulationEngine
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);
                 p.LastCommand = cmd;
+
+                if (DecisionTrace.IsEnabled)
+                    RecordDecisionTrace(p, obs);
             }
 
             _executionSystem.UpdateLocomotionAndContacts(
@@ -493,6 +517,7 @@ public sealed class MatchSimulationEngine
             // Audit F17: statistics come from the contacts execution actually made, never from the
             // commands above. A kick that lost the tick's arbitration is not a pass attempt.
             _statistics.ApplyContacts(_executionSystem.ContactEvents, CurrentTick);
+            AppendContactLog(_executionSystem.ContactEvents);
             ApplyContactFeedback();
 
             // Consume this tick's plays so the next tick's decisions see the new ownership.
@@ -517,6 +542,75 @@ public sealed class MatchSimulationEngine
             _executionSystem.ContactEvents.Clear();
 
         RecordTickAnalytics(homeDirX, livePlay);
+    }
+
+    /// <summary>
+    /// Records what the installed controller chose. A utility AI exposes its scored candidates, so the
+    /// trace can name the runner-up and the margin; any other controller (keeper, human, scripted) is
+    /// recorded by its debug summary with no candidate set, which is the truth about it.
+    /// </summary>
+    private void RecordDecisionTrace(FootballerState player, in FootballerObservation observation)
+    {
+        if (_controllers.TryGetValue(player.Id, out IFootballerController? controller) &&
+            controller is TacticalUtilityAiController ai)
+        {
+            string selected = "Idle";
+            float selectedScore = float.NegativeInfinity;
+            string? runnerUp = null;
+            float runnerUpScore = float.NegativeInfinity;
+
+            IReadOnlyList<UtilityCandidate> candidates = ai.LastCandidates;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                UtilityCandidate candidate = candidates[i];
+                if (candidate.UtilityScore > selectedScore)
+                {
+                    if (selectedScore > float.NegativeInfinity)
+                    {
+                        runnerUp = selected;
+                        runnerUpScore = selectedScore;
+                    }
+                    selected = candidate.ActionName;
+                    selectedScore = candidate.UtilityScore;
+                }
+                else if (candidate.UtilityScore > runnerUpScore)
+                {
+                    runnerUp = candidate.ActionName;
+                    runnerUpScore = candidate.UtilityScore;
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                selected = controller.GetDebugSummary();
+                selectedScore = 0f;
+            }
+
+            DecisionTrace.Record(
+                CurrentTick, observation, selected, selectedScore,
+                runnerUp, runnerUpScore, candidates.Count,
+                targetPlayerId: player.LastCommand.IntendedReceiverId);
+            return;
+        }
+
+        DecisionTrace.Record(
+            CurrentTick, observation, controller?.GetDebugSummary() ?? "Uncontrolled", 0f,
+            null, 0f, 0, targetPlayerId: player.LastCommand.IntendedReceiverId);
+    }
+
+    private void AppendContactLog(IReadOnlyList<BallContactEvent> events)
+    {
+        if (events.Count == 0) return;
+
+        int overflow = _contactLog.Count + events.Count - MaxContactLogEntries;
+        if (overflow > 0)
+        {
+            if (overflow >= _contactLog.Count) _contactLog.Clear();
+            else _contactLog.RemoveRange(0, overflow);
+        }
+
+        for (int i = 0; i < events.Count; i++)
+            _contactLog.Add(events[i]);
     }
 
     private void RecordTickAnalytics(float homeDirX, bool livePlay)

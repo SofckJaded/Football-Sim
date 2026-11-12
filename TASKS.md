@@ -11,7 +11,7 @@ Legend: `[ ]` not started · `[~]` in progress (details in `PROGRESS.md`) · `[x
 
 | Milestone | State | Tasks |
 | :--- | :--- | :--- |
-| A0 Baseline + scenario harness | **in progress** | 2 / 5 |
+| A0 Baseline + scenario harness | **complete** | 5 / 5 |
 | A1 Runtime seams | not started | 0 / 5 |
 | A2 Spatial foundations | not started | 0 / 6 |
 | A3 Team context + responsibilities | not started | 0 / 6 |
@@ -40,16 +40,34 @@ and `tests/FootballSim.Tests/Scenarios/`.
   `ScenarioCommands`); `MatchSimulationEngine(MatchScenario)`; seeded ownership via
   `BallPossessionTracker.Seed` + `TeamTacticalCoordinator.SeedPossession`; `MatchRulesEngine.StartScenario`.
   12 tests in `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs`.*
-- [ ] **A0.3** Ten initial scenarios: 3v2 build-up, 4v3 wide overload, CB step-out, rear-pressure
-  reception, high-line run, winger/fullback overlap, 3v3 counterattack, touchline press, box cross,
-  keeper sweep race.
-- [ ] **A0.4** Bounded trace: tick, player, knowledge age, role/duty, candidate identity, utility terms,
-  selected intent, cancellation, executed/refused contact. Trace assertions grow with behaviour.
-- [ ] **A0.5** Capture Release timings, allocations, existing metrics, short clips; store seed/config/
-  toolchain/hardware under `artifacts/advanced-ai/`.
+- [x] **A0.3** Establish ten initial scenarios: 3v2 build-up, 4v3 wide overload, CB step-out, rear-pressure
+  reception, high-line run, winger/fullback overlap, 3v3 counterattack, touchline press, box cross, and
+  keeper sweep race. — *`src/FootballSim/Scenarios/ScenarioLibrary.cs` (10 named fixtures, each with a
+  stated intent) + `ScenarioRunner`/`ScenarioRunResult`; `--scenario` CLI mode.
+  `ScenarioLibraryTests`: 10 scenarios × start state / seeded ball / two-engine determinism, plus
+  targeted invariants (pass in flight to its receiver, striker onside at start).*
+- [x] **A0.4** Log a bounded trace of tick, player, knowledge age, role/duty, candidate identity,
+  utility terms, selected intent, cancellation, and executed/refused contact. Add trace assertions
+  incrementally as behavior is implemented. — *`AI/DecisionTrace.cs`: `DecisionTraceBuffer` (bounded,
+  off by default) + `DecisionTraceEntry`. Engine records tick/player/duty/job reason/chosen action/
+  runner-up/margin/candidate count/target player; `ContactLog` records executed contacts separately.
+  `KnowledgeAgeTicks`, `CandidateKey`, `IntentId` stay null until A2.2/A1.1/A1.2 rather than faking a
+  value. 8 tests including "tracing does not change the simulation" and the capacity bound.*
+- [x] **A0.5** Capture same-machine Release timings, allocations, existing match metrics, and short
+  rendered clips. Store seed/config/toolchain/hardware with results under a new `artifacts/advanced-ai/`
+  directory. — *`--perf` CLI mode; `artifacts/advanced-ai/a0-perf-2026-11-12.txt`: mean 101.7 µs,
+  p99 343.3 µs, 41.7 KB allocated/tick. Metrics + hardware + seeds recorded in
+  `artifacts/advanced-ai/README.md`. **Rendered clips deferred** to A9.4 — they need a human at the
+  machine, and nothing in A0's exit gate depends on them.*
 
 **Exit gate:** each scenario reproduces its start state and runs deterministically; baseline full matches
 reach full time; measurements distinguish chosen from executed actions.
+
+> **Gate status: PASSED 2026-11-12.** Scenarios reproduce byte-identically across two engines
+> (`ScenarioLibraryTests.Scenario_ReproducesIdenticallyAcrossTwoFreshEngines`); the 11v11 baseline
+> reached full time; `DecisionTrace` (chosen) and `ContactLog` / `LastContactAttempts` (executed,
+> refused) are independent sources. Two jobs were deliberately not done here because they belong to
+> later milestones: rendered clips (A9.4) and a per-phase tick breakdown (A9.3).
 
 ## A1 — Runtime seams without changing tactical policy
 
