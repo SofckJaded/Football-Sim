@@ -178,12 +178,17 @@ public enum TeamId
 /// every discontinuity (restart, half time, full time, removal, training reset, controller replacement),
 /// and a controller-owned intent executor exists behind an off-by-default scheduler. Trajectories differ
 /// from version 3 because a commitment no longer survives a restart.</item>
+/// <item><c>AiBehaviour 5</c> — A2.1: one reach model (<see cref="AI.TimeToReachModel"/>) replaces the
+/// four ad-hoc time-to-reach estimates in the responder election, the ball interception target, the
+/// carrier pursuit point and the goalkeeper sweep. It uses current velocity, turn cost, acceleration,
+/// fatigue, recovery balance and contact reach, and the responder election now scores candidates
+/// against their own meeting with the ball instead of one shared intercept point.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 4;
+    public const int AiBehaviour = 5;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -512,6 +517,13 @@ public sealed class FootballerObservation
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }
     public required float ControlQuality01 { get; init; }
+
+    /// <summary>
+    /// How balanced this player currently is (A2.1). Execution scales acceleration by it after a
+    /// tackle or a stumble, so a reach estimate that assumed a balanced player would claim a recovery
+    /// time the body cannot produce. Defaults to 1 (balanced) for callers that do not set it.
+    /// </summary>
+    public float SelfBalance01 { get; init; } = 1f;
     public required Vector3 PerceivedBallPosition { get; init; }
     public required Vector3 PerceivedBallVelocity { get; init; }
     public required TeamId? PossessingTeam { get; init; }

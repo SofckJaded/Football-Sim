@@ -157,7 +157,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         // Only treat the ball as a kicked pass if it is traveling faster than sprint speed (> 9.5 m/s) and away from the kicker
         Vector2 myInterceptXZ = obs.PossessingTeam == obs.SelfTeam
-            ? ComputeBallInterceptTarget(selfXZ, ballXZ, ballVelXZ, _pitch)
+            ? ComputeBallInterceptTarget(ReachKinematics.FromObservation(obs), ballXZ, ballVelXZ, _pitch)
             : ballXZ + ballVelXZ * 0.12f; // Defenders aim directly at the ball carrier!
 
         // Audit F10: responder election is match-level (one per team, time-to-reach + hysteresis,
@@ -289,7 +289,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         }
 
         float myInterceptXZ = Vector2.Distance(selfXZ, obs.PossessingTeam == obs.SelfTeam
-            ? ComputeBallInterceptTarget(selfXZ, ballXZ, ballVelXZ, _pitch)
+            ? ComputeBallInterceptTarget(ReachKinematics.FromObservation(obs), ballXZ, ballVelXZ, _pitch)
             : ballXZ + ballVelXZ * 0.12f);
         bool selfJustPassedBall = obs.BallLastTouchedByPlayerId == obs.SelfId && ballVelXZ.Length() > 9.5f;
         float myEffectiveDist = myInterceptXZ + (selfJustPassedBall ? 18.0f : 0f);
@@ -299,7 +299,11 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             if (entity.Team != obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
             Vector2 mateXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
             Vector2 mateInterceptXZ = obs.PossessingTeam == obs.SelfTeam
-                ? ComputeBallInterceptTarget(mateXZ, ballXZ, ballVelXZ, _pitch)
+                ? ComputeBallInterceptTarget(
+                    ReachKinematics.Neutral(
+                        mateXZ,
+                        new Vector2(entity.EstimatedVelocity.X, entity.EstimatedVelocity.Z)),
+                    ballXZ, ballVelXZ, _pitch)
                 : ballXZ + ballVelXZ * 0.12f;
 
             float mateDistToBall = Vector2.Distance(mateXZ, ballXZ);
@@ -316,34 +320,34 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         return true;
     }
 
-    private static Vector2 ComputeBallInterceptTarget(Vector2 playerXZ, Vector2 ballXZ, Vector2 ballVelXZ, PitchDimensions pitch)
+    private static Vector2 ComputeBallInterceptTarget(
+        in ReachKinematics kinematics,
+        Vector2 ballXZ,
+        Vector2 ballVelXZ,
+        PitchDimensions pitch)
     {
-        float ballSpeed = ballVelXZ.Length();
-        if (ballSpeed < 2.2f)
-            return ballXZ;
+        // A ball barely moving is not a moving target: aiming at where it is keeps the chase honest
+        // and avoids solving a meeting that the reach model would report as already reached.
+        if (!SimMath.IsFinite(ballVelXZ) || ballVelXZ.Length() < 0.75f)
+            return ClampToPitch(ballXZ, pitch);
 
-        Vector2 ballDir = ballVelXZ / ballSpeed;
-        Vector2 ballToPlayer = playerXZ - ballXZ;
-        float projMeters = Vector2.Dot(ballToPlayer, ballDir);
-
-        // If the ball is moving toward the player's general half-plane, step directly onto the perpendicular ray point!
-        if (projMeters > 0.5f && projMeters < ballSpeed * 1.8f)
+        // A2.1: the meeting is solved with the same reach model the responder election uses, so the
+        // player who was elected is also the player who was measured as able to get there.
+        if (TimeToReachModel.TrySolveInterception(
+                kinematics, ballXZ, ballVelXZ, out Vector2 meeting, out _,
+                TimeToReachModel.DefaultHorizonSeconds))
         {
-            Vector2 onRay = ballXZ + ballDir * projMeters;
-            float perpDist = Vector2.Distance(playerXZ, onRay);
-            if (perpDist < 12.0f)
-            {
-                onRay.X = Math.Clamp(onRay.X, -pitch.HalfLength + 1f, pitch.HalfLength - 1f);
-                onRay.Y = Math.Clamp(onRay.Y, -pitch.HalfWidth + 1f, pitch.HalfWidth - 1f);
-                return onRay;
-            }
+            return ClampToPitch(meeting, pitch);
         }
 
-        Vector2 fallback = ballXZ + ballVelXZ * 0.45f;
-        fallback.X = Math.Clamp(fallback.X, -pitch.HalfLength + 1f, pitch.HalfLength - 1f);
-        fallback.Y = Math.Clamp(fallback.Y, -pitch.HalfWidth + 1f, pitch.HalfWidth - 1f);
-        return fallback;
+        // The ball is outrunning this player. Chase where it is: a run at a point 20 m upfield that
+        // cannot be reached is a player leaving the play.
+        return ClampToPitch(ballXZ, pitch);
     }
+
+    private static Vector2 ClampToPitch(Vector2 point, PitchDimensions pitch) => new(
+        Math.Clamp(point.X, -pitch.HalfLength + 1f, pitch.HalfLength - 1f),
+        Math.Clamp(point.Y, -pitch.HalfWidth + 1f, pitch.HalfWidth - 1f));
 
     private float ComputeOffsideLineProjX(in FootballerObservation obs)
     {

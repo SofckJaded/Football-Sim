@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
@@ -186,12 +187,18 @@ public sealed class BallPossessionTracker
 /// loose ball silently switched the whole AI team off the ball. The election is central, uses
 /// time-to-reach, respects the intended receiver of a pass, and has hysteresis so the same player
 /// keeps the job instead of flickering between candidates.
+///
+/// A2.1: the reach estimate is <see cref="TimeToReachModel"/> rather than distance ÷ (sprint × 0.85),
+/// and each candidate is scored against *its own* meeting with the ball instead of one intercept point
+/// the whole team shares. The shared point was the reason a slow player standing on the line could be
+/// elected over a fast one who only had to cut across it.
 /// </summary>
 public sealed class BallResponderElection
 {
     private const float RetainMarginSeconds = 0.35f;
-    private const float InterceptTimeCapSeconds = 2.5f;
-    private const float MinimumApproachSpeed = 2.0f;
+
+    /// <summary>Ball pace below which the ball is treated as a stationary point to run at.</summary>
+    private const float MovingBallSpeed = 0.75f;
 
     private readonly PitchDimensions _pitch;
     private readonly Dictionary<TeamId, int> _responders = new();
@@ -242,16 +249,15 @@ public sealed class BallResponderElection
             }
         }
 
-        // Loose ball, opponent control, or an interception: nearest eligible AI by time-to-reach.
-        Vector2 interceptPoint = PredictInterceptPoint(players, ball, team, humanPlayerId);
+        // Loose ball, opponent control, or an interception: the quickest AI to a meeting with the ball.
         int? best = null;
         float bestTime = float.MaxValue;
 
         foreach (FootballerState player in players)
         {
             if (!IsCandidate(player, team, humanPlayerId)) continue;
-            float time = TimeToReach(player, interceptPoint);
-            if (time < bestTime || (MathF.Abs(time - bestTime) < 1e-4f && best.HasValue && player.Id < best.Value))
+            float time = TimeToBall(player, ball);
+            if (time < bestTime || (MathF.Abs(time - bestTime) < 1e-3f && best.HasValue && player.Id < best.Value))
             {
                 bestTime = time;
                 best = player.Id;
@@ -266,13 +272,42 @@ public sealed class BallResponderElection
             FootballerState? incumbent = FindPlayer(players, previous);
             if (incumbent is not null && IsCandidate(incumbent, team, humanPlayerId))
             {
-                float incumbentTime = TimeToReach(incumbent, interceptPoint);
+                float incumbentTime = TimeToBall(incumbent, ball);
                 if (incumbentTime <= bestTime + RetainMarginSeconds)
                     return previous;
             }
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// How long until this player can play the ball, in the units the ranking needs (seconds; larger is
+    /// worse). A ball nobody can meet inside the horizon is scored *beyond* the horizon, so it can never
+    /// outrank a player who genuinely can intercept — which is the failure mode of ranking an
+    /// unreachable ball by "distance to where it is now".
+    /// </summary>
+    private float TimeToBall(FootballerState player, BallState ball)
+    {
+        ReachKinematics kinematics = ReachKinematics.From(player);
+        // A player cannot run off the pitch to reach the ball; locomotion stops them 3 m past the line,
+        // and the estimate would otherwise reward the player closest to a ball that is already out.
+        Vector2 ballXZ = new(
+            Math.Clamp(ball.Position.X, -_pitch.HalfLength - 3f, _pitch.HalfLength + 3f),
+            Math.Clamp(ball.Position.Z, -_pitch.HalfWidth - 3f, _pitch.HalfWidth + 3f));
+        Vector2 ballVelocityXZ = new(ball.Velocity.X, ball.Velocity.Z);
+        float horizon = TimeToReachModel.DefaultHorizonSeconds;
+
+        if (!SimMath.IsFinite(ballVelocityXZ) || ballVelocityXZ.Length() < MovingBallSpeed)
+        {
+            return TimeToReachModel.ToPoint(kinematics, ballXZ, horizon).Seconds;
+        }
+
+        ReachEstimate meeting = TimeToReachModel.ToMovingPoint(kinematics, ballXZ, ballVelocityXZ, horizon);
+        if (meeting.Reachable) return meeting.Seconds;
+
+        float toCurrentPosition = TimeToReachModel.ToPoint(kinematics, ballXZ, horizon * 2f).Seconds;
+        return horizon + toCurrentPosition;
     }
 
     /// <summary>
@@ -285,46 +320,6 @@ public sealed class BallResponderElection
         player.IsActiveOnPitch &&
         player.Role != TacticalRole.Goalkeeper &&
         player.Id != humanPlayerId;
-
-    /// <summary>
-    /// Where the ball will be when the quickest chaser could meet it. One point for the whole team
-    /// keeps the ranking consistent between candidates (and therefore stable).
-    /// </summary>
-    private Vector2 PredictInterceptPoint(
-        IReadOnlyList<FootballerState> players,
-        BallState ball,
-        TeamId team,
-        int? humanPlayerId)
-    {
-        Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
-        Vector2 ballVelocity = new(ball.Velocity.X, ball.Velocity.Z);
-        float speed = ballVelocity.Length();
-        if (speed < 1.0f) return ballXZ;
-
-        // Earliest point at which any candidate could be on the ball: smallest time-to-close,
-        // approximated with a constant-velocity closest approach.
-        float closestTime = InterceptTimeCapSeconds;
-        foreach (FootballerState player in players)
-        {
-            if (!IsCandidate(player, team, humanPlayerId)) continue;
-            Vector2 relative = ballXZ - new Vector2(player.Position.X, player.Position.Z);
-            float time = -Vector2.Dot(relative, ballVelocity) / MathF.Max(1e-4f, speed * speed);
-            if (time >= 0f && time < closestTime)
-                closestTime = time;
-        }
-
-        Vector2 point = ballXZ + ballVelocity * closestTime;
-        return new Vector2(
-            Math.Clamp(point.X, -_pitch.HalfLength + 1f, _pitch.HalfLength - 1f),
-            Math.Clamp(point.Y, -_pitch.HalfWidth + 1f, _pitch.HalfWidth - 1f));
-    }
-
-    private static float TimeToReach(FootballerState player, Vector2 targetXZ)
-    {
-        float distance = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), targetXZ);
-        float speed = MathF.Max(MinimumApproachSpeed, player.Attributes.MaxSprintSpeed * 0.85f);
-        return distance / speed;
-    }
 
     private void SetResponder(TeamId team, int? playerId)
     {

@@ -120,6 +120,7 @@ public sealed class PerceptionSystem
             Stamina01 = self.Stamina01,
             AvailableToKick = self.AvailableToKick,
             ControlQuality01 = self.ControlQuality01,
+            SelfBalance01 = self.Balance01,
             PerceivedBallPosition = perceivedBallPos,
             PerceivedBallVelocity = perceivedBallVel,
             PossessingTeam = confirmedPossessingTeam ?? ballPossession.PossessionTeam ?? ball.LastTouchedByTeam,

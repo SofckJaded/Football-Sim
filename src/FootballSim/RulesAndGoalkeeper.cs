@@ -22,6 +22,16 @@ public sealed class GoalkeeperController : IFootballerController
 {
     private const float MaxReceivableSpeed = 8.0f;
 
+    /// <summary>How far ahead the keeper looks when deciding whether a sweep is a race it can win.</summary>
+    private const float SweepRaceHorizonSeconds = 2.0f;
+
+    /// <summary>
+    /// How much later than the nearest opponent the keeper still accepts. A sweep is worth committing
+    /// to when the keeper is genuinely first, or so close that the opponent's touch is contested; it is
+    /// not worth leaving the line when the opponent is clearly there before them.
+    /// </summary>
+    private const float SweepRaceMarginSeconds = 0.35f;
+
     private readonly PitchDimensions _pitch;
     private readonly PassPlanner _passPlanner;
     private string _debugSummary = "GK:Positioning";
@@ -114,10 +124,15 @@ public sealed class GoalkeeperController : IFootballerController
         // Audit F03: only ever sweep an opponent's ball. A friendly loose ball (a back-pass, or the
         // keeper's own parry) must be played with the feet or left to a defender — never charged
         // down and tackled toward its own goal.
+        //
+        // A2.1: a sweep is a race, not a radius. The keeper used to charge out at anything inside
+        // 12.5 m, which is how they get rounded in races they were never going to win; the reach model
+        // now has to say the keeper can get there before the nearest opponent.
         bool opponentHasBall = obs.PossessingTeam != obs.SelfTeam;
         bool ballInBox = MathF.Abs(ballXZ.X - ownGoalX) < _pitch.PenaltyAreaLength &&
                          MathF.Abs(ballXZ.Y) < _pitch.PenaltyAreaWidth * 0.45f;
-        if (opponentHasBall && ballInBox && distToBall < 12.5f)
+        if (opponentHasBall && ballInBox && distToBall < 12.5f &&
+            CanWinSweepRace(obs, ballXZ, ballVelXZ))
         {
             // Audit F09: when the keeper is exactly over the ball this vector is zero; a bare
             // Vector2.Normalize produced NaN and the command carried it into the locomotion step.
@@ -146,6 +161,35 @@ public sealed class GoalkeeperController : IFootballerController
         return new FootballerCommand(
             moveDir, dirGoalToBall, moveDist > 2.0f, false, false, false, false, Vector3.Zero,
             KickIntentType.None, Vector3.UnitX, 0f, 0f);
+    }
+
+    /// <summary>
+    /// True when the reach model says this keeper can play the ball before (or close enough to)
+    /// the nearest opponent who can. An opponent nobody has eyes on cannot be raced against — the
+    /// keeper does not get to use positions the observation never carried (A2.2).
+    /// </summary>
+    private bool CanWinSweepRace(in FootballerObservation obs, Vector2 ballXZ, Vector2 ballVelXZ)
+    {
+        ReachEstimate keeperArrival = TimeToReachModel.ToMovingPoint(
+            ReachKinematics.FromObservation(obs), ballXZ, ballVelXZ, SweepRaceHorizonSeconds);
+        if (!keeperArrival.Reachable) return false;
+
+        float fastestOpponent = float.MaxValue;
+        foreach (var entity in obs.VisiblePlayers)
+        {
+            if (entity.Team == obs.SelfTeam) continue;
+
+            ReachEstimate opponentArrival = TimeToReachModel.ToMovingPoint(
+                ReachKinematics.Neutral(
+                    new Vector2(entity.EstimatedPosition.X, entity.EstimatedPosition.Z),
+                    new Vector2(entity.EstimatedVelocity.X, entity.EstimatedVelocity.Z)),
+                ballXZ, ballVelXZ, SweepRaceHorizonSeconds);
+
+            float arrival = opponentArrival.Reachable ? opponentArrival.Seconds : float.MaxValue;
+            if (arrival < fastestOpponent) fastestOpponent = arrival;
+        }
+
+        return keeperArrival.Seconds <= fastestOpponent + SweepRaceMarginSeconds;
     }
 
     /// <summary>

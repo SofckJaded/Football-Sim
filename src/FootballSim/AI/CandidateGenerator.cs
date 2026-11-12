@@ -467,7 +467,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                     bool alreadyGoalSide = Vector2.Dot(selfToCarrier, goalSide) < -0.15f;
                     chasePoint = alreadyGoalSide
                         ? carrierXZ + goalSide * 1.2f
-                        : PursuitPoint(selfXZ, carrierXZ, carrierVelXZ, obs.SelfAttributes.MaxSprintSpeed) + goalSide * 1.0f;
+                        : PursuitPoint(ReachKinematics.FromObservation(obs), carrierXZ, carrierVelXZ) + goalSide * 1.0f;
                 }
                 else
                 {
@@ -685,21 +685,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// Where to run to meet a moving target as early as possible. Iterating the time-to-reach is
-    /// enough here: the defender has to arrive at the carrier's *future* position, not chase the
-    /// ball's current one.
+    /// Where to run to meet a moving carrier (A2.1). Three "distance ÷ max speed" iterations used to
+    /// stand in for this; the reach model knows whether this defender is already running at the
+    /// carrier or turning from a standstill, so the lead is no longer the same for both.
     /// </summary>
-    private static Vector2 PursuitPoint(Vector2 selfXZ, Vector2 targetXZ, Vector2 targetVelXZ, float maxSpeed)
+    private static Vector2 PursuitPoint(in ReachKinematics kinematics, Vector2 targetXZ, Vector2 targetVelXZ)
     {
-        float time = 0f;
-        for (int i = 0; i < 3; i++)
-        {
-            Vector2 future = targetXZ + targetVelXZ * time;
-            time = Math.Clamp(
-                Vector2.Distance(selfXZ, future) / MathF.Max(2.0f, maxSpeed),
-                0f, 1.6f);
-        }
-        return targetXZ + targetVelXZ * time;
+        if (!SimMath.IsFinite(targetVelXZ) || targetVelXZ.LengthSquared() < 0.25f) return targetXZ;
+
+        return TimeToReachModel.TrySolveInterception(
+            kinematics, targetXZ, targetVelXZ, out Vector2 meeting, out _,
+            TimeToReachModel.DefaultHorizonSeconds)
+            ? meeting
+            : targetXZ;
     }
 
     private static bool TryGetVisibleEntity(
