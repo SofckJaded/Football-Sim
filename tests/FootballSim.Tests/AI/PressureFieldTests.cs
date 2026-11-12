@@ -22,10 +22,6 @@ public sealed class PressureFieldTests
     private const float Dt = SimConstants.FixedDeltaTime;
     private const int Self = 1;
 
-    private static FootballerObservation Observe(
-        FootballerObservation[]? unused = null,
-        Func<FootballerObservation>? builder = null) => builder!();
-
     private static FootballerObservation Build(
         Vector3 selfPosition,
         Vector3 selfVelocity,
