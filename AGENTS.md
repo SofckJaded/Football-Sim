@@ -31,7 +31,33 @@ pre-match; the AI must never take that player over.
 | Audit probe JSON | `dotnet run --project tools\FootballSim.AuditProbe -c Debug` |
 | Shortcut wrapper | `start.bat check` (build + test), `start.bat verify` (build + test + probe) |
 
-Tests take ~13 s. Always run the full suite after a change; it currently passes 191/191.
+Tests take ~13 s. Always run the full suite after a change; it currently passes **298/298**.
+
+### 2.1 Repository scope
+
+Git holds **code only**, by owner decision. `README.md`, `PROGRESS.md`, `TASKS.md`, `RESUME.md` and
+`docs/` are `.gitignore`d and untracked; they exist on the working machine and were removed from the
+index on 2026-11-12. `AGENTS.md` stays tracked because it is a stable contract rather than per-change
+documentation. Consequences to keep in mind:
+
+- A fresh clone has **no docs and no plan**. Do not `git add -f` them back without the owner asking.
+- Edits to untracked files are not recoverable from git history.
+- Diffs are therefore always code diffs. Keep them that way: do not commit notes into code.
+
+### 2.2 Recording evidence
+
+Captured evidence goes under `artifacts/advanced-ai/` and **must be UTF-8 text**, so git can diff and
+review it. `Tee-Object` writes UTF-16 by default, which git stores as an opaque binary blob
+(converted to UTF-8 on 2026-11-12). Capture with an explicit encoding:
+
+```powershell
+dotnet run --project src\FootballSim.Headless -c Release -- --match-11v11 2>&1 |
+    Out-File artifacts\advanced-ai\<name>.txt -Encoding utf8
+```
+
+Every artifact states `SimulationVersion.Tag` (e.g. `ai3-rs1`). **Only same-version numbers are
+comparable**; a behaviour change bumps `SimulationVersion.AiBehaviour` and requires re-capturing the
+tactical gate, the 11v11 match and the perf sample.
 
 ## 3. Working protocol (how work is executed in this repo)
 
