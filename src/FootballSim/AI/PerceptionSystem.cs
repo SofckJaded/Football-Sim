@@ -119,7 +119,8 @@ public sealed class PerceptionSystem
         BallPossessionSnapshot? possession = null,
         bool? isDesignatedBallResponder = null,
         TeamJobAssignment? job = null,
-        int tick = 0)
+        int tick = 0,
+        TeamContext teamContext = default)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -228,6 +229,7 @@ public sealed class PerceptionSystem
             IsSetPieceTaker = isSetPieceTaker,
             Tick = tick,
             KnowledgeAgeTicks = knowledgeAgeTicks,
+            TacticalContext = teamContext,
             VisiblePlayers = visible,
             TeamProfile = teamProfile,
             SelfTendencies = self.Tendencies,

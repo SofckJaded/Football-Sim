@@ -194,12 +194,20 @@ public enum TeamId
 /// shares with the absolute arrival times kept alongside, and the persistent team-job coordinator reads
 /// a team belief (union of the team's observations) instead of the authoritative squad, so an unseen
 /// opponent can no longer change a team's structure.</item>
+/// <item><c>AiBehaviour 9</c> — A3.1/A3.2: each team's single tactical state is split into possession
+/// stability, claim/phase, zone, transition window and armed restart (<see cref="AI.TeamContext"/>), and
+/// the single 3.5 s state lock is replaced by a policy per fact — a turnover resolves the phase, the
+/// transition and both zones on the tick it happens, while the zone alone keeps a deadband and a
+/// structural dwell. An armed restart claims the ball for the restarting team, and a zone is resolved
+/// immediately under emergency defence. Trajectories differ from version 8 because the lock no longer
+/// delays a counter-attack, the goalkeeper's sweep offset follows the transition window directly and a
+/// restart now hands the claim to the team that will take it.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 8;
+    public const int AiBehaviour = 9;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -623,6 +631,14 @@ public sealed class FootballerObservation
     /// knowledge age (A0.4) and the first honest answer that field has had.
     /// </summary>
     public int KnowledgeAgeTicks { get; init; }
+
+    /// <summary>
+    /// This player's team context for the current tick (A3.1): possession stability, attack/defence
+    /// phase, zone, transition window and any armed restart. Default is the neutral context (no claim,
+    /// defending, own third, no transition, no restart), which is what a lookup with no match behind it
+    /// should look like — a standalone controller never sees "attacking" it was not told about.
+    /// </summary>
+    public TeamContext TacticalContext { get; init; }
 }
 
 public interface IFootballerController

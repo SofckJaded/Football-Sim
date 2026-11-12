@@ -253,8 +253,19 @@ public partial class MatchClientNode : Node3D
                             $" | oldest {belief.OldestAgeTicks} ticks" +
                             (observation is null ? string.Empty : $" | this look {observation.KnowledgeAgeTicks} ticks");
 
+        // A3.1: the team context is several facts, so it is printed as several facts. Collapsing it
+        // back to one label is exactly what the old TeamTacticalState did and what this replaced.
+        TeamContext context = observation?.TacticalContext ?? _engine.Tactics.ContextFor(inspected.Team);
+        string contextLine = $"\nCONTEXT: {context.Phase} | ball {context.Stability}" +
+                             $" | claim {(context.ClaimedTeam?.ToString() ?? "none")}" +
+                             $" | zone {context.Zone} | transition {context.Transition}" +
+                             (context.Restart.IsArmed
+                                 ? $" | RESTART {context.Restart.Kind} for {context.Restart.Team}"
+                                 : string.Empty) +
+                             (context.IsUnderEmergencyDefence ? " | EMERGENCY DEFENCE" : string.Empty);
+
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
-            return beliefLine;
+            return contextLine + beliefLine;
 
         PressureCell cell = ai.PressureField.Read(
             new System.Numerics.Vector2(_engine.Ball.Position.X, _engine.Ball.Position.Z), out bool inside);
@@ -263,8 +274,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return beliefLine + cellLine;
-
+        return contextLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 

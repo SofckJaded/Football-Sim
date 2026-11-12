@@ -460,7 +460,7 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var ball = new BallState { Position = new(0, .11f, 0), LastTouchedByTeam = TeamId.Home, LastTouchedByPlayerId = 8 };
     tracker.Update(players, ball,
         new[] { new BallContactEvent(1, BallContactKind.Collection, 8, TeamId.Home, ball.Position) }, dt);
-    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, dt);
+    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, ball, 1f, dt);
     string afterHomeControl = coord.ConfirmedPossessingTeam?.ToString() ?? "none";
     string controlState = tracker.Current.State.ToString();
 
@@ -471,7 +471,7 @@ foreach (float halfLength in new[] { 1f, 2700f })
     ball.Velocity = new(-6, 0, 1);
     tracker.Update(players, ball,
         new[] { new BallContactEvent(2, BallContactKind.Save, 12, TeamId.Away, ball.Position) { IsParry = true } }, dt);
-    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, dt);
+    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, ball, 1f, dt);
     string afterAwayParry = coord.ConfirmedPossessingTeam?.ToString() ?? "none";
     string stateAfterParry = tracker.Current.State.ToString();
 
@@ -479,7 +479,7 @@ foreach (float halfLength in new[] { 1f, 2700f })
     ball.LastTouchedByPlayerId = 13;
     tracker.Update(players, ball,
         new[] { new BallContactEvent(3, BallContactKind.Kick, 13, TeamId.Away, ball.Position) { Intent = KickIntentType.Clearance } }, dt);
-    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, dt);
+    for (int i = 0; i < 60; i++) coord.ObservePossession(tracker.Current, ball, 1f, dt);
 
     output["possession_deflection"] = new
     {
@@ -618,8 +618,11 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var ball = new BallState { Position = new(0, .11f, 10), LastTouchedByTeam = TeamId.Home, LastTouchedByPlayerId = 8 };
     var homePossession = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Home, 8, null);
     var jobs = new TeamJobCoordinator(pitch);
+    // The probe is a labelled diagnostic, so its job assignments are allowed to read the truth view
+    // (A2.6); the match itself passes a team belief here.
     jobs.Update(players, ball, homePossession, TeamId.Home, null, 15, 1f, 0,
-        TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+        TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players));
 
     var carrier = players.Single(p => p.Id == 8);
     Vector2 carrierXZ = new(carrier.Position.X, carrier.Position.Z);
@@ -647,7 +650,8 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var turnoverBall = new BallState { Position = new(4, .11f, 8), LastTouchedByTeam = TeamId.Away, LastTouchedByPlayerId = 15 };
     var awayPossession = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, 15, null);
     jobs.Update(players, turnoverBall, awayPossession, TeamId.Away, 6, null, 1f, 60,
-        TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+        TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+        TeamBelief.FromTruth(TeamId.Home, players), TeamBelief.FromTruth(TeamId.Away, players));
 
     object TeamJobsDiag(TeamId team) => players
         .Where(p => p.Team == team && p.Role != TacticalRole.Goalkeeper)

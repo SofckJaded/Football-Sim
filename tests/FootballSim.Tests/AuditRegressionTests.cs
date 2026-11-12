@@ -1966,7 +1966,7 @@ public sealed class AuditRegressionTests
 
         tracker.Update(players, ball,
             new[] { new BallContactEvent(1, BallContactKind.Collection, 8, TeamId.Home, ball.Position) }, Dt);
-        coordinator.ObservePossession(tracker.Current, Dt);
+        coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
         Assert.Equal(TeamId.Home, coordinator.ConfirmedPossessingTeam);
 
         // Away keeper parries the shot away; last touch is now Away, but the ball is loose.
@@ -1977,7 +1977,7 @@ public sealed class AuditRegressionTests
             new[] { new BallContactEvent(2, BallContactKind.Save, 12, TeamId.Away, ball.Position) { IsParry = true } }, Dt);
 
         for (int i = 0; i < 60; i++)
-            coordinator.ObservePossession(tracker.Current, Dt);
+            coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
 
         Assert.Equal(BallControlState.Loose, tracker.Current.State);
         Assert.Equal(TeamId.Home, coordinator.ConfirmedPossessingTeam);
@@ -1994,7 +1994,7 @@ public sealed class AuditRegressionTests
 
         tracker.Update(players, ball,
             new[] { new BallContactEvent(1, BallContactKind.Collection, 8, TeamId.Home, ball.Position) }, Dt);
-        coordinator.ObservePossession(tracker.Current, Dt);
+        coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
 
         ball.LastTouchedByTeam = TeamId.Away;
         ball.LastTouchedByPlayerId = 13;
@@ -2006,7 +2006,7 @@ public sealed class AuditRegressionTests
                     Intent = KickIntentType.Clearance
                 }
             }, Dt);
-        coordinator.ObservePossession(tracker.Current, Dt);
+        coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
 
         Assert.Equal(BallControlState.Loose, tracker.Current.State);
         Assert.Equal(TeamId.Away, coordinator.ConfirmedPossessingTeam);
@@ -2022,7 +2022,7 @@ public sealed class AuditRegressionTests
         var (tracker, coordinator, players, ball) = PossessionScenario();
         tracker.Update(players, ball,
             new[] { new BallContactEvent(1, BallContactKind.Collection, 8, TeamId.Home, ball.Position) }, Dt);
-        coordinator.ObservePossession(tracker.Current, Dt);
+        coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
         Assert.Equal(TeamId.Home, coordinator.ConfirmedPossessingTeam);
 
         // Away #13 takes the ball off him.
@@ -2030,7 +2030,7 @@ public sealed class AuditRegressionTests
         away.Position = ball.Position + new Vector3(0.3f, 0f, 0f);
         tracker.Update(players, ball,
             new[] { new BallContactEvent(2, BallContactKind.Tackle, 13, TeamId.Away, ball.Position) }, Dt);
-        coordinator.ObservePossession(tracker.Current, Dt);
+        coordinator.ObservePossession(tracker.Current, ball, 1f, Dt);
 
         Assert.Equal(BallControlState.Controlled, tracker.Current.State);
         Assert.Equal(TeamId.Away, coordinator.ConfirmedPossessingTeam);

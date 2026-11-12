@@ -139,7 +139,9 @@ public sealed class MatchSimulationEngine
         _perceptionRng = RandomStreams.Create(_config.Seed, RandomStream.Perception);
         _ballSolver = new BallPhysicsSolver(null, _pitch);
         _executionSystem = new FootballerExecutionSystem(_pitch);
-        _tacticalCoordinator = new TeamTacticalCoordinator(_pitch);
+        // A3.1: the coordinator resolves each team's context from the profiles (the transition windows
+        // depend on directness and pressing intensity), so it needs them from the start.
+        _tacticalCoordinator = new TeamTacticalCoordinator(_pitch, _config.HomeProfile, _config.AwayProfile);
         _ballResponderElection = new BallResponderElection(_pitch);
         _teamJobs = new TeamJobCoordinator(_pitch);
         _rulesEngine = new MatchRulesEngine(_pitch, _ballSolver.Parameters.Radius);
@@ -495,6 +497,12 @@ public sealed class MatchSimulationEngine
 
         float homeDirX = _rulesEngine.GetHomeAttackDirectionX();
 
+        // A3.1: the rules engine owns the restart; the tactical context mirrors what it has armed. Read
+        // before any decision so what a player sees this tick is the restart in force this tick — an
+        // armed restart is an exclusive claim on the ball, even though ownership is reset by the stoppage.
+        _tacticalCoordinator.ObserveRestart(
+            _rulesEngine.ActiveRestart, _rulesEngine.RestartTeam, Ball, homeDirX);
+
         // Audit F06: a whistle/setup delay is not live play. Decisions, contacts and ball physics
         // are frozen; only the rules clock advances, so the restart can resume.
         bool livePlay = !_rulesEngine.IsPlaySuspended;
@@ -503,7 +511,9 @@ public sealed class MatchSimulationEngine
         {
             // Audit F10: possession comes from the ownership model (control or a deliberate play),
             // not from a bare last touch, and is confirmed every tick so a change is immediate.
-            _tacticalCoordinator.ObservePossession(_possessionTracker.Current, dt);
+            // A3.1/A3.2: the same read splits the claim from the ball's stability, and a turnover
+            // re-resolves the phase and both zones on this tick instead of waiting out a dwell.
+            _tacticalCoordinator.ObservePossession(_possessionTracker.Current, Ball, homeDirX, dt);
 
             // One centrally elected ball responder per team, using real time-to-reach. The human is
             // never elected as an AI responder, so an idle human cannot switch the AI off the ball.
@@ -514,8 +524,7 @@ public sealed class MatchSimulationEngine
             if (CurrentTick % 4 == 1)
             {
                 _tacticalCoordinator.UpdateTeamAnchors(
-                    _players, Ball, _config.HomeProfile, _config.AwayProfile, homeDirX, dt * 4f,
-                    _config.PlayersPerTeam);
+                    _players, Ball, homeDirX, dt * 4f, _config.PlayersPerTeam);
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.
@@ -544,7 +553,8 @@ public sealed class MatchSimulationEngine
                     p, _players, Ball, _tacticalCoordinator.ConfirmedPossessingTeam,
                     _rulesEngine.Phase, _rulesEngine.MatchClockSeconds,
                     attackDirX, isTaker, profile, _perceptionRng,
-                    possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick);
+                    possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick,
+                    _tacticalCoordinator.ContextFor(p.Team));
                 _latestObservations[p.Id] = obs;
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);

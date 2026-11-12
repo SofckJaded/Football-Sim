@@ -417,6 +417,61 @@ step. A9.3 owns the profile.
 
 ---
 
+## 2026-11-12 — A3.1 team context + A3.2 context-sensitive hysteresis (simulation version `ai9-rs1`)
+
+- **A3.1** splits each team's single tactical state into possession stability, claim/phase, zone,
+  transition window and armed restart (`AI/TeamContext.cs`), resolved per live tick by
+  `TeamTacticalCoordinator` and published to every player's observation. A deflection now leaves the
+  claim with the team that played the ball while its stability drops to loose, and an armed restart
+  claims the ball for the team that will take it.
+- **A3.2** removes the single 3.5 s state lock. The phase and the transition now change on the turnover
+  tick; the zone alone keeps a 3 m deadband plus a 3.5 s structural dwell; a turnover or an emergency
+  defence re-resolves both zones immediately.
+
+### 11v11 headless match — `a3-team-context-11v11-2026-11-12.txt`
+
+| Metric | ai8-rs1 | ai9-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 43 728 ms | 33 456 ms |
+| Ticks | 326 086 | 326 430 |
+| Score | 6 – 6 | **9 – 7** |
+| Possession | 50.6 / 49.4 | 50.4 / 49.6 |
+| Controlled ball | 50.1 / 49.9 | 49.0 / 51.0 |
+| Passes | 943 / 878 (75 % / 76 %) | 859 / 832 (74 % / 76 %) |
+| Shots | 57 / 49 | 72 / 60 |
+| Width | 43.0 / 40.9 m | 43.6 / 40.6 m |
+| Kicks executed | 1955 / 2102 | 1849 / 2115 |
+
+**Reading:** the match still reaches full time and both teams still play. The scoreline moved from
+6–6 to 9–7, which is what the two intended mechanisms predict at this stage: a counter-attack is no
+longer held off by a structural timer (so a direct side can go forward immediately after winning the
+ball), and a restart no longer starts with the wrong team holding the ball claim (so shape is right
+for the first ticks of every throw-in, goal kick, corner and free kick). The magnitude is a match-level
+observation, not a per-mechanism measurement; A3.3–A3.6 rebuild structure and A9.2's ablations are the
+place to attribute it.
+
+### Tactical differentiation gate — `a3-team-context-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **4/5** seeds, mean
+separation **1.93 m** (was 2.23 m). **GATE: PASS** (the gate needs a majority and > 0.5 m mean). The
+separation remains the weakest area of the gate, as it has been since A2.1; A3.3+ and A9.1 own it.
+
+### Performance — `a3-team-context-perf-2026-11-12.txt`
+
+| Metric | ai8-rs1 | ai9-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 138.1 µs | **124.1 µs** |
+| p50 / p95 | — | 90.8 / 347.2 µs |
+| p99 / max | 499.9 / 1712 µs | 469.5 / 1345.9 µs |
+| Allocated per tick | 61 169 B | 61 268 B |
+
+The context is six small enums, a nullable team id and a bool in one `readonly record struct`; it is
+copied into each observation by value and `ObserveRestart` returns immediately when the armed restart
+is unchanged. Allocation is flat (+99 B) and the mean went down, which is trajectory, not a claim that
+context resolution is free.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
