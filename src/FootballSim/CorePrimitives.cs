@@ -183,12 +183,16 @@ public enum TeamId
 /// carrier pursuit point and the goalkeeper sweep. It uses current velocity, turn cost, acceleration,
 /// fatigue, recovery balance and contact reach, and the responder election now scores candidates
 /// against their own meeting with the ball instead of one shared intercept point.</item>
+/// <item><c>AiBehaviour 6</c> — A2.2: perception has sight filtering and a persistent, ageing memory.
+/// An opponent outside the facing cone is no longer measured every tick; the player keeps a predicted
+/// position from the last sighting, with growing uncertainty and decaying confidence. Teammates are
+/// still observed every tick (teammate belief is A7.2's team calls).</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 5;
+    public const int AiBehaviour = 6;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -477,7 +481,21 @@ public readonly record struct PerceivedEntity(
     Vector3 EstimatedPosition,
     Vector3 EstimatedVelocity,
     float Confidence01
-);
+)
+{
+    /// <summary>
+    /// Ticks since this entity was actually observed (A2.2). 0 means the estimate comes from this tick's
+    /// observation; a positive value means it is a prediction from memory and its position is where the
+    /// entity is *expected* to be, not where it is.
+    /// </summary>
+    public int ObservedAgeTicks { get; init; }
+
+    /// <summary>
+    /// Positional uncertainty introduced by that age, in metres (A2.2). Zero for a fresh observation.
+    /// A scorer may widen its tolerance by this instead of pretending a stale position is exact.
+    /// </summary>
+    public float PositionUncertaintyMeters { get; init; }
+}
 
 public enum MatchPhase
 {
@@ -584,6 +602,13 @@ public sealed class FootballerObservation
     /// then fall back to their local nearest-teammate estimate.
     /// </summary>
     public bool? IsDesignatedBallResponder { get; init; }
+
+    /// <summary>
+    /// Oldest age, in ticks, among the opponent estimates in <see cref="VisiblePlayers"/> (A2.2), or 0
+    /// when every opponent in the picture was seen this tick. This is the staleness the trace records as
+    /// knowledge age (A0.4) and the first honest answer that field has had.
+    /// </summary>
+    public int KnowledgeAgeTicks { get; init; }
 }
 
 public interface IFootballerController

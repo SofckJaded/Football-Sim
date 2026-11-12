@@ -180,7 +180,9 @@ public sealed class ScheduledDecisionTests
     [Fact]
     public void SchedulingOn_TheMatchStillPlaysAndReachesFullTime()
     {
-        ScenarioRunResult run = ScenarioRunner.Run(WithAi(ScenarioLibrary.BuildUpThreeVersusTwo(), Scheduled), 300);
+        // A2.2 changed when the press arrives in the 3v2 build-up fixture, so "the match still plays"
+        // is checked on a fixture where a keeper and a striker must ask for the ball in this window.
+        ScenarioRunResult run = ScenarioRunner.Run(WithAi(ScenarioLibrary.KeeperSweepRace(), Scheduled), 300);
 
         Assert.Equal(300, run.TicksRun);
         Assert.NotEmpty(run.ContactAttempts);

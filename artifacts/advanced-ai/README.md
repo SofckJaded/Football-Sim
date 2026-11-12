@@ -209,6 +209,101 @@ precise constant, and compare only same-version numbers.
 
 ---
 
+## 2026-11-12 — A2.1 one reach model (simulation version `ai5-rs1`)
+
+`AI/TimeToReachModel.cs` replaces four incompatible time-to-reach estimates with one that mirrors
+`StepPlayerLocomotion` (fatigue-adjusted speed cap, averaged turn cost, braking/accelerating
+acceleration scaled by recovery balance, arrival defined by contact reach). The responder election now
+scores each candidate against *its own* meeting with the ball instead of one shared intercept point.
+
+### 11v11 headless match — `a2-reach-11v11-2026-11-12.txt`
+
+| Metric | ai4-rs1 | ai5-rs1 |
+| :--- | :--- | :--- |
+| Ticks | 326 268 | 326 368 |
+| Score | 23 – 18 | **9 – 6** |
+| Possession | 48.2 / 51.8 | 49.4 / 50.6 |
+| Passes | 850 / 792 | 870 / 880 |
+| Pass completions | 90 % / 89 % | **76 % / 79 %** |
+| Shots | 90 / 79 | **57 / 36** |
+
+**Reading:** the defending side now *solves* the interception (where and when it can meet the ball)
+instead of approximating it with a closest-approach point, so more passes are cut out and far fewer
+shots are conceded. That is the intended direction for an advanced-AI milestone, and it moves the match
+towards realistic numbers (15 goals is still high; 76–79 % pass completion is normal football). The
+magnitude is *not* separately attributed to the interception target versus the receiving side's run
+target — `PassSuccessModel` (A4.2) owns that measurement. Recorded in `docs/KNOWN_ISSUES.md`.
+
+### Tactical differentiation gate — `a2-reach-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, possession side wider on **5/5**, mean separation
+**1.54 m** (was 3.05 m). **GATE: PASS**, but the separation is the weakest it has been since A0. With
+better defenders, 240 s fragments are more often decided by duels than by shape; A3 (structure) and A9
+(style tuning) are where that number has to be rebuilt.
+
+### Performance — `a2-reach-perf-2026-11-12.txt`
+
+| Metric | ai4-rs1 | ai5-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 104.1 µs | 112.9 µs |
+| p99 / max | 330.3 / 1534 µs | 357.4 / 1485 µs |
+| Allocated per tick | 44 955 B | 45 050 B |
+
+≈ 9 µs/tick for the reach model, no allocation growth: the model is closed-form (a 48-sample scan plus
+a bisection on the squared distance) and allocation-free.
+
+---
+
+## 2026-11-12 — A2.2 sight filtering and observation memory (simulation version `ai6-rs1`)
+
+Perception stops being omniscient. An opponent outside the facing cone (and not inside 2.5 m) is no
+longer measured every tick: the player publishes a **prediction** from the last sighting, with age,
+decaying confidence, damped velocity extrapolation and growing positional uncertainty. Teammates are
+still observed every tick, because team shape is coordinated by the job system and teammate belief is
+A7.2's delayed team calls.
+
+### 11v11 headless match — `a2-memory-11v11-2026-11-12.txt`
+
+| Metric | ai5-rs1 | ai6-rs1 |
+| :--- | :--- | :--- |
+| Ticks | 326 368 | 326 258 |
+| Score | 9 – 6 | 8 – 6 |
+| Possession | 49.4 / 50.6 | 48.8 / 51.2 |
+| Passes | 870 / 880 (76 % / 79 %) | 840 / 854 (77 % / 76 %) |
+| Shots | 57 / 36 | 79 / 51 |
+| Width | 42.8 / 41.0 m | 42.5 / 40.9 m |
+
+**Reading:** the change is deliberately small at match level — every team still plays, and shot volume
+moved back towards the ai4 level. What it buys is the invariant, not a scoreline: an unseen opponent's
+live motion can no longer reach an estimate, a candidate score or a decision (proven in
+`PlayerMemoryTests`, including two worlds that differ only in a hidden opponent's direction and produce
+byte-identical pictures and candidate tables).
+
+One keeper-level consequence worth recording: players now sometimes carry the ball against *stale*
+knowledge of the press. In the 3v2 build-up fixture the carrier dribbles away unchallenged and the
+fragment produces no requested contact in 4 s, where it used to produce two. Two trace/scheduler
+regressions used that fixture as a "the run actually played" window and now use the keeper-sweep fixture,
+which is guaranteed to produce keeper and striker contacts in the same window.
+
+### Tactical differentiation gate — `a2-memory-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, possession side wider on **5/5**, mean separation
+**1.91 m** (was 1.54 m). **GATE: PASS.**
+
+### Performance — `a2-memory-perf-2026-11-12.txt`
+
+| Metric | ai5-rs1 | ai6-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 112.9 µs | 106.5 µs |
+| p99 / max | 357.4 / 1485 µs | 367.6 / 579 µs |
+| Allocated per tick | 45 050 B | 49 232 B |
+
+The mean went *down*: fewer opponents are measured per tick, so fewer noise draws and fewer list entries
+are built. The allocation rose ~4 KB/tick, which is the same trajectory-dependence documented above (the
+belief store itself allocates one small object per observer/observed pair for the whole match).
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

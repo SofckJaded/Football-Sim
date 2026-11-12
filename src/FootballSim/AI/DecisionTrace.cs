@@ -17,10 +17,10 @@ namespace FootballSim.AI;
 /// Fields that the current implementation cannot honestly supply are nullable and documented as such,
 /// rather than filled with a zero that would look like a measurement:
 /// <list type="bullet">
-/// <item><see cref="KnowledgeAgeTicks"/> — perception has no memory yet (arrives in A2.2).</item>
-/// <item><see cref="CandidateKey"/> — candidate identity is still the action name; stable keys arrive
-/// in A1.1.</item>
-/// <item><see cref="IntentId"/> — there is no persistent intent object yet (arrives in A1.2).</item>
+/// <item><see cref="KnowledgeAgeTicks"/> — supplied since A2.2, when perception gained a persistent,
+/// ageing memory; before that there was no stale knowledge to report.</item>
+/// <item><see cref="IntentId"/> — the intent executor (A1.2) carries a command, not a stable id, so this
+/// stays null rather than inventing a number nobody can look up.</item>
 /// </list>
 /// </summary>
 public readonly record struct DecisionTraceEntry(
@@ -100,7 +100,8 @@ public sealed class DecisionTraceBuffer
     public void Record(
         int tick, FootballerObservation observation, string selectedAction, float selectedUtility,
         string? runnerUpAction, float runnerUpUtility, int candidateCount,
-        Vector3? target = null, int? targetPlayerId = null, string? candidateKey = null)
+        Vector3? target = null, int? targetPlayerId = null, string? candidateKey = null,
+        int? knowledgeAgeTicks = null)
     {
         Record(new DecisionTraceEntry(
             tick, observation.SelfId, observation.SelfTeam, observation.SelfRole,
@@ -109,7 +110,9 @@ public sealed class DecisionTraceBuffer
         {
             Target = target,
             TargetPlayerId = targetPlayerId,
-            CandidateKey = candidateKey
+            CandidateKey = candidateKey,
+            // A2.2: perception now has an age to report, so the trace stops publishing null here.
+            KnowledgeAgeTicks = knowledgeAgeTicks ?? observation.KnowledgeAgeTicks
         });
     }
 

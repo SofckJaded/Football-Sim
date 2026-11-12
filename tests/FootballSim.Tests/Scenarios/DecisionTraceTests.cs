@@ -115,7 +115,12 @@ public sealed class DecisionTraceTests
     [Fact]
     public void Trace_RecordsTheExecutedContactSeparatelyFromTheChosenAction()
     {
-        ScenarioRunResult run = ScenarioRunner.Run(ScenarioLibrary.BuildUpThreeVersusTwo(), 240, traceDecisions: true);
+        // A2.2: this used to run the 3v2 build-up for 240 ticks, where the carrier dribbles away
+        // unchallenged and the fixture produced exactly two requested contacts — a margin that the
+        // sight model removed, because the carrier now carries against stale knowledge of the press.
+        // The invariant under test is the *separation*, so it runs on the fixture where a keeper and a
+        // striker are guaranteed to ask for the ball in the same window.
+        ScenarioRunResult run = ScenarioRunner.Run(ScenarioLibrary.KeeperSweepRace(), 240, traceDecisions: true);
 
         // The trace says what was chosen; the contact log says what the execution layer accepted or
         // refused. A scenario assertion must be able to compare the two, so both must be populated
@@ -151,9 +156,14 @@ public sealed class DecisionTraceTests
         ScenarioRunResult run = ScenarioRunner.Run(ScenarioLibrary.BuildUpThreeVersusTwo(), 10, traceDecisions: true);
         DecisionTraceEntry entry = run.Decisions[0];
 
-        // Perception has no memory model yet (A2.2), candidate keys arrive in A1.1 and intents in A1.2.
-        // A zero here would read as "perfectly fresh knowledge", which is a claim the code cannot make.
-        Assert.Null(entry.KnowledgeAgeTicks);
+        // A2.2 gave perception a persistent, ageing memory, so knowledge age is now a real measurement
+        // and the trace publishes it. The first decision of a fragment is the first look at the pitch,
+        // where every player genuinely is fresh — a zero here is the truth, not a placeholder.
+        Assert.NotNull(entry.KnowledgeAgeTicks);
+        Assert.True(entry.KnowledgeAgeTicks >= 0);
+
+        // Candidate keys (A1.1c) and intents (A1.2) exist for a utility AI; this entry is the keeper,
+        // which has neither, and a zero would read as a decision it does not take.
         Assert.Null(entry.CandidateKey);
         Assert.Null(entry.IntentId);
     }

@@ -16,6 +16,21 @@ namespace FootballSim.AI;
 /// This is the seam between truth and knowledge (plan §3). The engine hands it the real state; every
 /// derived value it publishes is what a controller may act on. Extracted verbatim from
 /// <see cref="TacticalUtilityAiController"/> in A1.1d so perception and decision can evolve separately.
+///
+/// A2.2 added the two halves of an actual knowledge boundary:
+/// <list type="bullet">
+/// <item><b>sight filtering</b> — an opponent outside the facing cone (and not right next to the
+/// player) is not measured this tick;</item>
+/// <item><b>persistent memory</b> — such an opponent is published from <see cref="PlayerMemory"/> as a
+/// <i>prediction</i> from the last sighting, with age, decaying confidence and growing uncertainty.
+/// The earlier version included every active opponent on every tick, so an unseen opponent's live
+/// motion reached every scorer and the "confidence" number described nothing.</item>
+/// </list>
+///
+/// Teammates are deliberately still observed every tick: a team's shape is coordinated by the
+/// match-level job system, and modelling teammate belief properly is A7.2's delayed, expiring team
+/// calls. The hard invariant the plan states — an unseen <i>opponent</i>'s motion must not reach an
+/// estimate, score or assignment — is about the side a player can only see.
 /// </summary>
 public sealed class PerceptionSystem
 {
@@ -25,27 +40,61 @@ public sealed class PerceptionSystem
     /// <summary>A ball teleport (restart, kickoff) is not a reaction-worthy movement.</summary>
     private const float TeleportResetDistance = 15f;
 
+    /// <summary>
+    /// Widest angle off the facing direction at which an opponent is still seen. Human peripheral
+    /// vision is roughly ±100°, and players are not expected to lose a man standing beside them. A7.1
+    /// replaces this with head/gaze direction and attention targets.
+    /// </summary>
+    private const float SightConeMinFacingDot = -0.17f;
+
+    /// <summary>
+    /// Inside this radius a player knows who is there regardless of facing — body contact, voice and
+    /// the ball itself. Without it, players would lose track of a defender standing on their toes.
+    /// </summary>
+    private const float NearFieldMeters = 2.5f;
+
     private readonly Dictionary<int, List<(Vector3 Position, Vector3 Velocity)>> _ballHistory = new();
     private readonly Dictionary<int, float> _historyTimestamp = new();
+    private readonly Dictionary<int, PlayerMemory> _memories = new();
 
     public static int ReactionDelayTicks(float reactionDelaySeconds) =>
         Math.Clamp((int)MathF.Round(reactionDelaySeconds / SimConstants.FixedDeltaTime), 0, MaxReactionDelayTicks);
 
+    /// <summary>What one player currently remembers. Created on demand; never null for a live player.</summary>
+    public PlayerMemory GetMemory(int observerId)
+    {
+        if (!_memories.TryGetValue(observerId, out PlayerMemory? memory))
+        {
+            memory = new PlayerMemory();
+            _memories[observerId] = memory;
+        }
+        return memory;
+    }
+
+    /// <summary>One player's belief about another, or null when they have never seen them.</summary>
+    public PlayerBelief? GetBelief(int observerId, int playerId) =>
+        _memories.TryGetValue(observerId, out PlayerMemory? memory) ? memory.Find(playerId) : null;
+
     /// <summary>
-    /// Forgets one player's ball-reaction history (A1.5). Used when a player is removed and when a
-    /// discontinuity makes the previous samples meaningless.
+    /// Forgets one player (A1.5): their own reactions and memory, and what everybody remembers about
+    /// them. A removed player must not linger in anybody's picture of the pitch.
     /// </summary>
     public void Forget(int playerId)
     {
         _ballHistory.Remove(playerId);
         _historyTimestamp.Remove(playerId);
+        _memories.Remove(playerId);
+        foreach (PlayerMemory memory in _memories.Values)
+            memory.Forget(playerId);
     }
 
-    /// <summary>Forgets every player's ball-reaction history.</summary>
+    /// <summary>Forgets every player's ball-reaction history and memory.</summary>
     public void Clear()
     {
         _ballHistory.Clear();
         _historyTimestamp.Clear();
+        foreach (PlayerMemory memory in _memories.Values)
+            memory.Clear();
     }
 
     public FootballerObservation BuildObservation(
@@ -67,7 +116,11 @@ public sealed class PerceptionSystem
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
         BallPossessionSnapshot ballPossession = possession ?? InferPossession(ball);
+        PlayerMemory memory = GetMemory(self.Id);
+        bool firstLook = !memory.IsInitialised;
+
         var visible = new List<PerceivedEntity>(allPlayers.Count - 1);
+        int knowledgeAgeTicks = 0;
         foreach (var other in allPlayers)
         {
             if (other.Id == self.Id || !other.IsActiveOnPitch) continue;
@@ -76,23 +129,43 @@ public sealed class PerceptionSystem
             float dist = toOther.Length();
             float facingDot = dist > 1e-3f ? Vector2.Dot(toOther / dist, self.FacingXZ) : 1f;
 
-            bool inFrontCone = facingDot >= -0.25f;
-            float distanceFactor = Math.Clamp(1.0f - (dist / 65.0f), 0.20f, 1.0f);
-            float confidence = inFrontCone ? distanceFactor : distanceFactor * 0.50f;
+            // Teammates are coordinated, not scouted (A7.2 owns teammate belief); an opponent has to be
+            // in front of the player, close enough to feel, or seen on the first look at the pitch.
+            bool inSight = firstLook ||
+                           other.Team == self.Team ||
+                           dist <= NearFieldMeters ||
+                           facingDot >= SightConeMinFacingDot;
 
-            float posNoise = (1.0f - confidence) * 0.30f;
-            Vector3 estPos = other.Position + new Vector3(
-                rng.NextGaussian(0f, posNoise),
-                0f,
-                rng.NextGaussian(0f, posNoise));
+            if (inSight)
+            {
+                float distanceFactor = Math.Clamp(1.0f - (dist / 65.0f), 0.20f, 1.0f);
+                float confidence = distanceFactor;
 
-            Vector3 estVel = other.Velocity + new Vector3(
-                rng.NextGaussian(0f, posNoise * 0.45f),
-                0f,
-                rng.NextGaussian(0f, posNoise * 0.45f));
+                float posNoise = (1.0f - confidence) * 0.30f;
+                Vector3 estPos = other.Position + new Vector3(
+                    rng.NextGaussian(0f, posNoise),
+                    0f,
+                    rng.NextGaussian(0f, posNoise));
 
-            visible.Add(new PerceivedEntity(other.Id, other.Team, other.Role, estPos, estVel, confidence));
+                Vector3 estVel = other.Velocity + new Vector3(
+                    rng.NextGaussian(0f, posNoise * 0.45f),
+                    0f,
+                    rng.NextGaussian(0f, posNoise * 0.45f));
+
+                memory.Observe(other.Id, other.Team, other.Role, estPos, estVel, confidence, tick);
+                visible.Add(new PerceivedEntity(other.Id, other.Team, other.Role, estPos, estVel, confidence));
+                continue;
+            }
+
+            // Out of sight: publish the prediction from memory. No RNG is drawn and no live state is
+            // read, so an unseen opponent's movement cannot reach this player's picture of the pitch.
+            if (!memory.TryPredict(other.Id, tick, out PerceivedEntity remembered)) continue;
+            if (other.Team != self.Team && remembered.ObservedAgeTicks > knowledgeAgeTicks)
+                knowledgeAgeTicks = remembered.ObservedAgeTicks;
+            visible.Add(remembered);
         }
+
+        memory.MarkInitialised();
 
         // Audit F18: reaction delay is a delayed *view* of the ball, not a smaller velocity-noise
         // scale. The player decides from where the ball was ReactionDelaySeconds ago (the execution
@@ -141,6 +214,7 @@ public sealed class PerceptionSystem
             CurrentMatchPhase = matchPhase,
             IsSetPieceTaker = isSetPieceTaker,
             Tick = tick,
+            KnowledgeAgeTicks = knowledgeAgeTicks,
             VisiblePlayers = visible,
             TeamProfile = teamProfile,
             SelfTendencies = self.Tendencies,
