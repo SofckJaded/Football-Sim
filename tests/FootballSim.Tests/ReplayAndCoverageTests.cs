@@ -278,12 +278,15 @@ public sealed class ReplayAndCoverageTests
 
             MatchAnalyticsSummary a = sim.Analytics;
             bool completed = sim.Rules.Phase == MatchPhase.FullTime;
-            float widthDifference = a.HomeAverageTeamWidthMeters - a.AwayAverageTeamWidthMeters;
+            // A4: the profile comparison is made on the possession-scoped span, the shape a team holds
+            // with the ball. The unconditional span is reported beside it.
+            float widthDifference = a.HomeAttackingWidthMeters - a.AwayAttackingWidthMeters;
             widthDifferences.Add(widthDifference);
 
             _output.WriteLine(
                 $"Seed {seed}: FT={completed} clock={sim.Rules.MatchClockSeconds:F1}s " +
-                $"score={a.HomeGoals}-{a.AwayGoals} width={a.HomeAverageTeamWidthMeters:F1}/{a.AwayAverageTeamWidthMeters:F1}m " +
+                $"score={a.HomeGoals}-{a.AwayGoals} width={a.HomeAttackingWidthMeters:F1}/{a.AwayAttackingWidthMeters:F1}m " +
+                $"(all-tick {a.HomeAverageTeamWidthMeters:F1}/{a.AwayAverageTeamWidthMeters:F1}m) " +
                 $"passes={a.HomePassesAttempted}/{a.AwayPassesAttempted} completed={a.HomePassesCompleted}/{a.AwayPassesCompleted} " +
                 $"shots={a.HomeShots}/{a.AwayShots} possession={a.HomePossessionShare * 100f:F1}% " +
                 $"controlled={a.HomeControlledPossessionShare * 100f:F1}% kicks={executedKicks}/{requestedKicks}");
@@ -302,6 +305,7 @@ public sealed class ReplayAndCoverageTests
 
             // Metrics that must be finite and inside their declared range for every seed.
             Assert.True(float.IsFinite(a.HomeAverageTeamWidthMeters) && a.HomeAverageTeamWidthMeters >= 0f);
+            Assert.True(float.IsFinite(a.HomeAttackingWidthMeters) && a.HomeAttackingWidthMeters >= 0f);
             Assert.True(float.IsFinite(a.HomePossessionShare));
             Assert.InRange(a.HomePossessionShare, 0f, 1f);
         }

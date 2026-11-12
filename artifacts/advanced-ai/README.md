@@ -648,6 +648,67 @@ numbers: gate 5/5 at 2.20 m, width 43.2/41.1 m in the reference match, and the s
 
 ---
 
+## 2026-11-12 — A4.1 carrier action set + A4.2 pass-success model (simulation version `ai13-rs1`)
+
+Files: `a4-tactical-gate.txt`, `a4-match-11v11.txt`, `a4-perf.txt`. Release build, reference machine.
+
+### 11v11 headless match — `a4-match-11v11.txt`
+
+| Metric | ai12-rs1 | ai13-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 31 916 ms | 35 719 ms |
+| Ticks | 326 594 | 327 650 |
+| Score | 10 – 4 | **2 – 4** |
+| Possession | 49.6 / 50.4 | 48.9 / 51.1 |
+| Controlled ball | 48.6 / 51.4 | 48.3 / 51.7 |
+| Passes | 785 / 804 (73 % / 75 %) | 1253 / 1398 (**77 % / 79 %**) |
+| Shots | 69 / 64 | 47 / 29 |
+| Width (all-tick) | 43.2 / 41.1 m | 42.6 / 41.0 m |
+
+**Reading:** the pass count went up by roughly 60 % and completion with it, which is what A4.2 is for —
+the score now asks *how likely the ball is to arrive* instead of using a flat lane threshold, so passes
+that would have been abandoned for a merely average lane (and passes that would have been played into a
+blocked one) are separated. The goal count fell to 6 total and is, per `KNOWN_ISSUES.md`, still not a
+mechanism signal on one seed. The shot split moved in the possession side's favour (47/29).
+
+### Tactical differentiation gate — `a4-tactical-gate.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **3.84 m**. **GATE: PASS.**
+
+This gate now compares the **possession-scoped** span (`HomeAttackingWidthMeters`: the lateral span of a
+team's outfield players sampled only while that team has the ball), and the artifact prints the
+unconditional span beside it. Reason: under the new carrier behaviour the unconditional span read
+**2/5 seeds at a mean of 1.19 m**, and the per-seed sign tracked possession share (a team with >50 % of
+the ball was wider) rather than the width profile. Carrying the ball inward — which is what a better
+value model does — was being measured as "a narrower profile". On the measure the profile is actually
+about, the effect is not marginal: 5/5 at 3.84 m, every seed between 2.7 m and 5.1 m.
+
+### Performance — `a4-perf.txt`
+
+| Metric | ai12-rs1 | ai13-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 118.5 µs | 127.4 µs |
+| p50 / p95 | 92.0 / 300.0 µs | 91.5 / 313.4 µs |
+| p99 / max | 394.8 / 1787.4 µs | 490.4 / 1057.7 µs |
+| Allocated per tick | 61 934 B | 62 234 B |
+
+The cost is the expected one: every planned pass runs the lane sample plus one reach query per opponent
+and the success estimate. Allocation is flat (the pass-target buffer and the terms are structs), and the
+60 Hz budget holds at p99 with two orders of magnitude to spare. A9.3 owns the general fix.
+
+### What A4.1/A4.2 deliberately did not do
+
+- No unified value scale for pass / carry / shot, and no removal of the final-third backward-pass ban —
+  both are A4.4, and they are only allowed once a better chance provably beats a poor shot and a safe
+  recycle beats a dangerous forced pass.
+- No reception value (A4.3): the pass score's gain is still a progression/space proxy. A4.3 replaces it
+  with the post-reception state, and must read `PassSuccessTerms.DefenderPressure01` rather than adding a
+  second pressure estimate.
+- No hysteresis change (A4.5): the commitment bonus still holds the current action.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

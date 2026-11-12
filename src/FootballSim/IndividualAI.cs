@@ -56,7 +56,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         AiRuntimeConfig? ai = null)
     {
         _pitch = pitch;
-        _generator = new CandidateGenerator(pitch, communication);
+        _generator = new CandidateGenerator(pitch, communication, ai);
         _ai = ai ?? AiRuntimeConfig.Default;
         _scheduler = new AiScheduler(_ai);
     }

@@ -844,6 +844,7 @@ public sealed class TeamJobCoordinator
 
         Vector2 best = nominal;
         float bestScore = ScoreJobRegion(job, nominal, referenceXZ, playerId, opponents, attackDirX, attackingWidth01);
+        float nominalSeparation = JobRegionScoring.NearestTeammateDistance(nominal, _assignedRegions, playerId);
 
         for (int probe = 0; probe < 8; probe++)
         {
@@ -859,6 +860,16 @@ public sealed class TeamJobCoordinator
 
             candidate = ClampToPitch(candidate);
             if (attackingJob) candidate = Onside(candidate, offsideLineProj - 1.5f, attackDirX);
+
+            // A probe may move the target, but it may not slide it onto a teammate's target: below this
+            // floor the staggering term alone can lose to connection and lane openness, and the duty is
+            // then no longer a position of its own.
+            if (nominalSeparation >= JobRegionScoring.MinRefinedSeparationMeters &&
+                JobRegionScoring.NearestTeammateDistance(candidate, _assignedRegions, playerId) <
+                JobRegionScoring.MinRefinedSeparationMeters)
+            {
+                continue;
+            }
 
             float score = ScoreJobRegion(job, candidate, referenceXZ, playerId, opponents, attackDirX, attackingWidth01);
             if (score <= bestScore + RegionSwitchMargin) continue;

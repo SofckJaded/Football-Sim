@@ -69,11 +69,24 @@ public sealed class AiRuntimeConfig
     /// <summary>Live ticks between slow structural reassessments (1 Hz).</summary>
     public int StructuralReassessmentTicks { get; init; } = 60;
 
-    /// <summary>Upper bound on generated off-ball candidates per player per decision (A4/A9.3).</summary>
+    /// <summary>
+    /// Upper bound on generated off-ball candidates per player per decision (A9.3). Not consumed yet.
+    /// </summary>
     public int MaxOffBallCandidates { get; init; } = 12;
 
-    /// <summary>Upper bound on carrier candidates after cheap pruning (A4/A9.3).</summary>
+    /// <summary>
+    /// Upper bound on carrier candidates after scoring (A4.1). The carrier's action set is an explicit
+    /// list — shot, passes, recycle, carry, take-on, shield, clearance — and this is the hard cap the
+    /// finished set is trimmed to, best score first.
+    /// </summary>
     public int MaxCarrierCandidates { get; init; } = 20;
+
+    /// <summary>
+    /// Upper bound on receivers that get a full pass plan and success estimate in one decision (A4.1).
+    /// The rest are pruned on a cheap progression/space pre-rank, which is what keeps the pass model's
+    /// cost proportional to the configured budget rather than to the number of visible teammates.
+    /// </summary>
+    public int MaxPassTargets { get; init; } = 8;
 
     /// <summary>
     /// When true, a player re-scores its candidates on its <see cref="PerceptionRefreshTicks"/>-style cadence
@@ -91,7 +104,7 @@ public sealed class AiRuntimeConfig
         $"cadence(p{PerceptionRefreshTicks} c{CarrierDecisionTicks} o{OutfieldDecisionTicks} " +
         $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
         $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
-        $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates})";
+        $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets})";
 }
 
 /// <summary>
@@ -135,6 +148,7 @@ public static class AiRuntimeConfigValidation
 
         RequireCandidates(config.MaxOffBallCandidates, name, nameof(AiRuntimeConfig.MaxOffBallCandidates));
         RequireCandidates(config.MaxCarrierCandidates, name, nameof(AiRuntimeConfig.MaxCarrierCandidates));
+        RequireCandidates(config.MaxPassTargets, name, nameof(AiRuntimeConfig.MaxPassTargets));
     }
 
     private static void RequireFinite(float value, string owner, string field)

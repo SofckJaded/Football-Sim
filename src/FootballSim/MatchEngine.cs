@@ -43,6 +43,22 @@ public sealed class MatchAnalyticsSummary
     public float HomeAverageTeamWidthMeters { get; set; }
     public float AwayAverageTeamWidthMeters { get; set; }
 
+    /// <summary>
+    /// Mean lateral span, in metres, of the team's outfield players while that team actually has the ball
+    /// (ownership model). Numerator: sum of the z-span of every active outfield player at each 30-tick
+    /// sample taken in that team's possession. Denominator: those samples only. Source: authoritative
+    /// positions in <see cref="MatchSimulationEngine"/>, live play only.
+    ///
+    /// This is separate from <see cref="HomeAverageTeamWidthMeters"/>, which samples regardless of who has
+    /// the ball and therefore mostly reports the run of play: on the tactical gate it correlated with
+    /// possession share rather than with the width profile. The profile's width is a statement about the
+    /// *attacking* shape, so the comparison between profiles is made on this measure (A4 evidence).
+    /// </summary>
+    public float HomeAttackingWidthMeters { get; set; }
+
+    /// <summary>Possession-scoped lateral span for the away team; see <see cref="HomeAttackingWidthMeters"/>.</summary>
+    public float AwayAttackingWidthMeters { get; set; }
+
     public float HomePossessionShare => (HomePossessionTicks + AwayPossessionTicks) > 0
         ? (float)HomePossessionTicks / (HomePossessionTicks + AwayPossessionTicks)
         : 0.5f;
@@ -91,6 +107,13 @@ public sealed class MatchSimulationEngine
     private double _homeWidthAccum;
     private double _awayWidthAccum;
     private int _sampleCount;
+
+    // A4 evidence: the same span, but only sampled while that team has the ball (see
+    // MatchAnalyticsSummary.HomeAttackingWidthMeters).
+    private double _homeAttackingWidthAccum;
+    private double _awayAttackingWidthAccum;
+    private int _homeAttackingWidthSamples;
+    private int _awayAttackingWidthSamples;
 
     public MatchSimulationEngine(PreMatchConfig? config = null, PitchDimensions? pitch = null)
         : this(config ?? new PreMatchConfig(), pitch ?? new PitchDimensions(), scenario: null)
@@ -790,8 +813,24 @@ public sealed class MatchSimulationEngine
         if (CurrentTick % 30 == 0)
         {
             _sampleCount++;
-            _homeWidthAccum += ComputeTeamSpanZ(TeamId.Home);
-            _awayWidthAccum += ComputeTeamSpanZ(TeamId.Away);
+            float homeSpan = ComputeTeamSpanZ(TeamId.Home);
+            float awaySpan = ComputeTeamSpanZ(TeamId.Away);
+            _homeWidthAccum += homeSpan;
+            _awayWidthAccum += awaySpan;
+
+            // A4: the shape the *profile* is about is the one a team holds while it has the ball. The
+            // possession-scoped sample is kept beside the unconditional one rather than replacing it, so
+            // the older number stays comparable within this version.
+            if (possession.PossessionTeam == TeamId.Home)
+            {
+                _homeAttackingWidthAccum += homeSpan;
+                _homeAttackingWidthSamples++;
+            }
+            else if (possession.PossessionTeam == TeamId.Away)
+            {
+                _awayAttackingWidthAccum += awaySpan;
+                _awayAttackingWidthSamples++;
+            }
 
             Analytics.HomeAverageBallTerritoryX = Analytics.HomePossessionTicks > 0
                 ? (float)(_homeTerritoryAccum / Analytics.HomePossessionTicks)
@@ -801,6 +840,12 @@ public sealed class MatchSimulationEngine
                 : 0f;
             Analytics.HomeAverageTeamWidthMeters = (float)(_homeWidthAccum / _sampleCount);
             Analytics.AwayAverageTeamWidthMeters = (float)(_awayWidthAccum / _sampleCount);
+            Analytics.HomeAttackingWidthMeters = _homeAttackingWidthSamples > 0
+                ? (float)(_homeAttackingWidthAccum / _homeAttackingWidthSamples)
+                : 0f;
+            Analytics.AwayAttackingWidthMeters = _awayAttackingWidthSamples > 0
+                ? (float)(_awayAttackingWidthAccum / _awayAttackingWidthSamples)
+                : 0f;
         }
     }
 

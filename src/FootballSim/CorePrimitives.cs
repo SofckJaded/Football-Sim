@@ -216,12 +216,21 @@ public enum TeamId
 /// complementary channels — softly and relatively, with no lane index — and the chosen region is then
 /// refined by a bounded two-ring probe. Kept incumbent regions now count as placed, which is what stops
 /// two duties from being handed targets a few centimetres apart. Trajectories differ from version 10.</item>
+/// <item><c>AiBehaviour 13</c> — A4.1/A4.2: the carrier's options are an explicit, bounded action set
+/// (shot, pass to feet, pass into a run region, raised alternative, recycle/keeper support, carry,
+/// take-on, shield, clearance), each with its own <see cref="CandidateKey"/>, bounded by
+/// <see cref="AI.AiRuntimeConfig.MaxPassTargets"/> and <see cref="AI.AiRuntimeConfig.MaxCarrierCandidates"/>.
+/// A pass is now scored once by <see cref="AI.PassSuccessModel"/> — <c>p·gain − (1−p)·loss</c>, with the
+/// loss term owning transition risk and rising in the passer's own third — and the lead given to a moving
+/// receiver is bounded, because the unbounded solve was measuring 43 m punts to a team-mate 12 m away.
+/// Job-region refinement may no longer slide a duty onto a team-mate's target. Trajectories differ from
+/// version 12.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 12;
+    public const int AiBehaviour = 13;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

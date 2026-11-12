@@ -275,6 +275,12 @@ public sealed class SimulationPhaseGatesTests
     /// only what is asserted: the old name also claimed a "higher pass ratio" that was never checked
     /// (audit F23). The multi-seed version of this gate is
     /// <see cref="ReplayAndCoverageTests.F23_MultiSeedTacticalReport_HoldsAcrossTheSeedSet"/>.
+    ///
+    /// The measure is the possession-scoped span (A4): the width profile is a statement about the shape a
+    /// team holds *with the ball*, and the unconditional span mostly reported who was attacking (it
+    /// correlated with possession share instead of the profile). The sample is the configured half
+    /// (180 s) rather than its first 90 s, because individual short windows invert on one seed
+    /// (PROGRESS.md warning 3) even on the attacking measure.
     /// </summary>
     [Fact]
     public void Phase6_PossessionTeam_ExhibitsWiderShape_ThanDirectCounterTeam()
@@ -288,13 +294,16 @@ public sealed class SimulationPhaseGatesTests
             AwayProfile = TeamTacticalProfile.DirectCounterattack
         });
 
-        for (int i = 0; i < 5400; i++)
+        for (int i = 0; i < 10800; i++)
             sim.StepTick();
 
         // Possession profile has AttackingWidth=0.82 vs DirectCounter AttackingWidth=0.52
+        Assert.True(sim.Analytics.HomeAttackingWidthMeters > 0f && sim.Analytics.AwayAttackingWidthMeters > 0f,
+            "both teams must actually have had the ball for the comparison to mean anything");
         Assert.True(
-            sim.Analytics.HomeAverageTeamWidthMeters > sim.Analytics.AwayAverageTeamWidthMeters,
-            $"Expected Home Possession width ({sim.Analytics.HomeAverageTeamWidthMeters:F1}m) > Away Direct width ({sim.Analytics.AwayAverageTeamWidthMeters:F1}m)");
+            sim.Analytics.HomeAttackingWidthMeters > sim.Analytics.AwayAttackingWidthMeters,
+            $"Expected Home Possession attacking width ({sim.Analytics.HomeAttackingWidthMeters:F1}m) > " +
+            $"Away Direct attacking width ({sim.Analytics.AwayAttackingWidthMeters:F1}m)");
     }
 
     // =========================================================================

@@ -475,10 +475,21 @@ public class GameplayFeelTests
     // ---------------------------------------------------------------------
 
     /// <summary>
+    /// A ground pass is the action that runs the ball along the grass. Since A4.2 a blocked ground line
+    /// can still be answered with a *raised* alternative that flies over the defender, so the regression
+    /// asks about the ground ball specifically rather than about the action name.
+    /// </summary>
+    private static bool IsGroundPass(UtilityCandidate candidate) =>
+        candidate.Command.KickType is KickIntentType.GroundPass or KickIntentType.ThroughPass
+            or KickIntentType.DrivenPass;
+
+    /// <summary>
     /// A passer with an opponent standing right next to the ball. The old lane metric skipped every
     /// opponent whose projection was under 0.4 m, so this pass scored as a perfectly clear lane and
     /// the AI kicked the ball straight through the defender (that is the interception the playtester
-    /// saw about a tenth of the time). The explicit blocked-line test must abandon the pass instead.
+    /// saw about a tenth of the time). The explicit blocked-line test must abandon the ground pass
+    /// instead; the raised alternative A4.2 offers over the top is a different action and is scored on
+    /// its own flight, where it loses to keeping the ball.
     /// </summary>
     [Fact]
     public void Ai_AbandonsAPassThroughAnOpponentStandingOnTheBall()
@@ -509,12 +520,12 @@ public class GameplayFeelTests
         Assert.True(legacyClearance > 0.95f,
             $"the scenario must look clear to the old metric for this regression to mean anything ({legacyClearance:F2})");
 
-        Assert.DoesNotContain(ai.LastCandidates, c => c.ActionName.StartsWith("Pass(", StringComparison.Ordinal));
+        Assert.DoesNotContain(ai.LastCandidates, IsGroundPass);
     }
 
     /// <summary>
     /// The other half of the same report: a defender whose current position is metres off the line
-    /// but who is running across it. Their reach and the ball's arrival coincide, so the pass is
+    /// but who is running across it. Their reach and the ball's arrival coincide, so the ground pass is
     /// blocked even though a static "is somebody on the line?" check says the lane is open.
     /// </summary>
     [Fact]
@@ -546,7 +557,7 @@ public class GameplayFeelTests
         Assert.True(legacyClearance > 0.95f,
             $"the scenario must look clear to the old metric for this regression to mean anything ({legacyClearance:F2})");
 
-        Assert.DoesNotContain(ai.LastCandidates, c => c.ActionName.StartsWith("Pass(", StringComparison.Ordinal));
+        Assert.DoesNotContain(ai.LastCandidates, IsGroundPass);
     }
 
     /// <summary>
@@ -603,8 +614,11 @@ public class GameplayFeelTests
         var ai = new TacticalUtilityAiController(pitch);
         for (int i = 0; i < 40; i++) ai.Decide(observation, Dt);
 
-        UtilityCandidate pass = ai.LastCandidates.Single(
-            c => c.ActionName.StartsWith("Pass(", StringComparison.Ordinal));
+        // A4.1 offers a pass into the space ahead as a separate action, and it is generated after the
+        // feet pass for the same receiver. This regression is about the ordinary 20 m ball to a team-mate,
+        // so it takes the first ground pass offered.
+        UtilityCandidate pass = ai.LastCandidates.First(
+            c => c.Command.KickType is KickIntentType.GroundPass or KickIntentType.ThroughPass);
         Assert.True(pass.Command.KickPower01 >= 0.80f,
             $"a 20 m pass was struck at {pass.Command.KickPower01:P0} power (the old minimum-power rule struck it at 50 %)");
 

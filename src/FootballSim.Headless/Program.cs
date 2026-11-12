@@ -266,6 +266,10 @@ public static class Program
     /// The report is an assertion: every seed must complete, and the possession profile must be the
     /// wider shape across the seed set (mean difference, majority of seeds). A single chaotic match is
     /// allowed to invert, which the report shows per seed.
+    ///
+    /// The comparison uses the possession-scoped span (A4): the profile's width is a statement about the
+    /// shape a team holds *with the ball*, and the unconditional span mostly reported who was attacking.
+    /// Both numbers are printed, so the effect can be read either way.
     /// </summary>
     private static bool RunTacticalComparisonBatch()
     {
@@ -294,8 +298,8 @@ public static class Program
             var a = engine.Analytics;
             bool completed = engine.Rules.Phase == MatchPhase.FullTime;
             bool played = a.HomePassesAttempted > 0 && a.AwayPassesAttempted > 0;
-            bool wider = a.HomeAverageTeamWidthMeters > a.AwayAverageTeamWidthMeters;
-            widthDifferenceSum += a.HomeAverageTeamWidthMeters - a.AwayAverageTeamWidthMeters;
+            bool wider = a.HomeAttackingWidthMeters > a.AwayAttackingWidthMeters;
+            widthDifferenceSum += a.HomeAttackingWidthMeters - a.AwayAttackingWidthMeters;
             if (wider) widerSeeds++;
             allPassed &= completed && played;
 
@@ -305,8 +309,9 @@ public static class Program
                 $"Passes {a.HomePassesAttempted} vs {a.AwayPassesAttempted} " +
                 $"(completed {a.HomePassesCompleted} vs {a.AwayPassesCompleted}) | " +
                 $"Shots {a.HomeShots} vs {a.AwayShots} | " +
-                $"Width {a.HomeAverageTeamWidthMeters:F1}m vs {a.AwayAverageTeamWidthMeters:F1}m " +
-                $"({(wider ? "wider" : "narrower")}) | " +
+                $"Width {a.HomeAttackingWidthMeters:F1}m vs {a.AwayAttackingWidthMeters:F1}m " +
+                $"({(wider ? "wider" : "narrower")}; all-tick {a.HomeAverageTeamWidthMeters:F1} vs " +
+                $"{a.AwayAverageTeamWidthMeters:F1}) | " +
                 $"Possession {a.HomePossessionShare * 100f:F1}% | Played={(played ? "yes" : "no")}");
         }
 
@@ -315,7 +320,7 @@ public static class Program
         allPassed &= separationPassed;
 
         Console.WriteLine(
-            $"Width separation : mean {meanWidthDifference:F2} m, wider on {widerSeeds}/{seedCount} seeds " +
+            $"Width separation : mean {meanWidthDifference:F2} m (with the ball), wider on {widerSeeds}/{seedCount} seeds " +
             $"(gate: majority and mean > 0.5 m)");
         Console.WriteLine(allPassed ? "GATE: PASS" : "GATE: FAIL");
         return allPassed;

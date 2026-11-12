@@ -98,6 +98,36 @@ public static class JobRegionScoring
         or TacticalJob.Overlap or TacticalJob.BallResponder;
 
     /// <summary>
+    /// Minimum centre-to-centre distance a refined target may leave to a teammate's already-assigned
+    /// target. The refinement is a local search, and a search with only a soft staggering term can pay
+    /// for connection or lane openness by sliding one duty onto another — measured during A4 as a
+    /// 3.7 m pair (an outlet refined onto the cover behind the ball). The soft term stays what it is;
+    /// this is the floor the probe may not cross when the nominal target was above it.
+    /// </summary>
+    public const float MinRefinedSeparationMeters = 6f;
+
+    /// <summary>
+    /// Distance from a candidate centre to the nearest teammate's assigned target, or
+    /// <see cref="float.MaxValue"/> when the candidate has no company. Allocation-free so the
+    /// refinement can call it per probe.
+    /// </summary>
+    public static float NearestTeammateDistance(
+        Vector2 centre,
+        IReadOnlyList<AssignedRegion> teammates,
+        int candidatePlayerId)
+    {
+        float nearest = float.MaxValue;
+        for (int i = 0; i < teammates.Count; i++)
+        {
+            AssignedRegion mate = teammates[i];
+            if (mate.PlayerId == candidatePlayerId) continue;
+            float distance = Vector2.Distance(centre, mate.Region.CentreXZ);
+            if (distance < nearest) nearest = distance;
+        }
+        return nearest;
+    }
+
+    /// <summary>
     /// One region's score. Higher is better; the value is dimensionless and only meaningful against
     /// another region scored with the same inputs. <paramref name="attackingWidth01"/> is the team
     /// profile's width: a narrow side wants narrow channels, so both the width reward and the lateral

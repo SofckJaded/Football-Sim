@@ -35,7 +35,16 @@ public enum CandidateKind
     Challenge,
 
     /// <summary>Movement toward a persistent team job target.</summary>
-    Job
+    Job,
+
+    /// <summary>Take the nearest opponent on with the ball (A4.1), as opposed to carrying into space.</summary>
+    Dribble,
+
+    /// <summary>Hold the ball with the body between it and the nearest opponent (A4.1).</summary>
+    Shield,
+
+    /// <summary>Strike the ball long and high out of danger (A4.1).</summary>
+    Clearance
 }
 
 /// <summary>
