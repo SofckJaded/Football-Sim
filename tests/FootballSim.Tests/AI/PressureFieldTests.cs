@@ -89,7 +89,11 @@ public sealed class PressureFieldTests
         {
             Assert.True(float.IsFinite(cell.CentreXZ.X) && float.IsFinite(cell.CentreXZ.Y));
             Assert.InRange(cell.Pressure01, 0f, 1f);
-            Assert.InRange(cell.Control01, 0f, 1f);
+            Assert.InRange(cell.InfluenceShare, 0f, 1f);
+            Assert.InRange(cell.OpponentInfluenceShare, 0f, 1f);
+            Assert.InRange(cell.UnclaimedShare, 0f, 1f);
+            // A2.5: the three shares partition the cell, and the unclaimed part is explicit.
+            Assert.Equal(1f, cell.InfluenceShare + cell.OpponentInfluenceShare + cell.UnclaimedShare, precision: 3);
             Assert.True(float.IsFinite(cell.ArrivalMarginSeconds));
             Assert.False(cell.IsBoundaryCell);
         }
@@ -115,7 +119,8 @@ public sealed class PressureFieldTests
             {
                 boundary++;
                 Assert.Equal(0f, cell.Pressure01);
-                Assert.Equal(0.5f, cell.Control01);
+                Assert.Equal(0f, cell.InfluenceShare);
+                Assert.Equal(1f, cell.UnclaimedShare);
                 Assert.True(cell.IsUnclaimed);
                 Assert.Equal(-1f, cell.MyArrivalSeconds);
                 Assert.Equal(-1f, cell.OpponentArrivalSeconds);
@@ -147,13 +152,15 @@ public sealed class PressureFieldTests
         Assert.True(ahead.OpponentArrivalSeconds >= 0f);
         Assert.True(ahead.ArrivalMarginSeconds > 0f,
             $"margin {ahead.ArrivalMarginSeconds:F3}s (mine {ahead.MyArrivalSeconds:F3}, theirs {ahead.OpponentArrivalSeconds:F3})");
-        Assert.True(ahead.Control01 > 0.5f, $"control {ahead.Control01:F3}");
+        Assert.True(ahead.InfluenceShare > ahead.OpponentInfluenceShare,
+            $"influence {ahead.InfluenceShare:F3} vs {ahead.OpponentInfluenceShare:F3}");
 
         // The point behind me is the opponent's race, and the share must flip.
         PressureCell behind = field.Read(new Vector2(-3f, 0f), out _);
         Assert.True(behind.ArrivalMarginSeconds < 0f,
             $"margin {behind.ArrivalMarginSeconds:F3}s (mine {behind.MyArrivalSeconds:F3}, theirs {behind.OpponentArrivalSeconds:F3})");
-        Assert.True(behind.Control01 < 0.5f, $"control {behind.Control01:F3}");
+        Assert.True(behind.InfluenceShare < behind.OpponentInfluenceShare,
+            $"influence {behind.InfluenceShare:F3} vs {behind.OpponentInfluenceShare:F3}");
     }
 
     [Fact]
@@ -240,6 +247,35 @@ public sealed class PressureFieldTests
         Assert.True(field.TryBuild(obs, new Vector2(0f, 0f)));
         Assert.True(field.TryBuild(obs, new Vector2(0f, 0f)));
         Assert.Equal(2, field.BuildCount);
+    }
+
+    [Fact]
+    public void AContestBetweenTwoDistantPlayers_LeavesMostOfTheCellUnclaimed()
+    {
+        // A2.5's whole point: "even influence" between two players who are both 8 m away is not the
+        // same statement as a share between two players standing on the ball. The absolute arrival times
+        // stay, and the part of the cell nobody can claim yet is an explicit share.
+        var field = new LocalPressureField();
+        FootballerObservation obs = Build(
+            Vector3.Zero, Vector3.Zero, new Vector2(1f, 0f),
+            new[] { Opponent(2, new Vector3(16f, 0f, 0f)) }, tick: 10,
+            selfStamina: 0.3f);
+
+        Assert.True(field.TryBuild(obs, new Vector2(8f, 0f)));
+        PressureCell cell = field.Read(new Vector2(8f, 0f), out _);
+
+        Assert.True(cell.CanArriveMyself && cell.CanOpponentArrive);
+        Assert.True(cell.UnclaimedShare > 0.2f,
+            $"unclaimed {cell.UnclaimedShare:F3} on a cell both sides need seconds to reach");
+        Assert.Equal(1f, cell.InfluenceShare + cell.OpponentInfluenceShare + cell.UnclaimedShare, precision: 3);
+        Assert.False(cell.IsUnclaimed);
+
+        // The same field's centre, where the player already is, is nearly all his.
+        PressureCell here = field.Read(new Vector2(0f, 0f), out _);
+        Assert.True(here.InfluenceShare > cell.InfluenceShare,
+            $"centre {here.InfluenceShare:F3} vs contested {cell.InfluenceShare:F3}");
+        Assert.True(here.UnclaimedShare < cell.UnclaimedShare,
+            $"centre unclaimed {here.UnclaimedShare:F3} vs contested {cell.UnclaimedShare:F3}");
     }
 
     [Fact]

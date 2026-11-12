@@ -94,6 +94,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     public CandidateKey CommittedKey => _committedKey;
 
     public AiRuntimeConfig RuntimeConfig => _ai;
+
+    /// <summary>
+    /// The local pressure window this player last decided with (A2.4/A2.6). Diagnostics and the
+    /// inspector overlays read it; nothing in the match consumes it.
+    /// </summary>
+    public LocalPressureField PressureField => _generator.PressureField;
+
     public string GetDebugSummary() => _debugSummary;
 
     /// <summary>

@@ -50,6 +50,13 @@ public class GameplayFeelTests
         };
     }
 
+    /// <summary>
+    /// A truth view of the opponents for the job coordinator (A2.6); the belief path is covered by
+    /// <see cref="FootballSim.Tests.AI.TeamBeliefTests"/>.
+    /// </summary>
+    private static FootballSim.AI.TeamBelief TruthBelief(IReadOnlyList<FootballerState> players, TeamId team) =>
+        FootballSim.AI.TeamBelief.FromTruth(team, players);
+
     private static FootballerObservation Observe(
         FootballerState self,
         IReadOnlyList<FootballerState> players,
@@ -421,7 +428,8 @@ public class GameplayFeelTests
         var jobs = new TeamJobCoordinator(pitch);
         jobs.Update(players, ball, possession, TeamId.Home, homeResponderId: null, awayResponderId: null,
             homeDirX: 1f, tick: 0,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         foreach (var (playerId, assignment) in jobs.Assignments)
         {

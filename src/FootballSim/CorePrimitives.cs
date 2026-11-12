@@ -190,12 +190,16 @@ public enum TeamId
 /// <item><c>AiBehaviour 7</c> — A2.3/A2.4: scorers estimate an opponent's body from a scouted
 /// <see cref="CapabilityEstimate"/> band (never the live attributes), and the carrier chooses a carry
 /// direction with a local pressure window (arrival-based, directional) blended into its freedom term.</item>
+/// <item><c>AiBehaviour 8</c> — A2.5/A2.6: a cell's influence is split into mine / theirs / unclaimed
+/// shares with the absolute arrival times kept alongside, and the persistent team-job coordinator reads
+/// a team belief (union of the team's observations) instead of the authoritative squad, so an unseen
+/// opponent can no longer change a team's structure.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 7;
+    public const int AiBehaviour = 8;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

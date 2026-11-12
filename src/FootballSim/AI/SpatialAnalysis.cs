@@ -2,25 +2,47 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using FootballSim.Core;
+using FootballSim.Locomotion;
 
 namespace FootballSim.AI;
 
 /// <summary>
-/// One cell of a local pressure grid (A2.4): who can get here first, by how much, and what that means
-/// for the player making the decision.
+/// One cell of a local pressure grid (A2.4/A2.5): who can get here first, by how much, and what that
+/// means for the player making the decision.
+///
+/// A2.5 split the old single "control" number into three named parts that sum to 1. Absolute ability to
+/// arrive (<see cref="MyArrivalSeconds"/>, <see cref="OpponentArrivalSeconds"/>) is kept alongside the
+/// relative influence shares, because a 50/50 share between two players who are both two seconds away is
+/// not the same statement as a 50/50 share between two players standing on the ball — and only the
+/// arrivals can tell them apart. The third share is explicitly <see cref="UnclaimedShare"/>: influence
+/// nobody has yet, which is the component a normalised pair of shares has no room for.
 /// </summary>
 public readonly record struct PressureCell(
     Vector2 CentreXZ,
     float MyArrivalSeconds,
     float OpponentArrivalSeconds,
     float ArrivalMarginSeconds,
+    float InfluenceShare,
+    float OpponentInfluenceShare,
+    float UnclaimedShare,
     float Pressure01,
-    float Control01,
     bool IsBoundaryCell,
     bool IsUnclaimed)
 {
+    /// <summary>True when the observer's own side can be at this cell inside the model's horizon.</summary>
+    public bool CanArriveMyself => MyArrivalSeconds >= 0f;
+
+    /// <summary>True when an opponent can be at this cell inside the model's horizon.</summary>
+    public bool CanOpponentArrive => OpponentArrivalSeconds >= 0f;
+
     /// <summary>True when either side can be at this cell inside the model's horizon.</summary>
-    public bool IsReachable => MyArrivalSeconds >= 0f || OpponentArrivalSeconds >= 0f;
+    public bool IsReachable => CanArriveMyself || CanOpponentArrive;
+
+    /// <summary>
+    /// Share of the cell's influence the observer's own team is believed to hold. This is a *relative*
+    /// statement scaled by how reachable the cell is at all; read it with the arrivals.
+    /// </summary>
+    public float Mine => InfluenceShare;
 }
 
 /// <summary>
@@ -62,7 +84,11 @@ public sealed class LocalPressureField
     /// <summary>Opponents considered per build — the nearest ones to the window centre.</summary>
     public const int MaxOpponents = 5;
 
-    /// <summary>Margin, in seconds, at which the coarse control share reaches ~0.73.</summary>
+    /// <summary>
+    /// Legacy margin (seconds) at which the coarse share used to reach ~0.73. Kept because A2.5's
+    /// reachability weighting replaced the logistic that used it; callers and tests still reference the
+    /// constant when describing the old behaviour.
+    /// </summary>
     public const float ControlWindowSeconds = 0.6f;
 
     /// <summary>How much of a cell's pressure comes from an opponent's actual closing direction.</summary>
@@ -202,10 +228,12 @@ public sealed class LocalPressureField
         if (IsOutsidePitch(cellCentre))
         {
             // Explicit: a cell that is out of play has no contested arrival, and pretending otherwise
-            // would let a carrier "find space" off the pitch.
+            // would let a carrier "find space" off the pitch. Nobody holds it, so the unclaimed share
+            // is the whole cell rather than a made-up 50/50.
             return new PressureCell(
                 cellCentre, MyArrivalSeconds: -1f, OpponentArrivalSeconds: -1f, ArrivalMarginSeconds: 0f,
-                Pressure01: 0f, Control01: 0.5f, IsBoundaryCell: true, IsUnclaimed: true);
+                InfluenceShare: 0f, OpponentInfluenceShare: 0f, UnclaimedShare: 1f,
+                Pressure01: 0f, IsBoundaryCell: true, IsUnclaimed: true);
         }
 
         float myArrival = EstimateArrivalSeconds(_self, cellCentre);
@@ -233,27 +261,48 @@ public sealed class LocalPressureField
         else if (theyCan) margin = -(HorizonSeconds - opponentArrival);
         else margin = 0f;
 
-        float control;
-        if (!iCan && !theyCan)
-        {
-            // Nobody can be here inside the horizon. A2.5 replaces the neutral share with an explicit
-            // unclaimed component; until then the flag is the honest part of this answer.
-            control = 0.5f;
-        }
-        else
-        {
-            control = 0.5f + 0.5f * (margin / (MathF.Abs(margin) + ControlWindowSeconds));
-        }
+        // A2.5: reachability weights, so a late arrival claims only part of the cell and the rest stays
+        // unclaimed. Absolute arrival times are still reported above; these shares never replace them.
+        (float influence, float opponentInfluence, float unclaimed) = SplitInfluence(myArrival, opponentArrival);
 
         return new PressureCell(
             cellCentre,
             MyArrivalSeconds: myArrival,
             OpponentArrivalSeconds: opponentArrival,
             ArrivalMarginSeconds: margin,
+            InfluenceShare: influence,
+            OpponentInfluenceShare: opponentInfluence,
+            UnclaimedShare: unclaimed,
             Pressure01: Math.Clamp(pressure, 0f, 1f),
-            Control01: Math.Clamp(control, 0f, 1f),
             IsBoundaryCell: false,
             IsUnclaimed: !iCan && !theyCan);
+    }
+
+    /// <summary>
+    /// Splits one cell into the three shares A2.5 asks for. The weights are reachability, not a
+    /// probability: a side that needs 1.2 s of a 1.5 s horizon claims a fifth of the cell and the rest
+    /// stays unclaimed. The three outputs always sum to 1.
+    /// </summary>
+    public static (float Mine, float Theirs, float Unclaimed) SplitInfluence(
+        float myArrivalSeconds,
+        float opponentArrivalSeconds,
+        float horizonSeconds = HorizonSeconds)
+    {
+        bool iCan = myArrivalSeconds >= 0f;
+        bool theyCan = opponentArrivalSeconds >= 0f;
+
+        float myWeight = iCan ? 1f - Math.Clamp(myArrivalSeconds / horizonSeconds, 0f, 1f) : 0f;
+        float opponentWeight = theyCan ? 1f - Math.Clamp(opponentArrivalSeconds / horizonSeconds, 0f, 1f) : 0f;
+        float claimed = myWeight + opponentWeight;
+        float unclaimed = Math.Clamp(1f - claimed, 0f, 1f);
+
+        if (claimed <= 1e-4f)
+            return (0f, 0f, 1f);
+
+        float myFraction = myWeight / claimed;
+        float mine = Math.Clamp(myFraction * (1f - unclaimed), 0f, 1f);
+        float theirs = Math.Clamp((1f - myFraction) * (1f - unclaimed), 0f, 1f);
+        return (mine, theirs, unclaimed);
     }
 
     /// <summary>
@@ -329,4 +378,145 @@ public sealed class LocalPressureField
     private bool IsOutsidePitch(Vector2 pointXZ) =>
         MathF.Abs(pointXZ.X) > _pitch.HalfLength - BoundaryMarginMeters ||
         MathF.Abs(pointXZ.Y) > _pitch.HalfWidth - BoundaryMarginMeters;
+}
+
+/// <summary>
+/// Pitch-wide, coarse version of the pressure question for overlays and validation (A2.6).
+///
+/// This is a *diagnostic* map, not a decision input: it sweeps every 3 m cell of the whole pitch against
+/// every player, which is far too expensive for a 60 Hz tick (and would be a second spatial model if a
+/// decision ever read it). A decision uses <see cref="LocalPressureField"/>; this exists so a human — or a
+/// test — can see the same quantities over the pitch, labelled by whether they came from a team's belief
+/// or from the truth.
+///
+/// Every cell publishes the same three normalised shares as a local cell (mine / theirs / unclaimed), the
+/// arrival time of the best opponent, and how old the information behind it is. The own team is read from
+/// live positions: teammates are fully observed by perception itself (A2.2), so that is the same knowledge
+/// the player would have.
+/// </summary>
+public sealed class SpatialOverlayMap
+{
+    /// <summary>Edge length of one mapped cell.</summary>
+    public const float CellSizeMeters = 3f;
+
+    /// <summary>Horizon for the mapped arrivals; matches the local field so the colours mean the same.</summary>
+    public const float HorizonSeconds = LocalPressureField.HorizonSeconds;
+
+    private readonly float[] _mine;
+    private readonly float[] _theirs;
+    private readonly float[] _unclaimed;
+    private readonly float[] _pressure;
+    private readonly float[] _opponentArrival;
+    private readonly float[] _perceptionAge;
+
+    public SpatialOverlayMap(PitchDimensions pitch)
+    {
+        ArgumentNullException.ThrowIfNull(pitch);
+        Pitch = pitch;
+        Columns = (int)MathF.Ceiling(pitch.Length / CellSizeMeters) + 1;
+        Rows = (int)MathF.Ceiling(pitch.Width / CellSizeMeters) + 1;
+
+        int cellCount = Columns * Rows;
+        _mine = new float[cellCount];
+        _theirs = new float[cellCount];
+        _unclaimed = new float[cellCount];
+        _pressure = new float[cellCount];
+        _opponentArrival = new float[cellCount];
+        _perceptionAge = new float[cellCount];
+    }
+
+    public PitchDimensions Pitch { get; }
+    public int Columns { get; }
+    public int Rows { get; }
+    public int CellCount => Columns * Rows;
+
+    /// <summary>Observer's team share per cell (row-major, z then x).</summary>
+    public IReadOnlyList<float> InfluenceShare => _mine;
+
+    /// <summary>Opponents' share per cell.</summary>
+    public IReadOnlyList<float> OpponentInfluenceShare => _theirs;
+
+    /// <summary>Share of each cell that neither side can claim inside the horizon.</summary>
+    public IReadOnlyList<float> UnclaimedShare => _unclaimed;
+
+    /// <summary>Pressure from the best opponent arrival per cell, 0..1.</summary>
+    public IReadOnlyList<float> Pressure01 => _pressure;
+
+    /// <summary>Best opponent arrival per cell in seconds, or −1 when none can arrive.</summary>
+    public IReadOnlyList<float> OpponentArrivalSeconds => _opponentArrival;
+
+    /// <summary>Age of the information behind each cell's opponent read, in seconds.</summary>
+    public IReadOnlyList<float> PerceptionAgeSeconds => _perceptionAge;
+
+    /// <summary>Centre of a mapped cell.</summary>
+    public Vector2 CellCentre(int column, int row) => new(
+        -Pitch.HalfLength + column * CellSizeMeters,
+        -Pitch.HalfWidth + row * CellSizeMeters);
+
+    /// <summary>
+    /// Fills the map for one team: its own live players against the opponents it believes in. A truth
+    /// belief produces the validation map; a rebuilt belief produces the tactical one.
+    /// </summary>
+    public void Build(IReadOnlyList<FootballerState> players, TeamId team, TeamBelief opponents)
+    {
+        ArgumentNullException.ThrowIfNull(players);
+        ArgumentNullException.ThrowIfNull(opponents);
+
+        for (int row = 0; row < Rows; row++)
+        {
+            for (int column = 0; column < Columns; column++)
+            {
+                int index = row * Columns + column;
+                Vector2 centre = CellCentre(column, row);
+
+                float myArrival = -1f;
+                foreach (FootballerState player in players)
+                {
+                    if (player.Team != team || !player.IsActiveOnPitch) continue;
+                    float arrival = LocalPressureField.EstimateArrivalSeconds(
+                        ReachKinematics.From(player), centre, HorizonSeconds);
+                    if (arrival < 0f) continue;
+                    if (myArrival < 0f || arrival < myArrival) myArrival = arrival;
+                }
+
+                float opponentArrival = -1f;
+                float pressure = 0f;
+                float age = 0f;
+                for (int i = 0; i < opponents.Opponents.Count; i++)
+                {
+                    TeamBelief.Opponent opponent = opponents.Opponents[i];
+                    var kinematics = new ReachKinematics(
+                        opponent.PositionXZ, opponent.VelocityXZ, SimMath.SafeNormalize(opponent.VelocityXZ, new Vector2(1f, 0f)),
+                        CapabilityEstimate.Generic.MaxSprintSpeed,
+                        CapabilityEstimate.Generic.Acceleration,
+                        CapabilityEstimate.Generic.AgilityTurnRate,
+                        Balance01: 1f,
+                        Stamina01: 1f,
+                        ReachRadius: 0.75f * 1.65f);
+
+                    float arrival = LocalPressureField.EstimateArrivalSeconds(kinematics, centre, HorizonSeconds);
+                    if (arrival < 0f) continue;
+
+                    if (opponentArrival < 0f || arrival < opponentArrival)
+                    {
+                        opponentArrival = arrival;
+                        age = opponent.AgeTicks * SimConstants.FixedDeltaTime;
+                    }
+
+                    float timeFactor = 1f - Math.Clamp(arrival / HorizonSeconds, 0f, 1f);
+                    if (timeFactor > pressure) pressure = timeFactor;
+                }
+
+                (float mine, float theirs, float unclaimed) =
+                    LocalPressureField.SplitInfluence(myArrival, opponentArrival);
+
+                _mine[index] = mine;
+                _theirs[index] = theirs;
+                _unclaimed[index] = unclaimed;
+                _pressure[index] = Math.Clamp(pressure, 0f, 1f);
+                _opponentArrival[index] = opponentArrival;
+                _perceptionAge[index] = age;
+            }
+        }
+    }
 }

@@ -82,6 +82,8 @@ public sealed class MatchSimulationEngine
     private readonly List<BallContactEvent> _contactLog = new();
     private readonly ContactGeometrySnapshot _contactGeometry = new();
     private readonly HashSet<int> _inactivePlayerIds = new();
+    private TeamBelief _homeBelief = new(TeamId.Home);
+    private TeamBelief _awayBelief = new(TeamId.Away);
     private MatchPhase _lastPhase = MatchPhase.PreKickoff;
 
     private double _homeTerritoryAccum;
@@ -240,6 +242,19 @@ public sealed class MatchSimulationEngine
 
     /// <summary>Team-level off-ball job assignments for the current tick (audit F04).</summary>
     public TeamJobCoordinator TeamJobs => _teamJobs;
+
+    /// <summary>
+    /// What <paramref name="team"/> currently believes about its opponents (A2.6), rebuilt each live tick
+    /// from that team's own observations. Diagnostics and the inspector overlays read it; the tactical
+    /// consumers receive it directly.
+    /// </summary>
+    public TeamBelief TeamBeliefOf(TeamId team) => team == TeamId.Home ? _homeBelief : _awayBelief;
+
+    /// <summary>
+    /// A truth view of the opponents for validation overlays (A2.6). Labelled by construction: nothing
+    /// in a decision path may read this, and the type is distinct from what tactics receive.
+    /// </summary>
+    public TeamBelief TruthViewOf(TeamId team) => TeamBelief.FromTruth(team, _players);
     public MatchAnalyticsSummary Analytics { get; }
     public HumanInputController? LockedHumanController { get; private set; }
     public bool IsSpectatorFastForwardActive => LockedHumanController?.IsSpectatorMode ?? false;
@@ -504,11 +519,19 @@ public sealed class MatchSimulationEngine
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.
+            // A2.6: the job coordinator reads the teams' *beliefs*, not the authoritative positions, so
+            // an opponent nobody has seen cannot pull a defender out of shape. The belief views are
+            // rebuilt on the cadence the jobs are actually recomputed, not every tick.
+            TeamId? possessingTeam = _tacticalCoordinator.ConfirmedPossessingTeam;
+            if (_teamJobs.WillRecompute(possessingTeam, CurrentTick))
+                UpdateTeamBeliefs();
+
             _teamJobs.Update(
-                _players, Ball, possession, _tacticalCoordinator.ConfirmedPossessingTeam,
+                _players, Ball, possession, possessingTeam,
                 _ballResponderElection.GetResponder(TeamId.Home),
                 _ballResponderElection.GetResponder(TeamId.Away),
-                homeDirX, CurrentTick, _config.HomeProfile, _config.AwayProfile);
+                homeDirX, CurrentTick, _config.HomeProfile, _config.AwayProfile,
+                _homeBelief, _awayBelief);
 
             foreach (var p in _players)
             {
@@ -578,6 +601,27 @@ public sealed class MatchSimulationEngine
             _executionSystem.ContactEvents.Clear();
 
         RecordTickAnalytics(homeDirX, livePlay);
+    }
+
+    /// <summary>
+    /// Rebuilds each team's picture of its opponents from the observations the players built last tick
+    /// (A2.6).
+    ///
+    /// One tick of lag is deliberate: a team acts on what it saw, not on what is true now. The very
+    /// first tick has no observations at all, so the views are seeded once from the world — the same
+    /// "first look" rule perception uses, so a squad does not start blind at kickoff.
+    /// </summary>
+    private void UpdateTeamBeliefs()
+    {
+        if (!_homeBelief.HasBeenBuilt)
+        {
+            _homeBelief = TeamBelief.FromTruth(TeamId.Home, _players);
+            _awayBelief = TeamBelief.FromTruth(TeamId.Away, _players);
+            return;
+        }
+
+        _homeBelief.RebuildFromObservations(_players, _latestObservations);
+        _awayBelief.RebuildFromObservations(_players, _latestObservations);
     }
 
     /// <summary>

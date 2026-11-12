@@ -368,6 +368,55 @@ new high-water mark for A9.3 — allocation is now ≈61 KB/tick.
 
 ---
 
+## 2026-11-12 — A2.5 normalised influence + A2.6 team belief and maps (simulation version `ai8-rs1`)
+
+- **A2.5** split the cell's single "control" number into `InfluenceShare` (observer's side),
+  `OpponentInfluenceShare` and `UnclaimedShare`, which always sum to 1, with both absolute arrival times
+  kept alongside. Weights are reachability (`1 - arrival/horizon`), so two players who each need 1.2 s of
+  a 1.5 s horizon split a third of the cell and leave the rest unclaimed — which a 50/50 share could not
+  say.
+- **A2.6** gave a team a picture of its opponents: `TeamBelief` is the union of the team's own
+  observations (youngest sighting per opponent), and the persistent `TeamJobCoordinator` now reads it
+  instead of the authoritative squad — markers, offside line and space are all belief-driven. A
+  `FromTruth` variant of the same type exists for validation and the overlay, so the two are one shape and
+  a test can prove the difference. `SpatialOverlayMap` renders the same shares over the whole pitch for
+  diagnostics; `MatchClientNode` shows a labelled belief/pressure readout.
+
+### 11v11 headless match — `a2-team-belief-11v11-2026-11-12.txt`
+
+| Metric | ai7-rs1 | ai8-rs1 |
+| :--- | :--- | :--- |
+| Ticks | 326 180 | 326 086 |
+| Score | 7 – 6 | 6 – 6 |
+| Possession | 50.6 / 49.4 | 50.6 / 49.4 |
+| Passes | 906 / 818 (76 % / 74 %) | 943 / 878 (75 % / 76 %) |
+| Shots | 72 / 45 | 57 / 49 |
+| Width | 43.3 / 40.9 m | 43.0 / 40.9 m |
+
+An intermediate build of this batch scored **3–10**: the belief view carried the opponent goalkeeper, and
+the marker assignment — which used to filter keepers explicitly — started sending a centre-back to mark
+him. `TeamBelief.Opponent` now carries the role and the assignment filters keepers again. That is a
+reminder that a "pure refactor" of who supplies positions is not refactoring at all.
+
+### Tactical differentiation gate — `a2-team-belief-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5**, mean separation
+**2.23 m** — the best since A1. **GATE: PASS.**
+
+### Performance — `a2-team-belief-perf-2026-11-12.txt`
+
+| Metric | ai7-rs1 | ai8-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 117.6 µs | 138.1 µs |
+| p99 / max | 346.4 / 1407 µs | 499.9 / 1712 µs |
+| Allocated per tick | 60 850 B | 61 169 B |
+
+≈ 20 µs/tick more, with allocation flat: the match generates more candidates and contacts (1 821 passes
+attempted versus 1 724), and the belief rebuild adds a bounded amount of CPU. Still ~120× inside the 60 Hz
+step. A9.3 owns the profile.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

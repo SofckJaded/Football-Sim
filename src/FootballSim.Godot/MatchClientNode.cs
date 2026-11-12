@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using FootballSim;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Input;
 using FootballSim.Locomotion;
@@ -13,6 +14,12 @@ namespace FootballSim.GodotClient;
 public partial class MatchClientNode : Node3D
 {
     [Export] public bool ShowDebugOverlay { get; set; } = true;
+
+    /// <summary>
+    /// A2.6: labelled belief/pressure readout next to the player line. Text only — the rendereds
+    /// heat map needs a human at the machine and belongs to A9.4.
+    /// </summary>
+    [Export] public bool ShowSpatialOverlay { get; set; } = true;
     [Export] public bool ShowTacticalAnchors { get; set; } = false;
 
     /// <summary>Camera height; the inspector range matches <see cref="BroadcastCamera"/>'s clamp.</summary>
@@ -222,7 +229,43 @@ public partial class MatchClientNode : Node3D
             $"{mode}   ·   {powerLine}\n" +
             // Generated from the live bindings (audit F16), so help can never drift from the keys.
             $"Controls: {HumanControlReader.DescribeControls()}\n" +
-            $"Player #{inspected.Id} ({inspected.Team} {inspected.Role}): Stamina={inspected.Stamina01 * 100f:F0}% | {ctrl.GetDebugSummary()} | Exec={inspected.LastExecutionDiagnostic}";
+            $"Player #{inspected.Id} ({inspected.Team} {inspected.Role}): Stamina={inspected.Stamina01 * 100f:F0}% | {ctrl.GetDebugSummary()} | Exec={inspected.LastExecutionDiagnostic}" +
+            (ShowSpatialOverlay ? DescribeSpatialOverlay(inspected) : string.Empty);
+    }
+
+    /// <summary>
+    /// A2.6: the labelled spatial readout — belief age, known opponents, and the pressure/control split at
+    /// the ball. It is text rather than a rendered heat map on purpose: a rendered overlay needs a human at
+    /// the machine to review, which is A9.4's job. The numbers are the same ones the decisions use.
+    /// </summary>
+    private string DescribeSpatialOverlay(FootballerState inspected)
+    {
+        FootballerObservation? observation = _engine.GetLastObservation(inspected.Id);
+        TeamBelief belief = _engine.TeamBeliefOf(inspected.Team);
+        IFootballerController controller = _engine.GetController(inspected.Id);
+
+        int totalOpponents = 0;
+        foreach (FootballerState player in _engine.Players)
+            if (player.Team != inspected.Team && player.IsActiveOnPitch && player.Role != TacticalRole.Goalkeeper)
+                totalOpponents++;
+
+        string beliefLine = $"\nBELIEF (team, not truth): {belief.Count}/{totalOpponents} opponents known" +
+                            $" | oldest {belief.OldestAgeTicks} ticks" +
+                            (observation is null ? string.Empty : $" | this look {observation.KnowledgeAgeTicks} ticks");
+
+        if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
+            return beliefLine;
+
+        PressureCell cell = ai.PressureField.Read(
+            new System.Numerics.Vector2(_engine.Ball.Position.X, _engine.Ball.Position.Z), out bool inside);
+        string cellLine = inside
+            ? $"\nPRESSURE @ball {cell.Pressure01:F2} | mine {cell.InfluenceShare:F2} / theirs {cell.OpponentInfluenceShare:F2} / unclaimed {cell.UnclaimedShare:F2}" +
+              $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
+            : "\nPRESSURE @ball — outside this player's local window";
+
+        return beliefLine + cellLine;
+
+        static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 
     private void BuildLightingAndPitchVisuals()

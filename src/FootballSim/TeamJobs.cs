@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
@@ -73,6 +74,13 @@ public sealed class TeamJobCoordinator
     public TeamJobAssignment? Get(int playerId) =>
         _assignments.TryGetValue(playerId, out TeamJobAssignment assignment) ? assignment : null;
 
+    /// <summary>
+    /// True when this tick's call would actually recompute the assignments. The engine uses it to rebuild
+    /// the teams' belief views on the cadence they are read (A2.6) instead of every tick.
+    /// </summary>
+    public bool WillRecompute(TeamId? possessingTeam, int tick) =>
+        possessingTeam != _lastPossessionTeam || tick - _lastRecomputeTick >= RecomputeIntervalTicks;
+
     public void Update(
         IReadOnlyList<FootballerState> players,
         BallState ball,
@@ -83,7 +91,9 @@ public sealed class TeamJobCoordinator
         float homeDirX,
         int tick,
         TeamTacticalProfile homeProfile,
-        TeamTacticalProfile awayProfile)
+        TeamTacticalProfile awayProfile,
+        TeamBelief homeOpponents,
+        TeamBelief awayOpponents)
     {
         bool urgent = possessingTeam != _lastPossessionTeam;
         if (!urgent && tick - _lastRecomputeTick < RecomputeIntervalTicks)
@@ -98,8 +108,8 @@ public sealed class TeamJobCoordinator
             _assignedAtTick.Clear();
         }
 
-        AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick, homeProfile);
-        AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick, awayProfile);
+        AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick, homeProfile, homeOpponents);
+        AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick, awayProfile, awayOpponents);
     }
 
     private void AssignTeam(
@@ -111,7 +121,8 @@ public sealed class TeamJobCoordinator
         int? responderId,
         float attackDirX,
         int tick,
-        TeamTacticalProfile profile)
+        TeamTacticalProfile profile,
+        TeamBelief opponents)
     {
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
         // Width jobs must respect the team profile: a possession side stretches the pitch, a direct
@@ -205,16 +216,16 @@ public sealed class TeamJobCoordinator
             available.RemoveAll(p => p.Id == responder.Id);
         }
 
-        float offsideLineProj = ComputeOffsideLineProj(players, team, ball, attackDirX);
+        float offsideLineProj = ComputeOffsideLineProj(opponents, ball, attackDirX);
         float referenceProj = referenceXZ.X * attackDirX;
         Vector2 ownGoalXZ = new(-attackDirX * _pitch.HalfLength, 0f);
 
         if (inPossession)
         {
-            AssignUniqueJob(available, counts, taken, TacticalJob.DefensiveCover, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.DefensiveCover, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ => ClampToPitch(referenceXZ + SimMath.SafeNormalize(ownGoalXZ - referenceXZ, new Vector2(-attackDirX, 0f)) * 11f));
 
-            AssignUniqueJob(available, counts, taken, TacticalJob.NearOutlet, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.NearOutlet, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 player =>
                 {
                     float side = player.Position.Z - referenceXZ.Y;
@@ -222,7 +233,7 @@ public sealed class TeamJobCoordinator
                     return ClampToPitch(referenceXZ + new Vector2(-attackDirX * 5f, side * 7f));
                 });
 
-            AssignUniqueJob(available, counts, taken, TacticalJob.ThirdPlayerOption, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.ThirdPlayerOption, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ =>
                 {
                     float side = referenceXZ.Y >= 0f ? -1f : 1f;
@@ -230,7 +241,7 @@ public sealed class TeamJobCoordinator
                     return ClampToPitch(Onside(target, offsideLineProj - 1.5f, attackDirX));
                 });
 
-            AssignUniqueJob(available, counts, taken, TacticalJob.FarSideWidth, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.FarSideWidth, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ =>
                 {
                     float side = referenceXZ.Y >= 0f ? -1f : 1f;
@@ -242,7 +253,7 @@ public sealed class TeamJobCoordinator
             bool depthRunPossible = offsideLineProj - referenceProj > 4f && offsideLineProj > 10f;
             if (depthRunPossible)
             {
-                AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, players, referenceXZ, attackDirX, offsideLineProj, tick,
+                AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                     player =>
                     {
                         if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
@@ -261,7 +272,7 @@ public sealed class TeamJobCoordinator
                     }, baseScore: 0.05f);
             }
 
-            AssignUniqueJob(available, counts, taken, TacticalJob.Overlap, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.Overlap, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 player =>
                 {
                     if (MathF.Abs(referenceXZ.Y) < 8f) return null;
@@ -281,10 +292,10 @@ public sealed class TeamJobCoordinator
             Vector2 coverAnchor = ClampToPitch(
                 pressReference + SimMath.SafeNormalize(ownGoalXZ - pressReference, new Vector2(-attackDirX, 0f)) * 7f);
 
-            AssignUniqueJob(available, counts, taken, TacticalJob.CoverDefender, players, referenceXZ, attackDirX, offsideLineProj, tick,
+            AssignUniqueJob(available, counts, taken, TacticalJob.CoverDefender, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ => coverAnchor, baseScore: 0.05f);
 
-            AssignMarkers(available, counts, taken, players, team, ownGoalXZ, attackDirX, tick, 2);
+            AssignMarkers(available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, 2);
 
             // The remaining defenders hold the line; everyone else keeps team shape.
             foreach (FootballerState player in available.ToArray())
@@ -307,34 +318,37 @@ public sealed class TeamJobCoordinator
         List<FootballerState> available,
         Dictionary<TacticalJob, int> counts,
         HashSet<int> taken,
-        IReadOnlyList<FootballerState> players,
-        TeamId team,
+        TeamBelief opponents,
         Vector2 ownGoalXZ,
         float attackDirX,
         int tick,
         int maxMarkers)
     {
-        var threats = new List<FootballerState>();
-        foreach (FootballerState opponent in players)
+        // A2.6: markers are picked from what the team believes, so an opponent nobody has seen cannot
+        // pull a defender out of shape.
+        var threats = new List<TeamBelief.Opponent>();
+        for (int i = 0; i < opponents.Opponents.Count; i++)
         {
-            if (opponent.Team == team || !opponent.IsActiveOnPitch || opponent.Role == TacticalRole.Goalkeeper)
-                continue;
-            if (Vector2.Distance(new Vector2(opponent.Position.X, opponent.Position.Z), ownGoalXZ) < 45f)
+            TeamBelief.Opponent opponent = opponents.Opponents[i];
+            // A keeper is never a marking job: he stays in his own half and marking him would pull a
+            // defender out of the line for nobody.
+            if (opponent.Role == TacticalRole.Goalkeeper) continue;
+            if (Vector2.Distance(opponent.PositionXZ, ownGoalXZ) < 45f)
                 threats.Add(opponent);
         }
 
-        threats.Sort((a, b) => Vector2.Distance(new Vector2(a.Position.X, a.Position.Z), ownGoalXZ)
-            .CompareTo(Vector2.Distance(new Vector2(b.Position.X, b.Position.Z), ownGoalXZ)));
+        threats.Sort((a, b) => Vector2.Distance(a.PositionXZ, ownGoalXZ)
+            .CompareTo(Vector2.Distance(b.PositionXZ, ownGoalXZ)));
 
         int assigned = 0;
-        foreach (FootballerState threat in threats)
+        foreach (TeamBelief.Opponent threat in threats)
         {
             if (assigned >= maxMarkers) break;
             if (counts.GetValueOrDefault(TacticalJob.Marker) >= maxMarkers) break;
 
             FootballerState? best = null;
             float bestScore = float.MinValue;
-            Vector2 threatXZ = new(threat.Position.X, threat.Position.Z);
+            Vector2 threatXZ = threat.PositionXZ;
             Vector2 goalSide = SimMath.SafeNormalize(ownGoalXZ - threatXZ, new Vector2(-attackDirX, 0f));
             Vector3 anchor = new(threatXZ.X + goalSide.X * 1.9f, 0f, threatXZ.Y + goalSide.Y * 1.9f);
 
@@ -357,7 +371,7 @@ public sealed class TeamJobCoordinator
 
             if (best is null) break;
 
-            Assign(best, TacticalJob.Marker, anchor, threat.Id, $"Mark #{threat.Id}", tick);
+            Assign(best, TacticalJob.Marker, anchor, threat.PlayerId, $"Mark #{threat.PlayerId}", tick);
             taken.Add(best.Id);
             available.Remove(best);
             counts[TacticalJob.Marker] = counts.GetValueOrDefault(TacticalJob.Marker) + 1;
@@ -370,7 +384,7 @@ public sealed class TeamJobCoordinator
         Dictionary<TacticalJob, int> counts,
         HashSet<int> taken,
         TacticalJob job,
-        IReadOnlyList<FootballerState> players,
+        TeamBelief opponents,
         Vector2 referenceXZ,
         float attackDirX,
         float offsideLineProj,
@@ -397,7 +411,7 @@ public sealed class TeamJobCoordinator
             if (attackingJob && anchor.X * attackDirX > offsideLineProj + 2f)
                 continue;
 
-            float space = MinOpponentDistance(anchor, players, player.Team);
+            float space = opponents.NearestDistance(new Vector2(anchor.X, anchor.Z));
             float travel = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), new Vector2(anchor.X, anchor.Z));
 
             // A job more than ~20 m away would drag the player across the pitch and leave a hole in
@@ -512,37 +526,18 @@ public sealed class TeamJobCoordinator
         _ => "Team shape"
     };
 
-    private float ComputeOffsideLineProj(
-        IReadOnlyList<FootballerState> players,
-        TeamId team,
-        BallState ball,
-        float attackDirX)
+    /// <summary>
+    /// Offside line from what the team believes (A2.6). Fewer than two known opponents is not enough to
+    /// draw a line, so the conservative fallback is the halfway line rather than an invented defender.
+    /// </summary>
+    private float ComputeOffsideLineProj(TeamBelief opponents, BallState ball, float attackDirX)
     {
-        var opponentProj = new List<float>();
-        foreach (FootballerState player in players)
-        {
-            if (player.Team == team || !player.IsActiveOnPitch) continue;
-            opponentProj.Add(player.Position.X * attackDirX);
-        }
-        opponentProj.Sort();
+        float secondLast = opponents.TryGetSecondLastProjX(attackDirX, out float believed)
+            ? believed
+            : _pitch.HalfLength;
 
-        float secondLast = opponentProj.Count >= 2 ? opponentProj[^2] : _pitch.HalfLength;
         float ballProj = ball.Position.X * attackDirX;
         return MathF.Max(0f, MathF.Max(secondLast, ballProj));
-    }
-
-    private static float MinOpponentDistance(Vector3 point, IReadOnlyList<FootballerState> players, TeamId team)
-    {
-        float nearest = 15f;
-        foreach (FootballerState player in players)
-        {
-            if (player.Team == team || !player.IsActiveOnPitch) continue;
-            float distance = Vector2.Distance(
-                new Vector2(point.X, point.Z),
-                new Vector2(player.Position.X, player.Position.Z));
-            if (distance < nearest) nearest = distance;
-        }
-        return nearest;
     }
 
     private static Vector3 AnchorOf(FootballerState player) =>

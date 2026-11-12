@@ -34,6 +34,14 @@ public sealed class AuditRegressionTests
         Tendencies = new PlayerTendencies()
     };
 
+    /// <summary>
+    /// A truth view of the opponents for the job coordinator (A2.6). These tests exercise the
+    /// assignment rules themselves, so they feed truth; the belief path is covered separately by
+    /// <see cref="TeamBeliefTests"/>.
+    /// </summary>
+    private static TeamBelief TruthBelief(IReadOnlyList<FootballerState> players, TeamId team) =>
+        TeamBelief.FromTruth(team, players);
+
     private static FootballerObservation Observe(
         FootballerState self,
         IReadOnlyList<FootballerState> players,
@@ -2606,7 +2614,8 @@ public sealed class AuditRegressionTests
 
         jobs.Update(players, ball, HomePossession(), TeamId.Home,
             homeResponderId: null, awayResponderId: 15, homeDirX: 1f, tick: 0,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         List<TeamJobAssignment> homeJobs = AssignedJobs(jobs, players, TeamId.Home);
         Assert.True(jobs.Assignments.Count > 0,
@@ -2682,7 +2691,8 @@ public sealed class AuditRegressionTests
         var jobs = new TeamJobCoordinator(pitch);
 
         jobs.Update(players, ball, HomePossession(), TeamId.Home, null, 15, 1f, 0,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         // Away #15 wins the ball at (4,8); Home #6 is the elected presser.
         var awayCarrier = players.Single(p => p.Id == 15);
@@ -2696,7 +2706,8 @@ public sealed class AuditRegressionTests
         var possessionAway = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, 15, null);
 
         jobs.Update(players, turnoverBall, possessionAway, TeamId.Away, homeResponderId: 6, awayResponderId: null, 1f, 60,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         Assert.True(jobs.Get(6)?.Job == TacticalJob.Presser,
             $"#6 job = {jobs.Get(6)?.Job}; Home jobs: {string.Join(", ", AssignedJobs(jobs, players, TeamId.Home).Select(j => j.Job))}");
@@ -2732,7 +2743,8 @@ public sealed class AuditRegressionTests
         var jobs = new TeamJobCoordinator(pitch);
 
         jobs.Update(players, ball, HomePossession(), TeamId.Home, null, 15, 1f, 0,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         var initialJobs = new Dictionary<int, TacticalJob>();
         foreach (var player in players.Where(p => p.Team == TeamId.Home && p.Role != TacticalRole.Goalkeeper))
@@ -2741,9 +2753,11 @@ public sealed class AuditRegressionTests
         // The carrier drifts a few metres; jobs stay put for the hold window.
         ball.Position = new Vector3(4f, 0.11f, 12f);
         jobs.Update(players, ball, HomePossession(), TeamId.Home, null, 15, 1f, 10,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
         jobs.Update(players, ball, HomePossession(), TeamId.Home, null, 15, 1f, 20,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         foreach (var (playerId, job) in initialJobs)
             Assert.Equal(job, jobs.Get(playerId)!.Value.Job);
@@ -2751,7 +2765,8 @@ public sealed class AuditRegressionTests
         // A turnover is urgent: the attacking jobs are gone on the same update.
         var possessionAway = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, 15, null);
         jobs.Update(players, ball, possessionAway, TeamId.Away, 6, null, 1f, 24,
-            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack);
+            TeamTacticalProfile.PossessionControl, TeamTacticalProfile.DirectCounterattack,
+            TruthBelief(players, TeamId.Home), TruthBelief(players, TeamId.Away));
 
         var homeJobs = AssignedJobs(jobs, players, TeamId.Home);
         Assert.DoesNotContain(homeJobs, j => j.Job is TacticalJob.NearOutlet or TacticalJob.ThirdPlayerOption
