@@ -37,6 +37,23 @@ public sealed class AiRuntimeConfig
     /// <summary>How long a reactive (non-job) action is held once chosen.</summary>
     public float ReactionCommitmentSeconds { get; init; } = 0.18f;
 
+    /// <summary>
+    /// Absolute part of the switch cost (A4.5): the alternative must beat the current action by at least
+    /// this much, on the action-value scale, before the player changes what he is doing. Small on purpose:
+    /// the decision is re-scored every tick, so this exists to absorb the per-tick wobble, not to make a
+    /// carrier stubborn. Measured at 0.05/0.10 — the first values — the reference match lost a third of its
+    /// passes, so the default sits well inside the spread between competing actions instead.
+    /// </summary>
+    public float SwitchAbsoluteMargin { get; init; } = 0.02f;
+
+    /// <summary>
+    /// Relative part of the switch cost (A4.5), applied to the magnitude of the current action's own score:
+    /// <c>best − current &gt; absolute + relative × max(|current|, ε)</c>. Using the magnitude (rather than
+    /// multiplying the utilities, the plan's example to avoid) is what makes the rule behave sanely for
+    /// negative scores, where a proportional comparison inverts the decision.
+    /// </summary>
+    public float SwitchRelativeMargin { get; init; } = 0.04f;
+
     // ---------------------------------------------------------------------------------------------
     // Declared now, consumed by A1.2 / A4 / A9.
     //
@@ -101,6 +118,7 @@ public sealed class AiRuntimeConfig
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
+        $"switch(abs {SwitchAbsoluteMargin:F2}, rel {SwitchRelativeMargin:F2}) " +
         $"cadence(p{PerceptionRefreshTicks} c{CarrierDecisionTicks} o{OutfieldDecisionTicks} " +
         $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
         $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
@@ -119,6 +137,12 @@ public static class AiRuntimeConfigValidation
     /// <summary>Largest commitment bonus; above this the current action would always win.</summary>
     public const float MaxCommitmentBonus = 1f;
 
+    /// <summary>
+    /// Largest switch margin a configuration may request. Above this no alternative ever wins and the
+    /// player is frozen on its first action, which is an ablation rather than a tuning value.
+    /// </summary>
+    public const float MaxSwitchMargin = 5f;
+
     public static void Validate(AiRuntimeConfig? config, string name = "AiRuntimeConfig")
     {
         if (config is null)
@@ -134,6 +158,14 @@ public static class AiRuntimeConfigValidation
         RequireFinite(config.ReactionCommitmentSeconds, name, nameof(AiRuntimeConfig.ReactionCommitmentSeconds));
         RequireRange(config.ReactionCommitmentSeconds, 0f, MaxCommitmentSeconds, name,
             nameof(AiRuntimeConfig.ReactionCommitmentSeconds));
+
+        RequireFinite(config.SwitchAbsoluteMargin, name, nameof(AiRuntimeConfig.SwitchAbsoluteMargin));
+        RequireRange(config.SwitchAbsoluteMargin, 0f, MaxSwitchMargin, name,
+            nameof(AiRuntimeConfig.SwitchAbsoluteMargin));
+
+        RequireFinite(config.SwitchRelativeMargin, name, nameof(AiRuntimeConfig.SwitchRelativeMargin));
+        RequireRange(config.SwitchRelativeMargin, 0f, MaxSwitchMargin, name,
+            nameof(AiRuntimeConfig.SwitchRelativeMargin));
 
         // A cadence of zero ticks would mean "every tick" expressed as a division, which then breaks as
         // soon as a scheduler modulo is applied. One tick is the floor.

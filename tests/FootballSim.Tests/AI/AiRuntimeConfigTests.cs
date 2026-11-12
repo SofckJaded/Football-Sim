@@ -27,12 +27,35 @@ public sealed class AiRuntimeConfigTests
         Assert.Equal(0.10f, defaults.CommitmentBonus);
         Assert.Equal(0.45f, defaults.JobCommitmentSeconds);
         Assert.Equal(0.18f, defaults.ReactionCommitmentSeconds);
+        // A4.5: the switch margin is small on purpose — it stops a wobble, not a decision.
+        Assert.Equal(0.02f, defaults.SwitchAbsoluteMargin);
+        Assert.Equal(0.04f, defaults.SwitchRelativeMargin);
 
         // A fresh instance must equal the shared default: these are value semantics, not identity.
         var fresh = new AiRuntimeConfig();
         Assert.Equal(defaults.CommitmentBonus, fresh.CommitmentBonus);
         Assert.Equal(defaults.JobCommitmentSeconds, fresh.JobCommitmentSeconds);
         Assert.Equal(defaults.ReactionCommitmentSeconds, fresh.ReactionCommitmentSeconds);
+        Assert.Equal(defaults.SwitchAbsoluteMargin, fresh.SwitchAbsoluteMargin);
+        Assert.Equal(defaults.SwitchRelativeMargin, fresh.SwitchRelativeMargin);
+    }
+
+    [Theory]
+    [InlineData(0.05f, -1f)]
+    [InlineData(-1f, 0.10f)]
+    [InlineData(0.05f, 99f)]
+    [InlineData(99f, 0.10f)]
+    public void Validator_RejectsAnImpossibleSwitchMargin(float absolute, float relative)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => AiRuntimeConfigValidation.Validate(
+            new AiRuntimeConfig { SwitchAbsoluteMargin = absolute, SwitchRelativeMargin = relative }));
+    }
+
+    [Fact]
+    public void Validator_RejectsANonFiniteSwitchMargin()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => AiRuntimeConfigValidation.Validate(
+            new AiRuntimeConfig { SwitchRelativeMargin = float.NaN }));
     }
 
     [Fact]

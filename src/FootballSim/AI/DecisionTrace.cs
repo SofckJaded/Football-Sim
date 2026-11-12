@@ -53,11 +53,25 @@ public readonly record struct DecisionTraceEntry(
     /// <summary>Owning intent, when the action continues one. Null until A1.2 introduces persistence.</summary>
     public int? IntentId { get; init; }
 
+    /// <summary>
+    /// The four terms the chosen action's score was built from (A4.6): completion probability × gain −
+    /// (1 − p) × loss + preference. <see cref="ValueTerms.IsPresent"/> is false for an action scored by a
+    /// heuristic curve that the generator did not decompose.
+    /// </summary>
+    public ValueTerms Terms { get; init; } = ValueTerms.None;
+
+    /// <summary>
+    /// Candidates the action set refused this decision and why (A4.6). Null when nothing was refused or the
+    /// recording buffer was empty; bounded by the generator's rejection buffer.
+    /// </summary>
+    public IReadOnlyList<CandidateRejection>? Rejections { get; init; }
+
     public string Describe() =>
         $"t{Tick} p{PlayerId} {Job}{(string.IsNullOrEmpty(JobReason) ? string.Empty : $"({JobReason})")} " +
         $"-> {CandidateKey ?? SelectedAction} U={SelectedUtility:F3}" +
         (RunnerUpAction is null ? string.Empty : $" (2nd {RunnerUpAction} U={RunnerUpUtility:F3})") +
-        $" of {CandidateCount}";
+        $" of {CandidateCount}" +
+        (Terms.IsPresent ? $" [{Terms.Describe()}]" : string.Empty);
 }
 
 /// <summary>
@@ -101,7 +115,8 @@ public sealed class DecisionTraceBuffer
         int tick, FootballerObservation observation, string selectedAction, float selectedUtility,
         string? runnerUpAction, float runnerUpUtility, int candidateCount,
         Vector3? target = null, int? targetPlayerId = null, string? candidateKey = null,
-        int? knowledgeAgeTicks = null)
+        int? knowledgeAgeTicks = null, ValueTerms terms = default,
+        IReadOnlyList<CandidateRejection>? rejections = null)
     {
         Record(new DecisionTraceEntry(
             tick, observation.SelfId, observation.SelfTeam, observation.SelfRole,
@@ -112,7 +127,9 @@ public sealed class DecisionTraceBuffer
             TargetPlayerId = targetPlayerId,
             CandidateKey = candidateKey,
             // A2.2: perception now has an age to report, so the trace stops publishing null here.
-            KnowledgeAgeTicks = knowledgeAgeTicks ?? observation.KnowledgeAgeTicks
+            KnowledgeAgeTicks = knowledgeAgeTicks ?? observation.KnowledgeAgeTicks,
+            Terms = terms,
+            Rejections = rejections
         });
     }
 

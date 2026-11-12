@@ -31,6 +31,13 @@ public readonly record struct UtilityCandidate(
 
     /// <summary>Text form of <see cref="Key"/>, falling back to the action name when no key was set.</summary>
     public string Identity => Key.IsNone ? ActionName : Key.Describe();
+
+    /// <summary>
+    /// The four terms the score was built from (A4.6), so a trace or the inspector can explain the
+    /// decision instead of only reporting its total. <see cref="ValueTerms.IsPresent"/> is false for a
+    /// candidate built without one.
+    /// </summary>
+    public ValueTerms Terms { get; init; } = ValueTerms.None;
 }
 
 
@@ -76,6 +83,15 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
     /// <summary>Number of candidates generated on the last decision.</summary>
     public int LastCandidateCount => _lastCandidateCount;
+
+    /// <summary>
+    /// Candidates the last decision refused, with a reason (A4.6). Bounded, allocated once, and only read by
+    /// the trace and the inspector — the decision path never consults it.
+    /// </summary>
+    public int RejectionCount => _generator.RejectionCount;
+
+    /// <summary>One refused candidate from the last decision; <paramref name="index"/> below <see cref="RejectionCount"/>.</summary>
+    public CandidateRejection GetRejection(int index) => _generator.GetRejection(index);
 
     /// <summary>
     /// Seconds left on the current commitment window. Exposed so configuration can be proven to reach
@@ -203,7 +219,10 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         UtilityCandidate best = default;
         UtilityCandidate? runnerUp = null;
+        UtilityCandidate current = default;
         bool hasBest = false;
+        bool hasCurrent = false;
+
         foreach (var cand in _generator.Candidates)
         {
             float score = cand.UtilityScore;
@@ -213,6 +232,12 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
                 score += _ai.CommitmentBonus;
 
             UtilityCandidate scored = cand with { UtilityScore = score };
+            if (!hasCurrent && scored.Key == _committedKey)
+            {
+                current = scored;
+                hasCurrent = true;
+            }
+
             if (!hasBest || scored.UtilityScore > best.UtilityScore)
             {
                 if (hasBest) runnerUp = best;
@@ -228,9 +253,23 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         if (!hasBest)
             best = new UtilityCandidate("ActiveSupportMove", -999f, FootballerCommand.Idle);
 
-        // Expose the decision that was actually taken, including the commitment bonus. The trace must
-        // report this, not the raw candidate table: the two differ exactly when commitment is doing its
-        // job, and a trace that showed the raw winner would describe a decision nobody made.
+        // A4.5: keep doing what we are doing unless the alternative is *clearly* better. This is the plan's
+        // rule, on the absolute scale of the scores:
+        //     switch only when best - current > absolute + relative * max(|current|, epsilon).
+        // A5-style proportions (multiplying the utilities) invert the decision for negative scores, which
+        // is why the magnitude is used instead. The current action is held only while it is still a valid
+        // candidate this tick: an invalid action (the ball changed hands, the duty changed, a restart) is
+        // not held, because there is nothing to re-evaluate.
+        if (hasCurrent && hasBest && !best.Key.Equals(current.Key) &&
+            !ShouldSwitch(best.UtilityScore, current.UtilityScore, _ai.SwitchAbsoluteMargin, _ai.SwitchRelativeMargin))
+        {
+            runnerUp = best;
+            best = current;
+        }
+
+        // Expose the decision that was actually taken, including the commitment bonus and any held action.
+        // The trace must report this, not the raw candidate table: the two differ exactly when commitment is
+        // doing its job, and a trace that showed the raw winner would describe a decision nobody made.
         _lastSelected = best;
         _lastRunnerUp = runnerUp;
         _lastCandidateCount = _generator.CandidateCount;
@@ -249,6 +288,30 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job);
         return best.Command;
     }
+
+    /// <summary>
+    /// The A4.5 switch rule, pure and testable: is <paramref name="best"/> better than
+    /// <paramref name="current"/> by more than the configured margin?
+    ///
+    /// <c>best − current &gt; absolute + relative × max(|current|, ε)</c>. The relative term scales with how
+    /// much is at stake in the current action — a large positive score is stickier than a small one — and
+    /// the magnitude keeps the rule correct when the current score is negative, where a proportional
+    /// comparison (the report's multiplicative example) would make switching *easier* precisely when the
+    /// player is doing something already known to be bad.
+    /// </summary>
+    public static bool ShouldSwitch(float bestScore, float currentScore, float absoluteMargin, float relativeMargin)
+    {
+        float current = float.IsFinite(currentScore) ? currentScore : 0f;
+        float candidate = float.IsFinite(bestScore) ? bestScore : float.NegativeInfinity;
+        float absolute = float.IsFinite(absoluteMargin) ? MathF.Max(0f, absoluteMargin) : 0f;
+        float relative = float.IsFinite(relativeMargin) ? MathF.Max(0f, relativeMargin) : 0f;
+
+        float required = absolute + relative * MathF.Max(MathF.Abs(current), SwitchEpsilon);
+        return candidate - current > required;
+    }
+
+    /// <summary>Floor on the magnitude in the switch rule, so a zero-scoring action is not free to change.</summary>
+    public const float SwitchEpsilon = 1e-3f;
 
     /// <summary>
     /// Publishes the chosen action as an intent (A1.2). Recorded even when scheduling is off, so the

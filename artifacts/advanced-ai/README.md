@@ -763,6 +763,54 @@ the missing prerequisite is A5.3's pass power/flight work.
 
 ---
 
+## 2026-11-12 — A4.5 hysteresis + A4.6 explanations (simulation version `ai15-rs1`)
+
+Files: `a4-hysteresis-explanations-tactical-gate.txt`, `a4-hysteresis-explanations-match-11v11.txt`,
+`a4-hysteresis-explanations-perf.txt`. Release build, reference machine.
+
+### 11v11 headless match — `a4-hysteresis-explanations-match-11v11.txt`
+
+| Metric | ai14-rs1 | ai15-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 56 540 ms | 50 313 ms |
+| Ticks | 327 244 | 326 540 |
+| Score | 9 – 8 | **4 – 5** |
+| Possession | 51.1 / 48.9 | 49.8 / 50.2 |
+| Passes | 754 / 714 (71 % / 69 %) | **637 / 565** (70 % / 65 %) |
+| Shots | 71 / 50 | 52 / 65 |
+| Width (all-tick) | 44.1 / 41.4 m | 43.9 / 41.7 m |
+
+**Reading:** the switch rule costs some ball movement — a carrier now holds what he is doing until the
+alternative clears the margin — which is visible as ~15 % fewer passes and a slightly flatter shot split.
+The first margin tried (0.05/0.10) cost a third of the passes and was rejected on that measurement; the
+shipped default (0.02/0.04) sits inside the spread between competing actions.
+
+### Tactical differentiation gate — `a4-hysteresis-explanations-tactical-gate.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **2.76 m**. **GATE: PASS.**
+
+### Performance — `a4-hysteresis-explanations-perf.txt`
+
+| Metric | ai14-rs1 | ai15-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 172.5 µs | 172.0 µs |
+| p50 / p95 | 132.7 / 345.6 µs | 135.3 / 389.3 µs |
+| p99 / max | 538.8 / 1489.3 µs | 545.4 / 1790.6 µs |
+| Allocated per tick | 62 948 B | 63 555 B |
+
+Flat: the explanations are four floats in an existing struct and a bounded array of interned strings, and
+the trace copies rejections only while tracing is on. A9.3 still owns the general allocation work.
+
+### A4 exit gate
+
+Recorded in `TASKS.md`: **three of four clauses pass**, each with the test that proves it. The missing
+clause is A4.4's "a better chance can provably beat a poor shot", which is blocked on A5.3 (see above)
+rather than on A4 itself. The gate's evidence lives in `CarrierDecisionGateTests` (live decisions and a
+live fixture), `ReceptionValueModelTests` and `PassSuccessModelTests` (the model-level comparisons).
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

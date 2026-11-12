@@ -148,6 +148,30 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Fixed capacity of the pass-target pre-rank buffer (16 covers eleven-a-side).</summary>
     internal const int PassTargetCapacity = 16;
 
+    /// <summary>
+    /// How many refused candidates one decision records with a reason (A4.6). Bounded like every other
+    /// diagnostic buffer: a carrier with eleven team-mates can be refused by all of them.
+    /// </summary>
+    public const int MaxRejections = 8;
+
+    /// <summary>Reason text for a pass the model priced as not worth offering.</summary>
+    public const string RejectionLowCompletion = "low-completion";
+
+    /// <summary>Reason text for a pass whose line a defender physically blocks.</summary>
+    public const string RejectionLaneBlocked = "lane-blocked";
+
+    /// <summary>Reason text for a receiver in an offside position.</summary>
+    public const string RejectionOffside = "offside";
+
+    /// <summary>Reason text for a receiver outside the pass distance band.</summary>
+    public const string RejectionOutOfRange = "out-of-range";
+
+    /// <summary>Reason text for a receiver too close to the passer's own goal line.</summary>
+    public const string RejectionOwnGoalMargin = "own-goal-margin";
+
+    /// <summary>Reason text for a human caller whose request could not be planned.</summary>
+    public const string RejectionUnplannable = "unplannable";
+
     private readonly PitchDimensions _pitch;
     private readonly MatchCommunicationContext? _communication;
     private readonly PassPlanner _passPlanner;
@@ -162,6 +186,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     private readonly int[] _passTargetIds = new int[PassTargetCapacity];
     private readonly float[] _passTargetRank = new float[PassTargetCapacity];
     private int _passTargetCount;
+
+    // Refused candidates and why (A4.6). Reused, so a decision allocates nothing to explain itself.
+    private readonly CandidateRejection[] _rejections = new CandidateRejection[MaxRejections];
+    private int _rejectionCount;
 
     private Vector2 _lastCarryDirection;
     private bool _hasLastCarryDirection;
@@ -188,6 +216,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     public int CandidateCount => _lastCandidates.Count;
 
     /// <summary>
+    /// How many candidates the most recent decision refused, with a reason (A4.6). Bounded by
+    /// <see cref="MaxRejections"/>; a decision that refused nothing reports zero.
+    /// </summary>
+    public int RejectionCount => _rejectionCount;
+
+    /// <summary>One refused candidate and why. <paramref name="index"/> must be below <see cref="RejectionCount"/>.</summary>
+    public CandidateRejection GetRejection(int index) => _rejections[index];
+
+    /// <summary>
     /// Local pressure window around this player's last on-ball decision (A2.4). Exposed so diagnostics
     /// and tests can see what the carry choice was actually reading.
     /// </summary>
@@ -200,7 +237,11 @@ public sealed class CandidateGenerator : IAiStateResettable
     public float TackleCooldown => _tackleCooldown;
 
     /// <summary>Drops the previous decision candidate set. Called once per decision.</summary>
-    public void Clear() => _lastCandidates.Clear();
+    public void Clear()
+    {
+        _lastCandidates.Clear();
+        _rejectionCount = 0;
+    }
 
     /// <summary>Advances the timers this object owns. Called once per decision.</summary>
     public void TickTimers(float dt) => _tackleCooldown = MathF.Max(0f, _tackleCooldown - dt);
@@ -278,12 +319,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 shotDir2D = Vector2.Normalize(new Vector2(shotTarget.X - obs.SelfPosition.X, shotTarget.Z - obs.SelfPosition.Z));
         float laneClearance = EvaluateLaneClearance(selfXZ, new Vector2(shotTarget.X, shotTarget.Z), obs.VisiblePlayers, obs.SelfTeam);
 
-        float shotUtility = ActionValueScale.ShotValue(distToGoal, laneClearance);
+        float shotValue = ActionValueScale.ShotValue(distToGoal, laneClearance);
         // Shooting appetite: a striker (0.85) pulls the trigger where a defender (0.20) lays it off.
-        shotUtility += (tendencies.ShootingAppetite01 - PlayerTendencyBaselines.ShootingAppetite) * 0.40f;
+        float shotPreference = (tendencies.ShootingAppetite01 - PlayerTendencyBaselines.ShootingAppetite) * 0.40f;
         // Risk tolerance: the more risk-tolerant player takes on the low-percentage shot from range.
         if (distToGoal > 17.0f)
-            shotUtility += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.30f;
+            shotPreference += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.30f;
+        float shotUtility = shotValue + shotPreference;
 
         var shotCmd = new FootballerCommand(
             shotDir2D, shotDir2D, false, false, false, false, false, Vector3.Zero,
@@ -296,7 +338,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate("ShootAtGoal", shotUtility, shotCmd)
         {
             TargetXZ = shotTarget,
-            Key = new CandidateKey(CandidateKind.Shot, TargetTag: "goal")
+            Key = new CandidateKey(CandidateKind.Shot, TargetTag: "goal"),
+            Terms = new ValueTerms(1f, shotValue, 0f, shotPreference)
         });
     }
 
@@ -355,7 +398,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         ref int loftedBudget)
     {
         bool isHumanCaller = humanCalled && mate.PlayerId == _communication!.HumanCallForPassPlayerId;
-        if (!IsPassTargetEligible(obs, mate, ballXZ, offsideLineProjX, humanCalled, out float forwardMeters))
+        if (!IsPassTargetEligible(obs, mate, ballXZ, offsideLineProjX, humanCalled, out float forwardMeters, out _))
             return;
 
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
@@ -435,9 +478,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 ballXZ,
         float offsideLineProjX,
         bool humanCalled,
-        out float forwardMeters)
+        out float forwardMeters,
+        out string? refusal)
     {
         forwardMeters = 0f;
+        refusal = null;
 
         bool isHumanCaller = humanCalled && mate.PlayerId == _communication!.HumanCallForPassPlayerId;
         if (mate.PlayerId == obs.SelfId) return false;
@@ -446,18 +491,30 @@ public sealed class CandidateGenerator : IAiStateResettable
         float mateProjX = mate.EstimatedPosition.X * obs.AttackingDirectionX;
         // STRICT OFFSIDE CHECK: never pass to an AI teammate in an offside position. A human caller is
         // exempt because the request is theirs to make and the law is judged at the contact.
-        if (!isHumanCaller && mateProjX > offsideLineProjX - 0.35f) return false;
+        if (!isHumanCaller && mateProjX > offsideLineProjX - 0.35f)
+        {
+            refusal = RejectionOffside;
+            return false;
+        }
 
         Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
         float rawDistance = Vector2.Distance(ballXZ, mateXZ);
-        if (rawDistance < MinPassDistanceMeters || rawDistance > MaxPassDistanceMeters) return false;
+        if (rawDistance < MinPassDistanceMeters || rawDistance > MaxPassDistanceMeters)
+        {
+            refusal = RejectionOutOfRange;
+            return false;
+        }
 
         // Feasibility, not policy: a ball played into your own goal is not a pass. The line to an outfield
         // target that close to the own goal line would run at the goal if the first touch misses, and
         // neither the planner nor the success model can rule that out. The goalkeeper is exempt: he is the
         // one player standing there on purpose, and he can handle a ball that reaches him.
         if (mate.Role != TacticalRole.Goalkeeper &&
-            mateProjX < -_pitch.HalfLength + OwnGoalPassMarginMeters) return false;
+            mateProjX < -_pitch.HalfLength + OwnGoalPassMarginMeters)
+        {
+            refusal = RejectionOwnGoalMargin;
+            return false;
+        }
 
         forwardMeters = (mate.EstimatedPosition.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
         return true;
@@ -481,8 +538,12 @@ public sealed class CandidateGenerator : IAiStateResettable
         for (int index = 0; index < obs.VisiblePlayers.Count; index++)
         {
             PerceivedEntity mate = obs.VisiblePlayers[index];
-            if (!IsPassTargetEligible(obs, mate, ballXZ, offsideLineProjX, humanCalled, out float forwardMeters))
+            if (!IsPassTargetEligible(obs, mate, ballXZ, offsideLineProjX, humanCalled,
+                    out float forwardMeters, out string? refusal))
+            {
+                if (refusal is not null) Reject(mate.PlayerId, refusal);
                 continue;
+            }
 
             Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
             float space = EvaluateSpaceFreedom(mateXZ, obs.VisiblePlayers, obs.SelfTeam);
@@ -595,10 +656,19 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         // Hard rejection for a clearly blocked ground pass survives (A4.2), and a pass the model prices
         // as hopeless is not offered at all. A caller's request is never dropped by either rule.
-        if (terms.LaneBlocked && !option.HumanCaller) return false;
-        if (!option.HumanCaller && terms.CompletionProbability01 < MinViableCompletion01) return false;
+        if (terms.LaneBlocked && !option.HumanCaller)
+        {
+            Reject(mate.PlayerId, RejectionLaneBlocked);
+            return false;
+        }
 
-        float score = ScorePass(obs, mate.PlayerId, terms, forwardMeters, targetXZ, option);
+        if (!option.HumanCaller && terms.CompletionProbability01 < MinViableCompletion01)
+        {
+            Reject(mate.PlayerId, RejectionLowCompletion);
+            return false;
+        }
+
+        float score = ScorePass(obs, mate.PlayerId, terms, forwardMeters, targetXZ, option, out ValueTerms valueTerms);
 
         var passCommand = new FootballerCommand(
             aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
@@ -609,7 +679,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate($"Pass({option.PassType})To#{mate.PlayerId}", score, passCommand)
         {
-            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, option.Tag)
+            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, option.Tag),
+            Terms = valueTerms
         });
         return true;
     }
@@ -629,7 +700,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         in PassSuccessTerms terms,
         float forwardMeters,
         Vector2 targetXZ,
-        in PassOption option)
+        in PassOption option,
+        out ValueTerms valueTerms)
     {
         PlayerTendencies tendencies = obs.SelfTendencies;
         TeamTacticalProfile profile = obs.TeamProfile;
@@ -639,21 +711,23 @@ public sealed class CandidateGenerator : IAiStateResettable
             obs, receiverId, targetXZ, terms.DefenderPressure01);
 
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
-        float score = ActionValueScale.ExpectedValue(terms.CompletionProbability01, reception.Value, loss);
 
         // Risk tolerance (player + team): a tight lane is worth taking for a risk-taker and a reason to
         // keep the ball for a safe passer.
         float forwardRatio = Math.Clamp(forwardMeters / 20f, -1f, 1f);
-        score += ActionValueScale.ProgressBonus * forwardRatio;
+        float preference = ActionValueScale.ProgressBonus * forwardRatio;
         float laneRisk = 1f - terms.LaneClearance01;
-        score += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.40f * laneRisk;
-        score += (profile.RiskTolerance01 - 0.50f) * 0.30f * laneRisk;
+        preference += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.40f * laneRisk;
+        preference += (profile.RiskTolerance01 - 0.50f) * 0.30f * laneRisk;
 
         // Direct pass preference: how much a forward pass is worth to this player.
-        score += (tendencies.DirectPassPreference01 - PlayerTendencyBaselines.DirectPassPreference) * 0.30f * forwardRatio;
+        preference += (tendencies.DirectPassPreference01 - PlayerTendencyBaselines.DirectPassPreference) * 0.30f * forwardRatio;
 
-        if (option.HumanCaller) score += HumanCallPassBonus;
-        return score;
+        if (option.HumanCaller) preference += HumanCallPassBonus;
+
+        valueTerms = new ValueTerms(
+            terms.CompletionProbability01, reception.Value, loss, preference);
+        return valueTerms.Value;
     }
 
     /// <summary>
@@ -679,7 +753,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, mate.PlayerId, mateXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
-        float score = ActionValueScale.ExpectedValue(terms.CompletionProbability01, reception.Value, loss);
+        ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
+        float score = valueTerms.Value;
 
         Vector2 aimDirection = SimMath.SafeNormalize(mateXZ - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
         var command = new FootballerCommand(
@@ -691,7 +766,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate($"Pass(LoftedPass)To#{mate.PlayerId}", score, command)
         {
-            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, "Lofted")
+            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, "Lofted"),
+            Terms = valueTerms
         });
         return true;
     }
@@ -728,7 +804,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 Target,
         float Utility,
         float Space,
-        bool Sprint);
+        bool Sprint,
+        ValueTerms Terms);
 
     /// <summary>
     /// Chooses the carry direction: forward first, then the ring of directions around it, holding the
@@ -816,18 +893,19 @@ public sealed class CandidateGenerator : IAiStateResettable
         float carryBonus = (_timeOnBall < ActionValueScale.CarryEarlySeconds || inFinalThird)
             ? ActionValueScale.CarryEarlyBonus
             : 0f;
-        float utility = ActionValueScale.CarryBaseValue
-                        + ActionValueScale.CarrySpaceBonus * bestSpace
-                        + carryBonus;
-        utility -= ActionValueScale.CarryLinePenalty * linePressure;
-        // Forward preference, the same one a pass carries (A4.4).
-        utility += ActionValueScale.ProgressBonus
-                   * Math.Clamp((carryTarget.X - selfXZ.X) * obs.AttackingDirectionX / 20f, -1f, 1f);
-        // Dribble preference: a dribbler carries the ball where a passer would have released it.
-        utility += (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        float carryGain = ActionValueScale.CarryBaseValue
+                          + ActionValueScale.CarrySpaceBonus * bestSpace
+                          + carryBonus
+                          - ActionValueScale.CarryLinePenalty * linePressure;
+        // Preferences: forward progress (the same one a pass carries) and this player's dribbling.
+        float carryPreference = ActionValueScale.ProgressBonus
+                                * Math.Clamp((carryTarget.X - selfXZ.X) * obs.AttackingDirectionX / 20f, -1f, 1f);
+        carryPreference += (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        float utility = carryGain + carryPreference;
         bool sprint = bestSpace > 0.70f && nearestOppDist > 5.0f;
 
-        return new CarryChoice(bestDir, carryTarget, utility, bestSpace, sprint);
+        return new CarryChoice(
+            bestDir, carryTarget, utility, bestSpace, sprint, new ValueTerms(1f, carryGain, 0f, carryPreference));
     }
 
     /// <summary>Action: carry the ball into the chosen space.</summary>
@@ -840,7 +918,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate("DriveWithBall", carry.Utility, command)
         {
             TargetXZ = new Vector3(carry.Target.X, 0f, carry.Target.Y),
-            Key = new CandidateKey(CandidateKind.Carry, TargetTag: "forward")
+            Key = new CandidateKey(CandidateKind.Carry, TargetTag: "forward"),
+            Terms = carry.Terms
         });
     }
 
@@ -873,7 +952,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         float utility = ActionValueScale.TakeOnBaseValue
                         + ActionValueScale.TakeOnSpaceBonus * space
                         - ActionValueScale.TakeOnRiskCost;
-        utility += (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        float takeOnPreference = (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        utility += takeOnPreference;
 
         var command = new FootballerCommand(
             direction, direction, false, nearestOppDist < 1.6f,
@@ -882,7 +962,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate("TakeOnDefender", utility, command)
         {
             TargetXZ = new Vector3(pastTarget.X, 0f, pastTarget.Y),
-            Key = new CandidateKey(CandidateKind.Dribble, TargetTag: "beat")
+            Key = new CandidateKey(CandidateKind.Dribble, TargetTag: "beat"),
+            Terms = new ValueTerms(1f, utility - takeOnPreference, 0f, takeOnPreference)
         });
     }
 
@@ -916,7 +997,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate("ShieldBall", utility, command)
         {
-            Key = new CandidateKey(CandidateKind.Shield, TargetTag: "pressure")
+            Key = new CandidateKey(CandidateKind.Shield, TargetTag: "pressure"),
+            Terms = new ValueTerms(1f, utility, 0f, 0f)
         });
     }
 
@@ -952,7 +1034,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate("ClearBall", utility, command)
         {
             TargetXZ = new Vector3(aimTarget.X, 0f, aimTarget.Y),
-            Key = new CandidateKey(CandidateKind.Clearance, TargetTag: "touchline")
+            Key = new CandidateKey(CandidateKind.Clearance, TargetTag: "touchline"),
+            Terms = new ValueTerms(1f, utility, 0f, 0f)
         });
     }
 
@@ -1037,7 +1120,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, mateId, plan.TargetXZ, terms.DefenderPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
-        float score = ActionValueScale.ExpectedValue(terms.CompletionProbability01, reception.Value, loss);
+        ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
+        float score = valueTerms.Value;
 
         bool keeper = mate.Role == TacticalRole.Goalkeeper;
         var command = new FootballerCommand(
@@ -1050,13 +1134,20 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate($"Pass(GroundPass)To#{mateId}", score, command)
         {
-            Key = new CandidateKey(CandidateKind.Pass, mateId, keeper ? "Keeper" : "Recycle")
+            Key = new CandidateKey(CandidateKind.Pass, mateId, keeper ? "Keeper" : "Recycle"),
+            Terms = valueTerms
         });
     }
 
-    /// <summary>True when the pass pre-rank already offered this player a pass this decision.</summary>
-    private bool WasOfferedAsPassTarget(int playerId)
+    /// <summary>Records one refused candidate and the reason, bounded by <see cref="MaxRejections"/>.</summary>
+    private void Reject(int playerId, string reason)
     {
+        if (_rejectionCount >= _rejections.Length) return;
+        _rejections[_rejectionCount++] = new CandidateRejection(playerId, reason);
+    }
+
+    /// <summary>True when the pass pre-rank already offered this player a pass this decision.</summary>
+    private bool WasOfferedAsPassTarget(int playerId)    {
         for (int index = 0; index < _passTargetCount; index++)
         {
             if (_passTargetIds[index] == playerId) return true;

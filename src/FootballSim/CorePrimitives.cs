@@ -233,12 +233,20 @@ public enum TeamId
 /// guaranteed shot utility is a documented curve on that scale. Passes into your own goal mouth are no
 /// longer offered and keeper support needs an off-his-line keeper, both measured: removing the ban
 /// produced own goals from back-passes. Trajectories differ from version 13.</item>
+/// <item><c>AiBehaviour 15</c> — A4.5/A4.6: the flat commitment bonus is joined by the plan's robust switch
+/// rule — <c>best − current &gt; absolute + relative × max(|current|, ε)</c> (
+/// <see cref="AI.AiRuntimeConfig.SwitchAbsoluteMargin"/>, <see cref="AI.AiRuntimeConfig.SwitchRelativeMargin"/>)
+/// — so a player holds what he is doing unless the alternative is clearly better, and a negative current
+/// score does not lock him in. A chosen candidate now publishes the four terms its score was built from
+/// (<see cref="AI.ValueTerms"/>), refused candidates carry a reason (<see cref="AI.CandidateRejection"/>),
+/// and both reach the decision trace and the inspector. Trajectories differ from version 14 because the
+/// switch rule changes what players do.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 14;
+    public const int AiBehaviour = 15;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

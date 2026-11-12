@@ -4,6 +4,41 @@ using FootballSim.Core;
 namespace FootballSim.AI;
 
 /// <summary>
+/// The four terms every action's score is built from (A4.4/A4.6):
+/// <c>Probability01 × Gain − (1 − Probability01) × Loss + Preference</c>.
+///
+/// It exists so a decision can be explained without re-deriving it: the carrier's chosen candidate carries
+/// these four numbers, the decision trace records them, and the inspector prints them (A4.6). A heuristic
+/// curve that is not probability-weighted stores <c>Probability01 = 1</c>, its whole value in
+/// <see cref="Gain"/> and zero loss — the arithmetic stays the same, and the numbers do not pretend to be a
+/// decomposition they are not.
+/// </summary>
+public readonly record struct ValueTerms(float Probability01, float Gain, float Loss, float Preference)
+{
+    /// <summary>No terms: a candidate that was built without an explanation.</summary>
+    public static ValueTerms None => new(-1f, 0f, 0f, 0f);
+
+    /// <summary>True when this carries a real decomposition.</summary>
+    public bool IsPresent => Probability01 >= 0f;
+
+    /// <summary>The value the terms compose to, on the scale's unit.</summary>
+    public float Value => Probability01 >= 0f
+        ? ActionValueScale.ExpectedValue(Probability01, Gain, Loss) + Preference
+        : 0f;
+
+    /// <summary>Compact text form for a trace line or the inspector.</summary>
+    public string Describe() => IsPresent
+        ? $"p {Probability01:F2} × {Gain:F2} − {(1f - Probability01):F2} × {Loss:F2} + {Preference:F2}"
+        : "no terms";
+}
+
+/// <summary>
+/// A candidate the carrier's action set refused to offer, and why (A4.6). Bounded by the generator's
+/// rejection buffer; the strings are interned literals so the record stays allocation-free.
+/// </summary>
+public readonly record struct CandidateRejection(int TargetPlayerId, string Reason);
+
+/// <summary>
 /// A4.4: the one scale pass, carry and shot utilities are expressed on, and the conversion each action
 /// uses to get there.
 ///

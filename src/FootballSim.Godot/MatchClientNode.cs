@@ -229,8 +229,40 @@ public partial class MatchClientNode : Node3D
             $"{mode}   ·   {powerLine}\n" +
             // Generated from the live bindings (audit F16), so help can never drift from the keys.
             $"Controls: {HumanControlReader.DescribeControls()}\n" +
-            $"Player #{inspected.Id} ({inspected.Team} {inspected.Role}): Stamina={inspected.Stamina01 * 100f:F0}% | {ctrl.GetDebugSummary()} | Exec={inspected.LastExecutionDiagnostic}" +
+            $"Player #{inspected.Id} ({inspected.Team} {inspected.Role}): Stamina={inspected.Stamina01 * 100f:F0}% | {ctrl.GetDebugSummary()} | Exec={inspected.LastExecutionDiagnostic}\n" +
+            // A4.6: why the inspected AI player chose what it chose — the four value terms, then the
+            // candidates its action set refused and why.
+            $"{DescribeDecisionTerms(inspected)}" +
             (ShowSpatialOverlay ? DescribeSpatialOverlay(inspected) : string.Empty);
+    }
+
+    /// <summary>
+    /// A4.6: the term-by-term explanation of the inspected player's last decision, plus the refusals the
+    /// action set recorded. Empty for a controller that does not expose candidates (keeper, human, script).
+    /// </summary>
+    private string DescribeDecisionTerms(FootballerState inspected)
+    {
+        if (_engine.GetController(inspected.Id) is not TacticalUtilityAiController ai) return string.Empty;
+
+        UtilityCandidate selected = ai.LastSelected;
+        var text = new System.Text.StringBuilder();
+        text.Append("   chose ").Append(selected.Key.IsNone ? selected.ActionName : selected.Key.Describe());
+        if (selected.Terms.IsPresent) text.Append("  [").Append(selected.Terms.Describe()).Append(']');
+
+        int refusals = ai.RejectionCount;
+        if (refusals > 0)
+        {
+            text.Append("   refused: ");
+            for (int index = 0; index < refusals; index++)
+            {
+                CandidateRejection rejection = ai.GetRejection(index);
+                if (index > 0) text.Append(", ");
+                text.Append('#').Append(rejection.TargetPlayerId).Append(' ').Append(rejection.Reason);
+            }
+        }
+
+        text.Append('\n');
+        return text.ToString();
     }
 
     /// <summary>

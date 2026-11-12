@@ -688,13 +688,31 @@ public sealed class MatchSimulationEngine
                 runnerUp?.ActionName, runnerUp?.UtilityScore ?? 0f, ai.LastCandidateCount,
                 target: selected.TargetXZ,
                 targetPlayerId: player.LastCommand.IntendedReceiverId,
-                candidateKey: selected.Key.IsNone ? null : selected.Key.Describe());
+                candidateKey: selected.Key.IsNone ? null : selected.Key.Describe(),
+                terms: selected.Terms,
+                // A4.6: the refusal reasons the action set recorded. Copied only while tracing, so the
+                // decision path itself never allocates for diagnostics.
+                rejections: CopyRejections(ai));
             return;
         }
 
         DecisionTrace.Record(
             CurrentTick, observation, controller?.GetDebugSummary() ?? "Uncontrolled", 0f,
             null, 0f, 0, targetPlayerId: player.LastCommand.IntendedReceiverId);
+    }
+
+    /// <summary>
+    /// Copies the action set's refusal reasons for one trace entry (A4.6), or null when there are none. Only
+    /// called while tracing is on, so the allocation belongs to diagnostics rather than to a decision.
+    /// </summary>
+    private static IReadOnlyList<CandidateRejection>? CopyRejections(TacticalUtilityAiController ai)
+    {
+        int count = ai.RejectionCount;
+        if (count == 0) return null;
+
+        var copy = new CandidateRejection[count];
+        for (int index = 0; index < count; index++) copy[index] = ai.GetRejection(index);
+        return copy;
     }
 
     /// <summary>
