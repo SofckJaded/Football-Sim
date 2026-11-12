@@ -161,15 +161,4 @@ less accurate than one in front — the inspector shows `Align=…%` and `OffFoo
   looked up by id with a fallback into the real squad (a 5-a-side match does not have a player #9 index
   assumption).
 
-## Specification references
-
-The proposed advanced AI roadmap is in [docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md](docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md), based on `deep-research-report.md` and the current implementation. Its milestones describe future work.
-
-Older documents (and the audit) cite numbered design sections such as `Section 0`, `Section 3.1`,
-`§3.3` or `Phase 0–9`. That numbering belongs to the original design brief, which is **not part of this
-repository**; treat those labels as historical, not as promises of a document you can open. The
-authoritative references are: this README (product behaviour and controls), `docs/ARCHITECTURE.md`
-(design and module boundaries), `docs/TESTING.md` (what is covered and how), `docs/KNOWN_ISSUES.md`
-(residual limitations), `docs/AUDIT_HANDOFF_2026-11-06.md` (the 2026-11-06 audit) and `TASKS.md` /
-`PROGRESS.md` / `RESUME.md` (work state and per-batch evidence).
 
