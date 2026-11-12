@@ -44,22 +44,25 @@ public sealed class ActionValueScaleTests
     }
 
     /// <summary>
-    /// And the other A4.4 condition: <i>a better chance can beat a poor shot</i>. A shot's value is a
-    /// documented curve with a lane term; a clear chance is worth more than a blocked one, and the value is
-    /// comparable to a pass's.
+    /// And the other A4.4 condition: <i>a better chance can beat a poor shot</i>, on one scale. A clear
+    /// chance in the box is worth more than a good pass — it can end the attack — while a covered shot from
+    /// range is worth less than the same pass, and the ratio between them stays inside a documented band.
     /// </summary>
     [Fact]
     public void ABetterChance_BeatsAPoorShot()
     {
-        float clearInTheBox = ActionValueScale.ShotValue(10f, laneClearance01: 0.9f);
+        float clearInTheBox = ActionValueScale.ShotValue(8f, laneClearance01: 0.9f);
         float blockedFromRange = ActionValueScale.ShotValue(22f, laneClearance01: 0.2f);
         float goodPass = ActionValueScale.ExpectedValue(0.9f, gain: 1.2f, loss: ActionValueScale.LossCost(0f));
 
-        Assert.True(clearInTheBox > blockedFromRange + 0.3f);
-        Assert.InRange(clearInTheBox, 0.5f, 2.5f);
-        // A clear chance is worth about as much as a good pass — not twice as much, and not a tenth.
-        Assert.True(MathF.Abs(clearInTheBox - goodPass) < 0.8f,
-            $"shot {clearInTheBox:F2} vs pass {goodPass:F2} are not on a comparable scale");
+        Assert.True(clearInTheBox > blockedFromRange + 1f,
+            $"a clear chance ({clearInTheBox:F2}) must beat a covered shot ({blockedFromRange:F2}) by a wide margin");
+        Assert.True(clearInTheBox > goodPass,
+            $"a clear chance ({clearInTheBox:F2}) must beat a good pass ({goodPass:F2})");
+        Assert.True(clearInTheBox < goodPass * 3.5f,
+            $"a clear chance ({clearInTheBox:F2}) is not on the same scale as a pass ({goodPass:F2})");
+        Assert.True(blockedFromRange < goodPass,
+            $"a covered shot from range ({blockedFromRange:F2}) must lose to a good pass ({goodPass:F2})");
     }
 
     /// <summary>The common shape is implemented once: no reach ⇒ you pay the loss, full reach ⇒ the gain.</summary>
@@ -78,8 +81,8 @@ public sealed class ActionValueScaleTests
         Assert.True(float.IsFinite(ActionValueScale.Unit) && ActionValueScale.Unit > 0f);
         Assert.InRange(ActionValueScale.CarryBaseValue, 0f, 2f);
         Assert.InRange(ActionValueScale.CarrySpaceBonus, 0f, 2f);
-        Assert.InRange(ActionValueScale.ShotBaseValue, 0f, 2f);
-        Assert.InRange(ActionValueScale.ShotLaneBonus, 0f, 2f);
+        Assert.InRange(ActionValueScale.ShotConversionNear, 0f, 1f);
+        Assert.InRange(ActionValueScale.ShotConversionFar, 0f, ActionValueScale.ShotConversionNear);
         Assert.InRange(ActionValueScale.ProgressBonus, 0f, 2f);
 
         foreach (float distance in new[] { 1f, 6f, 16f, 23f, 40f })
@@ -87,7 +90,9 @@ public sealed class ActionValueScaleTests
         {
             float value = ActionValueScale.ShotValue(distance, lane);
             Assert.True(float.IsFinite(value));
-            Assert.InRange(value, 0f, 4f);
+            // A hopeless shot is worth less than nothing — it gives the ball away — and a clear one at the
+            // far end of the curve is worth less than scoring itself.
+            Assert.InRange(value, -ActionValueScale.ShotMissCost - 0.01f, ActionValueScale.GoalValue);
         }
     }
 }

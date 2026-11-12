@@ -811,6 +811,50 @@ live fixture), `ReceptionValueModelTests` and `PassSuccessModelTests` (the model
 
 ---
 
+## 2026-11-12 — A4.4 closed: the shot on the documented scale (simulation version `ai16-rs1`)
+
+Files: `a4-shot-scale-tactical-gate.txt`, `a4-shot-scale-match-11v11.txt`, `a4-shot-scale-perf.txt`.
+
+### 11v11 headless match — `a4-shot-scale-match-11v11.txt`
+
+| Metric | ai15-rs1 | ai16-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 50 313 ms | 47 226 ms |
+| Ticks | 326 540 | 326 168 |
+| Score | 4 – 5 | **1 – 2** |
+| Possession | 49.8 / 50.2 | 50.5 / 49.5 |
+| Passes | 637 / 565 (70 % / 65 %) | **607 / 597** (72 % / 70 %) |
+| Shots | 52 / 65 | **29 / 22** |
+| Width (all-tick) | 43.9 / 41.7 m | 43.9 / 40.7 m |
+
+**Reading:** this is the most plausible match of the milestone. 51 shots in ninety minutes and 3 goals is a
+normal game, and completion recovered above 70 % on both sides because the shot no longer forces the carrier
+to choose between a flat bonus and everything else.
+
+### Tactical differentiation gate — `a4-shot-scale-tactical-gate.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **3.08 m**. **GATE: PASS.**
+
+### Performance — `a4-shot-scale-perf.txt`
+
+| Metric | ai15-rs1 | ai16-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 172.0 µs | 166.3 µs |
+| p50 / p95 | 135.3 / 389.3 µs | 139.3 / 317.5 µs |
+| p99 / max | 545.4 / 1790.6 µs | 798.7 / 1154.6 µs |
+| Allocated per tick | 63 555 B | 63 622 B |
+
+### Why the earlier attempts failed, in one paragraph
+
+The shot's conversion curve was tried twice before and both times the side stopped shooting: the reception
+value was £2.15-scale at its maximum then (a ball into the box outbid a shot from it), and the goal value was
+too low for a covered shot to be worth taking at all. The fix was not the shot curve — it was the reception
+maximum (1.45 since `ai14`) plus `GoalValue = 7`. That is the honest history, and it is why the A4.4 clause
+was left open rather than forced.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

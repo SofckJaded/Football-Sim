@@ -104,14 +104,13 @@ public static class ActionValueScale
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Carrying, shielding, clearing and shooting.
+    // Carrying, shielding, clearing and taking a man on.
     //
-    // These actions keep their pre-A4 heuristic curves, expressed here in the scale's unit so that the
-    // numbers live in one place and can be compared. A4.4 tried to put carrying and shooting on the same
-    // probability-weighted shape as a pass (`ReceptionValueModel` for the gain, `ShotConversion` for the
-    // shot) and the reference match collapsed: the carry became weaker than any pass, the side played
-    // one-touch balls continuously (a 2.7 s flight each), the ball was almost never under control and the
-    // 10-minute probe produced no shot at all. The curves below are the tested alternative; A9.2's
+    // These keep their pre-A4 heuristic curves, expressed here in the scale's unit so that the numbers live
+    // in one place and can be compared. A4.4 tried to put carrying on the same probability-weighted shape
+    // as a pass (`ReceptionValueModel` for the gain, retention for the probability) and the reference match
+    // collapsed: the carry became weaker than any pass, the side played one-touch balls continuously and
+    // the 10-minute probe produced no shot at all. The curves below are the tested alternative; A9.2's
     // ablations and A5.3's pass-power work are where the probability-weighted version is revisited.
     // ---------------------------------------------------------------------------------------------
 
@@ -154,32 +153,56 @@ public static class ActionValueScale
     /// <summary>Charged to a take-on for the chance of being tackled.</summary>
     public const float TakeOnRiskCost = 0.12f;
 
-    /// <summary>Weight on a shot at the base of the range.</summary>
-    public const float ShotBaseValue = 0.95f;
-
-    /// <summary>Bonus for a shot taken inside <see cref="ShotCloseDistanceMeters"/>.</summary>
-    public const float ShotCloseBonus = 0.35f;
-
-    /// <summary>Distance inside which the close-range shot bonus applies, in metres.</summary>
-    public const float ShotCloseDistanceMeters = 16.5f;
-
-    /// <summary>Added to a shot by how clear the lane to goal is.</summary>
-    public const float ShotLaneBonus = 0.35f;
+    /// <summary>
+    /// What scoring is worth in possession units. Higher than any reception because a goal ends the
+    /// attack. Calibrated so that a plausible chance beats the carry and pass alternatives that sit at
+    /// 0.8–1.2: with the conversion curve, a clear sight of goal from eight metres (conversion ≈ 0.35) is
+    /// worth ≈ 2.2 here, and a covered shot from twenty metres (≈ 0.12) is worth ≈ 0.3.
+    /// </summary>
+    public const float GoalValue = 7.0f;
 
     /// <summary>
-    /// Distance inside which a shot is considered at all, in metres. Kept because the shot's value curve is
-    /// flat in this range (see the block comment above): with a measured conversion curve the AI stopped
-    /// shooting entirely, and a measured curve is only worth having once chance creation is stable.
+    /// What a missed or saved shot costs. Smaller than <see cref="LossBase"/> because a shot is lost in the
+    /// opponent's half, which is the cheapest place on the pitch to lose the ball.
     /// </summary>
+    public const float ShotMissCost = 0.60f;
+
+    /// <summary>Conversion baseline just outside the six-yard box, as a probability.</summary>
+    public const float ShotConversionNear = 0.42f;
+
+    /// <summary>Conversion at the edge of the shooting range, as a probability.</summary>
+    public const float ShotConversionFar = 0.10f;
+
+    /// <summary>Distance at which the conversion curve starts, in metres.</summary>
+    public const float ShotNearMeters = 6f;
+
+    /// <summary>Distance at which the conversion curve bottoms out, in metres.</summary>
+    public const float ShotFarMeters = 26f;
+
+    /// <summary>How much of the conversion the lane clearance carries versus the distance.</summary>
+    public const float ShotLaneWeight = 0.40f;
+
+    /// <summary>Distance inside which a shot is considered at all, in metres.</summary>
     public const float ShotRangeMeters = 23.5f;
 
-    /// <summary>The shot's value on the documented scale: a documented flat curve with a lane term.</summary>
-    public static float ShotValue(float distanceMeters, float laneClearance01)
+    /// <summary>
+    /// Stated heuristic conversion curve: a function of range and of how clear the shooting lane is.
+    /// <b>Not</b> a measured model — A10 owns replacing it with data. It is the curve A4.4 asks for ("a
+    /// better chance beats a poor shot") and was put back once the reception value stopped outbidding the
+    /// shot from inside the box: with the earlier, larger reception weights the carrier preferred passing
+    /// the ball into the box to shooting from it.
+    /// </summary>
+    public static float ShotConversion(float distanceMeters, float laneClearance01)
     {
-        float lane = Clamp01(laneClearance01);
-        float close = distanceMeters < ShotCloseDistanceMeters ? ShotCloseBonus : 0f;
-        return ShotBaseValue + close + ShotLaneBonus * lane;
+        if (!float.IsFinite(distanceMeters)) return 0f;
+        float range = Clamp01(1f - (distanceMeters - ShotNearMeters) / (ShotFarMeters - ShotNearMeters));
+        float lane = 1f - ShotLaneWeight + ShotLaneWeight * Clamp01(laneClearance01);
+        return Clamp01((ShotConversionFar + (ShotConversionNear - ShotConversionFar) * range) * lane);
     }
+
+    /// <summary>The shot's value on the documented scale: conversion × goal − (1 − conversion) × miss cost.</summary>
+    public static float ShotValue(float distanceMeters, float laneClearance01) =>
+        ExpectedValue(ShotConversion(distanceMeters, laneClearance01), GoalValue, ShotMissCost);
 
     /// <summary>
     /// How much one unit of forward progress is worth as a <i>preference</i>, in scale units, on top of what

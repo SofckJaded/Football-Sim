@@ -111,10 +111,22 @@ public sealed class PassPlanner
 
         if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out float flightTime))
         {
-            // A slow pass can be a metre short of a fast runner; a harder pass may still connect.
-            powerIndex = PowerSamples - 1;
-            if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out flightTime))
-                return Infeasible(straightLineDistance);
+            // A slow pass can be a metre short of a moving receiver, so the power steps up until one
+            // connects. It steps one notch at a time rather than jumping to full power: the old code
+            // retried at maximum, which for a runner produced a five-second ball the receiver had to chase
+            // (measured: a 43 m punt to a team-mate 12 m away). A firmer pass meets him sooner, and a
+            // shorter flight is what makes the ball controllable when it arrives.
+            powerIndex = -1;
+            for (int candidate = PowerIndexForDistance(straightLineDistance) + 1; candidate < PowerSamples; candidate++)
+            {
+                if (!TrySolveArrivalTime(candidate, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out flightTime))
+                    continue;
+
+                powerIndex = candidate;
+                break;
+            }
+
+            if (powerIndex < 0) return Infeasible(straightLineDistance);
         }
 
         Vector2 target = ClampToPitch(receiverPositionXZ

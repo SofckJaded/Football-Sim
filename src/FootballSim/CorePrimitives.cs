@@ -241,12 +241,19 @@ public enum TeamId
 /// (<see cref="AI.ValueTerms"/>), refused candidates carry a reason (<see cref="AI.CandidateRejection"/>),
 /// and both reach the decision trace and the inspector. Trajectories differ from version 14 because the
 /// switch rule changes what players do.</item>
+/// <item><c>AiBehaviour 16</c> — A4.4 completes: the shot is scored on the scale by a stated conversion
+/// curve (<c>conversion × goal value − (1 − conversion) × miss cost</c>,
+/// <see cref="AI.ActionValueScale.ShotConversion"/>) instead of a guaranteed close-range bonus, which is
+/// allowed now that the reception value no longer outbids the shot from inside the box and a test pins
+/// "a clear chance beats a covered one, and a covered one loses to a good pass". The planner's power search
+/// also steps up one notch at a time for a moving receiver instead of jumping to maximum power.
+/// Trajectories differ from version 15.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 15;
+    public const int AiBehaviour = 16;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
