@@ -51,6 +51,29 @@ public sealed class BallPossessionTracker
         _elapsedInState = 0f;
     }
 
+    /// <summary>
+    /// Declares the ownership state directly, for a match that starts mid-play (a scenario fragment)
+    /// rather than at a kickoff. Normal play never needs this: ownership is learned from contacts.
+    ///
+    /// The next <see cref="Update"/> still validates the seed — a controlled ball whose carrier is
+    /// more than 3 m away is dropped to loose on the first tick, so a fixture cannot create a
+    /// possession the physics would not allow.
+    /// </summary>
+    public void Seed(BallPossessionSnapshot snapshot)
+    {
+        _state = snapshot.State;
+        _possessionTeam = snapshot.PossessionTeam;
+        _controllingPlayerId = snapshot.ControllingPlayerId;
+        _intendedReceiverId = snapshot.IntendedReceiverId;
+
+        // A seeded deliberate play is the last team to have played the ball, so a loose ball
+        // following it keeps the same claim it would have had after a real kick.
+        _lastPlayTeam = snapshot.PossessionTeam;
+
+        // A seeded in-flight pass is allowed to settle immediately; a seeded control is not.
+        _elapsedInState = 0f;
+    }
+
     public void Update(
         IReadOnlyList<FootballerState> players,
         BallState ball,

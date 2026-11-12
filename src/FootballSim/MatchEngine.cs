@@ -8,6 +8,7 @@ using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
 using FootballSim.Rules;
+using FootballSim.Scenarios;
 using FootballSim.Tactics;
 
 namespace FootballSim;
@@ -85,14 +86,43 @@ public sealed class MatchSimulationEngine
     private int _sampleCount;
 
     public MatchSimulationEngine(PreMatchConfig? config = null, PitchDimensions? pitch = null)
+        : this(config ?? new PreMatchConfig(), pitch ?? new PitchDimensions(), scenario: null)
     {
-        _config = config ?? new PreMatchConfig();
-        _pitch = pitch ?? new PitchDimensions();
+    }
 
-        // Audit F22: reject a degenerate configuration before it is used to build squads. A negative
-        // half length, a human id that is not in the match or a goal wider than the pitch used to be
-        // accepted and only surfaced later as an out-of-range index or a divided-by-zero clock.
-        SimulationConfigValidation.Validate(_config, _pitch);
+    /// <summary>
+    /// Starts the match from an explicit world instead of a generated squad. See
+    /// <see cref="MatchScenario"/>: the fixture supplies positions, velocities, attributes, ball state
+    /// and phase, so a tactical assertion has a fixed, reproducible subject.
+    /// </summary>
+    public MatchSimulationEngine(MatchScenario scenario)
+        : this(scenario?.BuildConfig() ?? throw new ArgumentNullException(nameof(scenario)),
+               scenario.Pitch, scenario)
+    {
+        Scenario = scenario;
+    }
+
+    private MatchSimulationEngine(PreMatchConfig config, PitchDimensions pitch, MatchScenario? scenario)
+    {
+        _config = config;
+        _pitch = pitch;
+
+        if (scenario is null)
+        {
+            // Audit F22: reject a degenerate configuration before it is used to build squads. A negative
+            // half length, a human id that is not in the match or a goal wider than the pitch used to be
+            // accepted and only surfaced later as an out-of-range index or a divided-by-zero clock.
+            SimulationConfigValidation.Validate(_config, _pitch);
+        }
+        else
+        {
+            // An explicit world is validated as the pieces it supplies. The even-team-count rule only
+            // describes a generated squad, and a fixture such as 3v2 is deliberately unbalanced.
+            scenario.Validate();
+            SimulationConfigValidation.ValidatePitch(_pitch);
+            SimulationConfigValidation.ValidateTacticalProfile(_config.HomeProfile, "Home profile");
+            SimulationConfigValidation.ValidateTacticalProfile(_config.AwayProfile, "Away profile");
+        }
 
         _rng = new SeededRandom(_config.Seed);
         _ballSolver = new BallPhysicsSolver(null, _pitch);
@@ -102,16 +132,40 @@ public sealed class MatchSimulationEngine
         _ballResponderElection = new BallResponderElection(_pitch);
         _teamJobs = new TeamJobCoordinator(_pitch);
         _rulesEngine = new MatchRulesEngine(_pitch, _ballSolver.Parameters.Radius);
-        Ball = new BallState
-        {
-            Position = new Vector3(0f, BallGeometry.RestingCentreHeight(_ballSolver.Parameters.Radius), 0f),
-            PreviousPosition = new Vector3(0f, BallGeometry.RestingCentreHeight(_ballSolver.Parameters.Radius), 0f)
-        };
         Analytics = new MatchAnalyticsSummary();
         _statistics = new MatchStatisticsTracker(Analytics);
 
-        InitializeSquads();
-        _rulesEngine.StartMatch(_players, Ball);
+        if (scenario is null)
+        {
+            Ball = new BallState
+            {
+                Position = new Vector3(0f, BallGeometry.RestingCentreHeight(_ballSolver.Parameters.Radius), 0f),
+                PreviousPosition = new Vector3(0f, BallGeometry.RestingCentreHeight(_ballSolver.Parameters.Radius), 0f)
+            };
+
+            InitializeSquads();
+            _rulesEngine.StartMatch(_players, Ball);
+        }
+        else
+        {
+            Ball = scenario.CreateBallState(_ballSolver.Parameters.Radius);
+            InitializeScenarioSquads(scenario);
+            _rulesEngine.StartScenario(
+                scenario.MatchClockSeconds, scenario.Period, scenario.HomeScore, scenario.AwayScore,
+                $"Scenario '{scenario.Name}'");
+
+            BallPossessionSnapshot seeded = scenario.CreatePossessionSnapshot();
+            _possessionTracker.Seed(seeded);
+            _tacticalCoordinator.SeedPossession(seeded.PossessionTeam);
+
+            if (scenario.BallSetup == ScenarioBallSetup.KeeperHeld)
+            {
+                // A keeper holding the ball is the same state a catch produces, so the physics step is
+                // skipped and the release delay applies exactly as it would after one.
+                Ball.HeldByPlayerId = seeded.ControllingPlayerId;
+                Ball.HeldReleaseDelaySeconds = 0f;
+            }
+        }
     }
 
     public int CurrentTick { get; private set; }
@@ -149,6 +203,12 @@ public sealed class MatchSimulationEngine
     public MatchAnalyticsSummary Analytics { get; }
     public HumanInputController? LockedHumanController { get; private set; }
     public bool IsSpectatorFastForwardActive => LockedHumanController?.IsSpectatorMode ?? false;
+
+    /// <summary>
+    /// The explicit world this engine was started from, or null for a normal match built from
+    /// <see cref="PreMatchConfig"/>. Diagnostics use it to say which fixture a run belongs to.
+    /// </summary>
+    public MatchScenario? Scenario { get; }
 
     private void InitializeSquads()
     {
@@ -215,6 +275,70 @@ public sealed class MatchSimulationEngine
     /// Pre-match (before the first tick) any controller may be installed, including a labelled
     /// <see cref="ControllerSourceType.HumanPreMatchLocked"/> replay used by determinism tests.
     /// </summary>
+    /// <summary>
+    /// Builds the squads from the scenario's explicit player specs.
+    ///
+    /// Unlike <see cref="InitializeSquads"/> nothing is inferred from a formation table: role, shirt,
+    /// attributes and tendency are whatever the fixture stated, and a spec may install its own
+    /// controller (a scripted opponent). The human lock behaves exactly as in a normal match.
+    /// </summary>
+    private void InitializeScenarioSquads(MatchScenario scenario)
+    {
+        IReadOnlyList<ScenarioPlayer> specs = scenario.ResolveShirtNumbers();
+        int? humanId = scenario.HumanPlayerId;
+        int? ballOwnerId = scenario.BallSetup == ScenarioBallSetup.Loose
+            ? null
+            : scenario.BallOwnerPlayerId;
+
+        foreach (ScenarioPlayer spec in specs)
+        {
+            var player = new FootballerState
+            {
+                Id = spec.Id,
+                Team = spec.Team,
+                ShirtNumber = spec.ShirtNumber,
+                Role = spec.Role,
+                Attributes = spec.Attributes,
+                Tendencies = spec.Tendencies ?? PlayerTendencyProfile.ForRole(spec.Role),
+                Position = spec.Position,
+                PreviousPosition = spec.Position,
+                Velocity = spec.Velocity,
+                FacingXZ = spec.FacingXZ,
+                Stamina01 = spec.Stamina01,
+                TacticalAnchor = spec.Position,
+                IsSubstitutedOrInjured = !spec.IsActiveOnPitch,
+
+                // A fixture that hands this player the ball at kick-off is starting with the ball
+                // under control, not with a first touch still to be won.
+                ControlQuality01 = spec.Id == ballOwnerId ? 1.0f : 0f
+            };
+
+            _players.Add(player);
+
+            IFootballerController controller;
+            if (spec.Controller is not null)
+            {
+                controller = spec.Controller;
+            }
+            else if (humanId == spec.Id)
+            {
+                var human = new HumanInputController(spec.Id, _communication);
+                LockedHumanController = human;
+                controller = human;
+            }
+            else if (spec.Role == TacticalRole.Goalkeeper)
+            {
+                controller = new GoalkeeperController(_pitch);
+            }
+            else
+            {
+                controller = new TacticalUtilityAiController(_pitch, _communication);
+            }
+
+            _controllers[spec.Id] = controller;
+        }
+    }
+
     public void OverrideController(int playerId, IFootballerController controller)
     {
         ArgumentNullException.ThrowIfNull(controller);
@@ -326,7 +450,8 @@ public sealed class MatchSimulationEngine
             if (CurrentTick % 4 == 1)
             {
                 _tacticalCoordinator.UpdateTeamAnchors(
-                    _players, Ball, _config.HomeProfile, _config.AwayProfile, homeDirX, dt * 4f);
+                    _players, Ball, _config.HomeProfile, _config.AwayProfile, homeDirX, dt * 4f,
+                    _config.PlayersPerTeam);
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.

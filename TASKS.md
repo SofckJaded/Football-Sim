@@ -11,7 +11,7 @@ Legend: `[ ]` not started · `[~]` in progress (details in `PROGRESS.md`) · `[x
 
 | Milestone | State | Tasks |
 | :--- | :--- | :--- |
-| A0 Baseline + scenario harness | **in progress** | 0 / 5 |
+| A0 Baseline + scenario harness | **in progress** | 2 / 5 |
 | A1 Runtime seams | not started | 0 / 5 |
 | A2 Spatial foundations | not started | 0 / 6 |
 | A3 Team context + responsibilities | not started | 0 / 6 |
@@ -31,10 +31,15 @@ Primary files: `tests/FootballSim.Tests`, `src/FootballSim.Headless/Program.cs`,
 `tools/FootballSim.AuditProbe/Program.cs`. New shared scenario support: `src/FootballSim/Scenarios/`
 and `tests/FootballSim.Tests/Scenarios/`.
 
-- [~] **A0.1** Run existing suite and headless tactical gate; capture current 5v5/11v11 behaviour.
-  Audit diagnostics stay intact. — *suite run: 191/191 green (2026-11-12). Headless gate + capture pending.*
-- [ ] **A0.2** Scenario setup from positions, velocities, roles, attributes, ball/control state,
-  direction, seed, duration. Helper controllers for fixed/scripted opponents.
+- [x] **A0.1** Run existing suite and headless tactical gate; capture current 5v5/11v11 behaviour.
+  Audit diagnostics stay intact. — *191/191 green; 11v11 full time in 22.0 s / 326 152 ticks (25–10);
+  tactical gate PASS on 5/5 seeds.* Evidence: `artifacts/advanced-ai/`.
+- [x] **A0.2** Scenario setup from positions, velocities, roles, attributes, ball/control state,
+  direction, seed, duration. Helper controllers for fixed/scripted opponents. — *`FootballSim.Scenarios`
+  (`MatchScenario`, `ScenarioPlayer`, `FixedCommandController`, `ScriptedCommandController`,
+  `ScenarioCommands`); `MatchSimulationEngine(MatchScenario)`; seeded ownership via
+  `BallPossessionTracker.Seed` + `TeamTacticalCoordinator.SeedPossession`; `MatchRulesEngine.StartScenario`.
+  12 tests in `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs`.*
 - [ ] **A0.3** Ten initial scenarios: 3v2 build-up, 4v3 wide overload, CB step-out, rear-pressure
   reception, high-line run, winger/fullback overlap, 3v3 counterattack, touchline press, box cross,
   keeper sweep race.

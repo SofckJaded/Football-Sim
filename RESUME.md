@@ -1,77 +1,86 @@
 # RESUME.md — checkpoint
 
-Written at every stop. Read this after `AGENTS.md`; do not re-derive state from the planning document.
+Read this after `AGENTS.md`; do not re-derive state from the planning document.
 
-**Last updated:** 2026-11-12 (session 1)
+**Last updated:** 2026-11-12 (session 1, after batch 1)
 
 ---
 
 ## Current goal
 
-Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` incrementally, in batches, starting at **A0**
-(baseline + reusable scenario harness). Nothing from A1 onward may start until the A0 exit gate passes.
+Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` in batches, starting at **A0**. Nothing from A1
+onward starts until the A0 exit gate passes.
 
 ## Active batch
 
-**Batch 0 (repository bootstrap) — complete.**
-**Batch 1 (A0.1 headless baseline + A0.2 scenario setup API) — next.**
+**Batch 2 — A0.3, first half: scenario fixtures 1–5 plus a scenario runner.**
+Milestone A0 is 2/5 tasks done (A0.1, A0.2).
 
 ## Last completed task
 
-Batch 0: `git init` + remote, `.gitignore`, `AGENTS.md`, `TASKS.md` / `PROGRESS.md` / `RESUME.md`,
-baseline suite run **191/191 passing**.
+**A0.2** — explicit scenario world. `src/FootballSim/Scenarios/` (`MatchScenario`, `ScenarioPlayer`,
+`ScenarioCommands`, `FixedCommandController`, `ScriptedCommandController`),
+`MatchSimulationEngine(MatchScenario)`, `BallPossessionTracker.Seed`,
+`TeamTacticalCoordinator.SeedPossession`, `MatchRulesEngine.StartScenario`.
+12 tests in `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs`. Suite 203/203 green.
 
 ## Next recommended batch
 
-Batch 1 — A0.1 tail and A0.2, in this order:
+Batch 2 (A0.3 part 1). Build reusable fixtures under `tests/FootballSim.Tests/Scenarios/`:
 
-1. **A0.1 finish.** Run the headless tactical gate and a full 11v11 headless match; record the numbers in
-   `artifacts/advanced-ai/` so later behaviour changes have something to be compared against. Also correct
-   the "180 tests" claim in `README.md` to the measured count.
-2. **A0.2.** Add a scenario setup seam: explicit player specs (id, team, shirt, role, position, velocity,
-   facing, attributes, tendencies, active), ball position/velocity/control owner, direction, seed, duration.
-   Then a scripted/fixed controller helper for opponents. Proposed home: `src/FootballSim/Scenarios/`
-   (`MatchScenario`, `ScenarioPlayer`, `MatchSimulationEngine` constructor overload) with the reusable
-   fixtures under `tests/FootballSim.Tests/Scenarios/`.
-3. **A0.3 start.** Get the first two fixtures (3v2 build-up, CB step-out) running deterministically.
+| # | Fixture | Home | Away | Key starting condition |
+| :-- | :--- | :--- | :--- | :--- |
+| 1 | 3v2 build-up | GK, CB, CM (carrier) | CB, CM | home controls centrally |
+| 2 | 4v3 wide overload | GK, CB, FB, W + CM | 3 | ball with wide full-back |
+| 3 | CB steps out | 4 | 3 | defender is pulled out of line |
+| 4 | Rear-pressure reception | GK, CB, DM (in flight pass) | presser behind receiver | `InFlightPass` |
+| 5 | High line run | 4, runner in behind | 3 + GK high | attacker ahead of the line |
+
+Then a `ScenarioRunner` helper (step N live ticks, stop at full time, return a `ScenarioRunResult`
+with final positions, possession, contacts, events) so assertions stop re-implementing loop code.
+
+Each fixture also gets one determinism/golden-shape test. Do **not** write tactical assertions yet —
+that is A0.3's exit gate and needs A0.4's trace to be meaningful.
 
 ## Files currently relevant
 
-- `src/FootballSim/MatchEngine.cs` — engine construction, tick order, `OverrideController`.
-- `src/FootballSim/CorePrimitives.cs` — `FootballerObservation`, `PreMatchConfig`, `TeamTacticalProfile`.
-- `src/FootballSim/FootballerLocomotion.cs` — `FootballerState` (mutable `Position`/`Velocity`), contact rules.
-- `src/FootballSim/RulesAndGoalkeeper.cs` — `StartMatch`, `SetupKickoffPositions`, phase/pause gating.
-- `src/FootballSim/BallPossession.cs` — ownership tracker; a scenario must seed control coherently.
-- `src/FootballSim.Tests/AuditRegressionTests.cs` — existing helpers (`Player(...)`, `Observe(...)`,
-  `ParkEveryoneExcept`, `IdleController`) to reuse rather than reinvent.
-- `src/FootballSim.Headless/Program.cs` — CLI modes for the baseline capture.
-- `tests/FootballSim.Tests/Scenarios/` — does not exist yet; to be created.
+- `src/FootballSim/Scenarios/MatchScenario.cs` — the seam. Read `Validate()` first: it states what a
+  fixture may and may not assume.
+- `src/FootballSim/Scenarios/ScenarioControllers.cs` — `ScenarioCommands.Move/Hold/MoveToward`.
+- `tests/FootballSim.Tests/Scenarios/ScenarioSetupTests.cs` — fixture pattern (`ThreeVersusTwo`),
+  `FindById` helper, determinism test shape to copy.
+- `src/FootballSim/TacticsAndTeamAI.cs` — anchors still keyed by shirt number; `teamSize` now comes from
+  `PlayersPerTeam`.
+- `src/FootballSim/TeamJobs.cs` — job assignment; scenarios inherit real jobs, not scenario-specific ones.
 
 ## Known blockers / risks
 
-- No git identity was configured on this machine; `git config --local` was used. If a future clone is made
-  by a different tool, set identity again before committing.
-- `artifacts/baseline-2026-11-07/` is a stale full copy of the source tree from an earlier session. It is
-  git-ignored and must never be searched, edited, or treated as current code.
-- Scenario construction has no first-class API yet: today a scenario would have to mutate
-  `FootballerState` after construction and hope the possession tracker, tactical coordinator, team-job
-  coordinator and rules engine all resynchronise. A0.2 exists to replace that with an explicit seam.
-- `MatchSimulationEngine` exposes `Players` as `IReadOnlyList<FootballerState>` while the elements are
-  mutable. Treat that as a leak to be closed by the scenario seam, not as a permission to poke state.
+- **Anchor table is shirt-keyed, not role-keyed.** `ComputePlayerAnchor` uses
+  `GetFormationRoleAndSlot(ShirtNumber, teamSize)`, so a scenario player's tactical anchor depends on
+  their shirt number even though their `TacticalRole` is explicit. Assign realistic shirts in fixtures
+  until A3 replaces formation ownership.
+- **Unbalanced sides inherit a 5v5 anchor table.** With 3 home / 2 away, `PlayersPerTeam = 3` selects
+  the 5-a-side slot table for both teams. Fine for short probes, wrong for anything else — A3's job.
+- **Scenario controllers are stateful.** A `MatchScenario` holding a `ScriptedCommandController` must
+  not be reused for two engines (the script will be half-consumed). Build a fresh fixture per engine.
+- **`KeeperHeld` start is implemented but untested.** It sets `Ball.HeldByPlayerId`; prove it with a
+  keeper test before relying on it.
+- No git identity is configured globally on this machine; each clone needs `git config --local user.name/user.email`.
 
 ## Important decisions
 
-- Tracking files are the durable memory; chat context is disposable.
-- Milestones are a dependency graph (`A0→A1→A2→A3→A4→A5→A6→A7→A8→A9`, A10 optional), not a checklist.
-- Behaviour-preserving extraction lands before behaviour changes, in separate commits.
-- Recorded evidence lives in `artifacts/`; new advanced-AI output goes to `artifacts/advanced-ai/`.
-- `AGENTS.md` is the instruction file name (the plural convention that agents auto-discover). It is the
-  file the owner asked for as "agent.md".
+- Scenario ownership is seeded directly (`BallPossessionTracker.Seed`) rather than faked with a synthetic
+  contact event, because a fake contact would also fire statistics and rule handlers.
+- `MatchRulesEngine.StartScenario` takes primitives, not a `MatchScenario`, so the rules engine stays
+  free of the scenario type.
+- Scenario matches skip the even-team-count part of `SimulationConfigValidation.Validate` (3v2 is
+  deliberately unbalanced) but still validate pitch, profiles, attributes, tendencies and every player.
+- Baseline evidence lives in `artifacts/advanced-ai/`; the reference machine is recorded in its README.
 
 ## What not to redo
 
-- Do not re-run the baseline suite to confirm it passes; it is recorded as 191/191 on 2026-11-12.
-- Do not re-read the whole planning document — read the milestone section you are executing.
-- Do not rewrite `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md` wholesale; make surgical edits when
-  the plan calls for them (A9.5).
-- Do not add a second team-job allocator, a parallel style/profile system, or a second world model.
+- Do not re-run the baseline suite or the tactical gate to confirm they pass — recorded for 2026-11-12.
+- Do not re-read `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` end to end; read the A0 section only.
+- Do not add tactical assertions to scenario tests before the trace exists.
+- Do not "fix" the wide-anchor limitation by rewriting `TacticsAndTeamAI` now — A3 owns structural
+  ownership and will replace it.

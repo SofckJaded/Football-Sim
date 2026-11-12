@@ -9,7 +9,7 @@ Autonomous 11v11 physical football match simulation with a pre-match locked huma
 
 ## What is verified
 
-- `dotnet test` runs **180 tests** (about 11 s), including audit regressions for every reproduced
+- `dotnet test` runs **203 tests** (about 11 s), including audit regressions for every reproduced
   finding in `docs/AUDIT_HANDOFF_2026-11-06.md`. See `docs/TESTING.md` for the file-by-file map and
   the gates outside the unit suite.
 - **Determinism:** a real recorded-command replay re-runs every recorded decision into fresh engines

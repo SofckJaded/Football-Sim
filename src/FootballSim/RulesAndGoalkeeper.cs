@@ -382,6 +382,48 @@ public sealed class MatchRulesEngine
         Events.Add(new MatchRuleEvent(0f, "Kickoff", TeamId.Home, null, Vector3.Zero, "First Half Kickoff"));
     }
 
+    /// <summary>
+    /// Starts a match fragment from an already-described world (a scenario), instead of from a
+    /// kickoff. The caller has already placed the players and the ball, so this only establishes the
+    /// phase, clock and scoreboard, and clears every restart/offside trace that a kickoff would have
+    /// reset.
+    ///
+    /// No restart is active: a fragment starts in open play. A fixture that wants a throw-in or a
+    /// corner should ask for one rather than inherit an exemption by accident.
+    /// </summary>
+    public void StartScenario(
+        float clockSeconds,
+        MatchPeriod period,
+        int homeScore,
+        int awayScore,
+        string label)
+    {
+        if (!float.IsFinite(clockSeconds) || clockSeconds < 0f)
+            throw new ArgumentOutOfRangeException(nameof(clockSeconds), clockSeconds,
+                "A scenario clock must be finite and non-negative.");
+        if (homeScore < 0) throw new ArgumentOutOfRangeException(nameof(homeScore), homeScore, "Score cannot be negative.");
+        if (awayScore < 0) throw new ArgumentOutOfRangeException(nameof(awayScore), awayScore, "Score cannot be negative.");
+
+        Phase = MatchPhase.FirstHalf;
+        Period = period;
+        MatchClockSeconds = clockSeconds;
+        HomeScore = homeScore;
+        AwayScore = awayScore;
+        RestartTeam = TeamId.Home;
+        RestartSpot = Vector3.Zero;
+        PhasePauseTimer = 0f;
+        DesignatedSetPieceTakerId = null;
+        _restartAwaitingKick = false;
+        ActiveRestart = RestartKind.None;
+        LastStampedRestartOrigin = RestartKind.None;
+        ClearSecondTouchRequirement();
+        ClearOffsidePhase();
+        _lastShotContact = null;
+        Events.Clear();
+        Events.Add(new MatchRuleEvent(clockSeconds, "ScenarioStart", TeamId.Home, null, Vector3.Zero,
+            string.IsNullOrWhiteSpace(label) ? "Scenario start" : label));
+    }
+
     public void StepRules(
         IReadOnlyList<FootballerState> players,
         BallState ball,

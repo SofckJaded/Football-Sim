@@ -66,13 +66,25 @@ public sealed class TeamTacticalCoordinator
         }
     }
 
+    /// <summary>
+    /// Declares the confirmed possessing team directly. Only scenario fragments need this: a real
+    /// match learns possession from the ownership tracker on the first live tick, but a fragment that
+    /// starts mid-play must not spend its first ticks acting as if the other team had the ball.
+    /// </summary>
+    public void SeedPossession(TeamId? team)
+    {
+        _confirmedPossessingTeam = team;
+        _transitionTimer = 0f;
+    }
+
     public void UpdateTeamAnchors(
         IReadOnlyList<FootballerState> players,
         BallState ball,
         TeamTacticalProfile homeProfile,
         TeamTacticalProfile awayProfile,
         float homeAttackDirX,
-        float dt)
+        float dt,
+        int teamSize)
     {
         _elapsedTime += dt;
         _homeStateLockTimer = MathF.Max(0f, _homeStateLockTimer - dt);
@@ -100,7 +112,7 @@ public sealed class TeamTacticalCoordinator
             var state = p.Team == TeamId.Home ? HomeState : AwayState;
             float attackDirX = p.Team == TeamId.Home ? homeAttackDirX : -homeAttackDirX;
 
-            p.TacticalAnchor = ComputePlayerAnchor(p, players.Count / 2, ball, profile, state, attackDirX);
+            p.TacticalAnchor = ComputePlayerAnchor(p, teamSize, ball, profile, state, attackDirX);
         }
     }
 
