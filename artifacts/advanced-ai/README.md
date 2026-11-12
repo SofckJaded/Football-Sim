@@ -594,6 +594,60 @@ reused and cleared per team pass, and the probe only runs for the player who won
 
 ---
 
+## 2026-11-12 — A3.5 coverage requests + A3.6 rest defence (simulation version `ai12-rs1`)
+
+- **A3.5** turns the vacated-region mechanism into a request with a recorded bid table, a deterministic
+  winner (best bid, ties by lower id), an accepted hold, and a stated close reason — handback, expiry,
+  owner removal, the passage ending, or no bidder. One request can be live per team; that is the cascade
+  bound.
+- **A3.6** models rest defence (players behind the ball, worst recovery time through the reach model,
+  unmarked central access, outlet-lane exposure, goal-side threats) and gates the possession allocator's
+  box run and overlap on the allowance that picture grants (2 / 1 / 0). The other attacking duties are
+  untouched.
+
+### 11v11 headless match — `a3-coverage-restdefence-11v11-2026-11-12.txt`
+
+| Metric | ai11-rs1 | ai12-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 30 800 ms | 31 916 ms |
+| Ticks | 326 526 | 326 594 |
+| Score | 5 – 3 | **10 – 4** |
+| Possession | 50.4 / 49.6 | 49.6 / 50.4 |
+| Controlled ball | 48.9 / 51.1 | 48.6 / 51.4 |
+| Passes | 788 / 743 (72 % / 72 %) | 785 / 804 (73 % / 75 %) |
+| Shots | 78 / 75 | 69 / 64 |
+| Width | 43.5 / 41.0 m | 43.2 / 41.1 m |
+
+**Reading:** the shot split stays close (69/64) and pass completion recovered to 73 %/75 %. The goal
+count went back up to 14, and that number has now swung 5 → 8 → 10 → 14 across `ai10`–`ai12` with
+similar possession and shots: it is recorded, not explained, and `docs/KNOWN_ISSUES.md` says so. The
+stable signals are the gate, the shot split and the pass completion.
+
+### Tactical differentiation gate — `a3-coverage-restdefence-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **2.20 m** (was 1.90 m at `ai11`). **GATE: PASS.**
+
+### Performance — `a3-coverage-restdefence-perf-2026-11-12.txt`
+
+| Metric | ai11-rs1 | ai12-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 122.0 µs | 118.5 µs |
+| p50 / p95 | 92.8 / 326.7 µs | 92.0 / 300.0 µs |
+| p99 / max | 449.2 / 1594.6 µs | 394.8 / 1787.4 µs |
+| Allocated per tick | 62 604 B | 61 934 B |
+
+Both mechanisms are allocation-free per tick: the request is one reused object per team with a fixed
+bid array, and the rest-defence picture is a struct evaluated once per in-possession pass.
+
+### A3 is complete
+
+The A3 exit gate is recorded in `TASKS.md` with the tests that prove each clause. The milestone's own
+numbers: gate 5/5 at 2.20 m, width 43.2/41.1 m in the reference match, and the shape metrics checked in
+5v5, 11v11, after the interval and with a player sent off (`TeamShapeMetricsTests`).
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

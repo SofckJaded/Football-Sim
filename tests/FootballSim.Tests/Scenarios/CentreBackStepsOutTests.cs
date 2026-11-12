@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Numerics;
 using FootballSim;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Scenarios;
@@ -25,7 +26,9 @@ public sealed class CentreBackStepsOutTests
 
         int acquiredTick = -1;
         int releasedTick = -1;
-        TemporaryResponsibility acquired = default;
+        int ownerId = -1;
+        int sourceId = -1;
+        Vector3 region = default;
         FootballerObservation? ownerObservationWhileHeld = null;
         Vector3 stepperPositionAtAcquisition = default;
 
@@ -33,16 +36,18 @@ public sealed class CentreBackStepsOutTests
         {
             engine.StepTick();
 
-            TemporaryResponsibility? current = engine.TeamJobs.ResponsibilityOf(TeamId.Home);
-            if (current is { } held)
+            // The request instance is reused, so its values are captured by value at acquisition.
+            CoverageRequest current = engine.TeamJobs.CoverageOf(TeamId.Home);
+            if (current.IsLive)
             {
                 if (acquiredTick < 0)
                 {
                     acquiredTick = tick;
-                    acquired = held;
-                    ownerObservationWhileHeld = engine.GetLastObservation(held.OwnerPlayerId);
-                    stepperPositionAtAcquisition = engine
-                        .Players.First(p => p.Id == held.SourcePlayerId).Position;
+                    ownerId = current.OwnerPlayerId;
+                    sourceId = current.SourcePlayerId;
+                    region = current.Region;
+                    ownerObservationWhileHeld = engine.GetLastObservation(ownerId);
+                    stepperPositionAtAcquisition = engine.Players.First(p => p.Id == sourceId).Position;
                 }
 
                 continue;
@@ -58,15 +63,15 @@ public sealed class CentreBackStepsOutTests
             $"the responsibility was never handed back (acquired {acquiredTick}, released {releasedTick})");
 
         // The source is the centre-back who stepped out, and the owner is another outfield defender.
-        Assert.Equal(ScenarioLibrary.StepOutHomeCb, acquired.SourcePlayerId);
-        Assert.NotEqual(acquired.SourcePlayerId, acquired.OwnerPlayerId);
-        FootballerState owner = engine.Players.First(p => p.Id == acquired.OwnerPlayerId);
+        Assert.Equal(ScenarioLibrary.StepOutHomeCb, sourceId);
+        Assert.NotEqual(sourceId, ownerId);
+        FootballerState owner = engine.Players.First(p => p.Id == ownerId);
         Assert.NotEqual(TacticalRole.Goalkeeper, owner.Role);
 
         // What is protected is his place in the back line, not wherever the ball happens to be.
         Assert.True(formation.TryGetWorldAnchor(ScenarioLibrary.StepOutHomeCb, 1f, out Vector3 slot));
-        Assert.True(Vector3.Distance(acquired.Region, slot) < 0.5f,
-            $"the protected region {acquired.Region} is not the vacated slot {slot}");
+        Assert.True(Vector3.Distance(region, slot) < 0.5f,
+            $"the protected region {region} is not the vacated slot {slot}");
 
         // And the player knew it: the observation carries the exception, not just a bare job.
         Assert.NotNull(ownerObservationWhileHeld);

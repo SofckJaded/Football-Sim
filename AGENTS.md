@@ -31,7 +31,7 @@ pre-match; the AI must never take that player over.
 | Audit probe JSON | `dotnet run --project tools\FootballSim.AuditProbe -c Debug` |
 | Shortcut wrapper | `start.bat check` (build + test), `start.bat verify` (build + test + probe) |
 
-Tests take ~20 s. Always run the full suite after a change; it currently passes **410/410**.
+Tests take ~20 s. Always run the full suite after a change; it currently passes **422/422**.
 
 ### 2.1 Repository scope
 
@@ -129,6 +129,8 @@ src/FootballSim/
   IndividualAI.cs            TacticalUtilityAiController: candidates, utility, commitment
   PassPlanner.cs             calibrated ground-pass power/lead/flight, lane blocking
   TacticsAndTeamAI.cs        tactical coordinator, formation slots, anchors, possession hysteresis
+  AI/CoverageRequest.cs      coverage request lifecycle (bids, acceptance, handback, expiry)
+  AI/TransitionSecurityModel.cs  rest defence: behind-ball, recovery, central access, outlets, threats
   TeamJobs.cs                persistent outlet/width/depth/overlap/cover/marker/line jobs
   RulesAndGoalkeeper.cs      laws, offside, restarts, MatchRulesEngine; GoalkeeperController
   MatchStatistics.cs         executed-outcome counters
