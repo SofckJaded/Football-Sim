@@ -1,6 +1,6 @@
 # Football Simulation (Godot 4.7.2 .NET / C#)
 
-Autonomous 11v11 physical football match simulation with a pre-match locked human career controller.
+Autonomous 11v11 physical football match simulation.
 
 ## Pinned Toolchain
 - **.NET SDK:** `.NET 8.0` (`net8.0`, C# 12), pinned by `global.json` (`8.0.x`, `rollForward: latestFeature`)
