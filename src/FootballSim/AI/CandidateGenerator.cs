@@ -21,7 +21,7 @@ namespace FootballSim.AI;
 /// generation code touches. Everything else it needs (pitch, pass planner, communication) is supplied
 /// once at construction. Selection, commitment and debug reporting stay with the controller.
 /// </summary>
-public sealed class CandidateGenerator
+public sealed class CandidateGenerator : IAiStateResettable
 {
     internal const float MaxReceivableSpeed = 8.0f;   // bounded receiver sprint assumption
     internal const float ThroughLeadMeters = 2.5f;    // space beyond the runner for through balls
@@ -104,6 +104,18 @@ public sealed class CandidateGenerator
 
     /// <summary>Advances the timers this object owns. Called once per decision.</summary>
     public void TickTimers(float dt) => _tackleCooldown = MathF.Max(0f, _tackleCooldown - dt);
+
+    /// <summary>
+    /// Drops the candidate set and the tackle cooldown (A1.5). The cooldown is passage-of-play state: a
+    /// player who had just tackled may challenge again from a restart, and a cooldown that leaked across
+    /// a stoppage would make a defender passive for a reason nobody could see in the log.
+    /// </summary>
+    public void ResetForPhase(AiResetReason reason)
+    {
+        _lastCandidates.Clear();
+        _tackleCooldown = 0f;
+        _timeOnBall = 0f;
+    }
     /// <summary>Generates the candidate set for a player who can play the ball this tick.</summary>
     public void GenerateOnBallCandidates(in FootballerObservation obs, Vector3 oppGoalCenter, float offsideLineProjX)
     {

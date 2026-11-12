@@ -75,6 +75,16 @@ public sealed class AiRuntimeConfig
     /// <summary>Upper bound on carrier candidates after cheap pruning (A4/A9.3).</summary>
     public int MaxCarrierCandidates { get; init; } = 20;
 
+    /// <summary>
+    /// When true, a player re-scores its candidates on its <see cref="PerceptionRefreshTicks"/>-style cadence
+    /// (<see cref="CarrierDecisionTicks"/> / <see cref="OutfieldDecisionTicks"/>) instead of every live tick,
+    /// re-emitting its live intent in between.
+    ///
+    /// <b>Off by default.</b> Turning it on is a behaviour change — a player acts on an evaluation up to one
+    /// cadence window old — so it stays a switch until that behaviour has been tuned with it on (A9).
+    /// </summary>
+    public bool EnableScheduledDecisions { get; init; }
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +

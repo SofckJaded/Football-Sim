@@ -31,6 +31,23 @@ public sealed class PerceptionSystem
     public static int ReactionDelayTicks(float reactionDelaySeconds) =>
         Math.Clamp((int)MathF.Round(reactionDelaySeconds / SimConstants.FixedDeltaTime), 0, MaxReactionDelayTicks);
 
+    /// <summary>
+    /// Forgets one player's ball-reaction history (A1.5). Used when a player is removed and when a
+    /// discontinuity makes the previous samples meaningless.
+    /// </summary>
+    public void Forget(int playerId)
+    {
+        _ballHistory.Remove(playerId);
+        _historyTimestamp.Remove(playerId);
+    }
+
+    /// <summary>Forgets every player's ball-reaction history.</summary>
+    public void Clear()
+    {
+        _ballHistory.Clear();
+        _historyTimestamp.Clear();
+    }
+
     public FootballerObservation BuildObservation(
         FootballerState self,
         IReadOnlyList<FootballerState> allPlayers,
@@ -44,7 +61,8 @@ public sealed class PerceptionSystem
         SeededRandom rng,
         BallPossessionSnapshot? possession = null,
         bool? isDesignatedBallResponder = null,
-        TeamJobAssignment? job = null)
+        TeamJobAssignment? job = null,
+        int tick = 0)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -121,6 +139,7 @@ public sealed class PerceptionSystem
             MatchTimeSeconds = matchTimeSeconds,
             CurrentMatchPhase = matchPhase,
             IsSetPieceTaker = isSetPieceTaker,
+            Tick = tick,
             VisiblePlayers = visible,
             TeamProfile = teamProfile,
             SelfTendencies = self.Tendencies,

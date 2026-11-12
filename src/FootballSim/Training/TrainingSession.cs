@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Input;
 using FootballSim.Locomotion;
@@ -136,6 +137,15 @@ public sealed class TrainingSession
 
         // A call-for-pass belongs to one repetition; never leak it into the next one.
         _communication.ClearCallForPass();
+
+        // A1.5: AI working state belongs to one repetition too. A commitment or a tackle cooldown from
+        // the previous attempt would make the next one start from a decision it never made.
+        foreach (IFootballerController controller in _controllers.Values)
+        {
+            if (controller is IAiStateResettable resettable)
+                resettable.ResetForPhase(AiResetReason.TrainingReset);
+        }
+
         Drill.OnReset();
     }
 

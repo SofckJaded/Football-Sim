@@ -154,6 +154,61 @@ declaring "no change" from a single match.
 
 ---
 
+## 2026-11-12 — A1.5 reset hooks + A1.2 intent executor (simulation version `ai4-rs1`)
+
+Two changes, one re-baseline because both land in `A1`.
+
+- **A1.5 — AI state is dropped at every discontinuity.** Commitment, tackle cooldown and the held intent
+  are cleared on restart, half time, full time, player removal, training reset and controller replacement.
+- **A1.2 — controller-owned intent executor behind an off-by-default scheduler.** With
+  `EnableScheduledDecisions = false` (the default) every live tick still re-scores, so the executor is
+  inert; the reference match below therefore measures **A1.5 alone**.
+
+### 11v11 headless match — `a1-intent-reset-11v11-2026-11-12.txt`
+
+| Metric | ai3-rs1 | ai4-rs1 |
+| :--- | :--- | :--- |
+| Ticks | 326 306 | 326 268 |
+| Score | 29 – 17 | 23 – 18 |
+| Possession | 50.6 / 49.4 | 48.2 / 51.8 |
+| Controlled ball | 48.6 / 51.4 | 45.9 / 54.1 |
+| Passes | 869 / 830 | 850 / 792 |
+| Pass completions | 88 % / 88 % | 90 % / 89 % |
+| Shots | 120 / 59 | 90 / 79 |
+| Width | 42.7 / 40.7 m | 42.8 / 41.0 m |
+
+**Reading:** the scoreline moved substantially (29–17 → 23–18). That is the intended consequence of the
+restart reset — a commitment no longer survives a stoppage, so the first action after every throw-in, goal
+kick, corner or free kick is a fresh decision instead of a continuation. Shots spread much more evenly
+(120/59 → 90/79), which is consistent with the possession side no longer carrying an advantage across
+stoppages.
+
+An intermediate version of A1.5 also wiped the ball-reaction history on every restart and produced
+**15–17**; scoping that wipe to half/full time (where direction actually reverses and every position is
+re-placed) recovered most of it. The wider wipe was left out deliberately: a restart places the ball
+within a few metres of where it left, and `ObservedBallState` already ignores a teleport, so wiping the
+history made the first look after each stoppage blind for no reason.
+
+### Tactical differentiation gate — `a1-intent-reset-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5**, mean separation
+**3.05 m** (was 2.64 m). **GATE: PASS.**
+
+### Performance — `a1-intent-reset-perf-2026-11-12.txt`
+
+| Metric | ai3-rs1 | ai4-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 109.7 µs | 104.1 µs (repeat: 106.0) |
+| p99 / max | 390.7 / 1112 µs | 330.3 / 1534 µs |
+| Allocated per tick | 41 651 B | **44 955 B** (repeat: 44 974) |
+
+The allocation figure rose ~8 %. It is not from the new objects — `PlayerIntent` and `CandidateKey` are
+structs — but from the trajectory itself: allocation per tick tracks how many candidates and contacts the
+match actually generates, and this match is a different match. Treat it as "≈45 KB/tick" rather than a
+precise constant, and compare only same-version numbers.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

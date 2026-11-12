@@ -81,6 +81,8 @@ public sealed class MatchSimulationEngine
     private readonly MatchCommunicationContext _communication = new();
     private readonly List<BallContactEvent> _contactLog = new();
     private readonly ContactGeometrySnapshot _contactGeometry = new();
+    private readonly HashSet<int> _inactivePlayerIds = new();
+    private MatchPhase _lastPhase = MatchPhase.PreKickoff;
 
     private double _homeTerritoryAccum;
     private double _awayTerritoryAccum;
@@ -219,6 +221,12 @@ public sealed class MatchSimulationEngine
     /// simulation randomness.
     /// </summary>
     public DecisionTraceBuffer DecisionTrace { get; } = new();
+
+    /// <summary>Most recent discontinuity the AI was told about (A1.5), or null before the first one.</summary>
+    public AiResetReason? LastAiResetReason { get; private set; }
+
+    /// <summary>Tick at which <see cref="LastAiResetReason"/> was raised.</summary>
+    public int LastAiResetTick { get; private set; }
 
     /// <summary>Statistics tracker fed by the execution contacts (audit F17).</summary>
     public MatchStatisticsTracker Statistics => _statistics;
@@ -410,6 +418,15 @@ public sealed class MatchSimulationEngine
 
         _controllers[playerId] = controller;
 
+        // A replacement is a discontinuity for the new controller: whatever it inherits from its own
+        // construction must not be mixed with the previous controller's passage of play (A1.5).
+        if (controller is IAiStateResettable resettable)
+        {
+            resettable.ResetForPhase(AiResetReason.ControllerReplaced);
+            LastAiResetReason = AiResetReason.ControllerReplaced;
+            LastAiResetTick = CurrentTick;
+        }
+
         // Keep the authoritative human reference consistent with the installed controller.
         if (controller is HumanInputController installedHuman)
             LockedHumanController = installedHuman;
@@ -500,7 +517,7 @@ public sealed class MatchSimulationEngine
                     p, _players, Ball, _tacticalCoordinator.ConfirmedPossessingTeam,
                     _rulesEngine.Phase, _rulesEngine.MatchClockSeconds,
                     attackDirX, isTaker, profile, _perceptionRng,
-                    possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id));
+                    possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick);
                 _latestObservations[p.Id] = obs;
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);
@@ -551,6 +568,8 @@ public sealed class MatchSimulationEngine
             livePlay ? _executionSystem.ContactEvents : null,
             livePlay ? _contactGeometry : null);
 
+        ApplyResetHooks();
+
         if (livePlay)
             _executionSystem.ContactEvents.Clear();
 
@@ -584,6 +603,74 @@ public sealed class MatchSimulationEngine
         DecisionTrace.Record(
             CurrentTick, observation, controller?.GetDebugSummary() ?? "Uncontrolled", 0f,
             null, 0f, 0, targetPlayerId: player.LastCommand.IntendedReceiverId);
+    }
+
+    /// <summary>
+    /// Drops AI state that belongs to a passage of play whenever the authoritative world says the passage
+    /// ended (A1.5): a restart, the interval, full time, a player leaving the pitch.
+    ///
+    /// This is deliberately driven from the engine's phase and availability, not from the AI's own idea
+    /// of what happened. A controller that decided for itself that a restart occurred would be another
+    /// place for the two views to diverge.
+    /// </summary>
+    private void ApplyResetHooks()
+    {
+        MatchPhase phase = _rulesEngine.Phase;
+        if (phase != _lastPhase)
+        {
+            AiResetReason? reason = phase switch
+            {
+                MatchPhase.HalfTime => AiResetReason.HalfTime,
+                MatchPhase.FullTime => AiResetReason.FullTime,
+                MatchPhase.ThrowIn or MatchPhase.GoalKick or MatchPhase.CornerKick or MatchPhase.FreeKick
+                    or MatchPhase.PenaltyKick or MatchPhase.GoalScored => AiResetReason.MatchRestart,
+                _ => null
+            };
+
+            _lastPhase = phase;
+            if (reason is AiResetReason resetReason)
+            {
+                ResetAiState(resetReason);
+                LastAiResetReason = resetReason;
+                LastAiResetTick = CurrentTick;
+            }
+        }
+
+        foreach (FootballerState player in _players)
+        {
+            bool active = player.IsActiveOnPitch;
+            bool wasActive = !_inactivePlayerIds.Contains(player.Id);
+            if (active || !wasActive) continue;
+
+            _inactivePlayerIds.Add(player.Id);
+            if (_controllers.TryGetValue(player.Id, out IFootballerController? controller) &&
+                controller is IAiStateResettable resettable)
+            {
+                resettable.ResetForPhase(AiResetReason.PlayerRemoved);
+            }
+            _perceptionSystem.Forget(player.Id);
+            LastAiResetReason = AiResetReason.PlayerRemoved;
+            LastAiResetTick = CurrentTick;
+        }
+    }
+
+    /// <summary>Notifies every controller and perception that a discontinuity occurred.</summary>
+    private void ResetAiState(AiResetReason reason)
+    {
+        foreach (FootballerState player in _players)
+        {
+            if (!_controllers.TryGetValue(player.Id, out IFootballerController? controller)) continue;
+            if (controller is IAiStateResettable resettable)
+                resettable.ResetForPhase(reason);
+        }
+
+        // Ball-reaction history describes how the ball has been moving *for this player*. It is dropped
+        // only when the world is genuinely reset — the interval and full time, where direction reverses and
+        // every position is re-placed. A restart is ordinary play: the ball is placed within a few metres of
+        // where it left, and `ObservedBallState` already ignores a teleport, so wiping the history for a
+        // throw-in would make the first look after every stoppage blind for no reason.
+        if (reason is AiResetReason.HalfTime or AiResetReason.FullTime)
+            _perceptionSystem.Clear();
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

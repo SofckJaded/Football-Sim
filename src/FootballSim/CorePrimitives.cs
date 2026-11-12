@@ -174,12 +174,16 @@ public enum TeamId
 /// <item><c>AiBehaviour 3</c> — A1.1c: commitment is matched on a stable candidate key
 /// (<see cref="CandidateKey"/>) instead of the action label. The reference 11v11 match is byte-identical
 /// to version 2, so the version bump records a semantic change rather than an observed behaviour change.</item>
+/// <item><c>AiBehaviour 4</c> — A1.5/A1.2: commitment, tackle cooldown and the held intent are dropped at
+/// every discontinuity (restart, half time, full time, removal, training reset, controller replacement),
+/// and a controller-owned intent executor exists behind an off-by-default scheduler. Trajectories differ
+/// from version 3 because a commitment no longer survives a restart.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 3;
+    public const int AiBehaviour = 4;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -523,6 +527,13 @@ public sealed class FootballerObservation
     public required float MatchTimeSeconds { get; init; }
     public required MatchPhase CurrentMatchPhase { get; init; }
     public required bool IsSetPieceTaker { get; init; }
+
+    /// <summary>
+    /// Engine tick this observation was built on, or 0 for a controller built without a match (probes,
+    /// unit tests). The AI scheduler needs an absolute, monotonic tick so a cadence can never be extended by
+    /// a paused or suspended tick; zero means "unknown", which always forces a fresh decision.
+    /// </summary>
+    public int Tick { get; init; }
     public required IReadOnlyList<PerceivedEntity> VisiblePlayers { get; init; }
     public required TeamTacticalProfile TeamProfile { get; init; }
     public required PlayerTendencies SelfTendencies { get; init; }

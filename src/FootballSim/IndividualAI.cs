@@ -34,11 +34,14 @@ public readonly record struct UtilityCandidate(
 }
 
 
-public sealed class TacticalUtilityAiController : IFootballerController
+public sealed class TacticalUtilityAiController : IFootballerController, IAiStateResettable
 {
     private readonly PitchDimensions _pitch;
     private readonly CandidateGenerator _generator;
     private readonly AiRuntimeConfig _ai;
+    private readonly AiScheduler _scheduler;
+    private readonly IntentExecutor _executor = new();
+    private int _decisionsComputed;
     private string _committedActionName = "Idle";
     private CandidateKey _committedKey;
     private float _commitmentTimer;
@@ -55,6 +58,7 @@ public sealed class TacticalUtilityAiController : IFootballerController
         _pitch = pitch;
         _generator = new CandidateGenerator(pitch, communication);
         _ai = ai ?? AiRuntimeConfig.Default;
+        _scheduler = new AiScheduler(_ai);
     }
 
     public ControllerSourceType SourceType => ControllerSourceType.AI;
@@ -92,11 +96,40 @@ public sealed class TacticalUtilityAiController : IFootballerController
     public AiRuntimeConfig RuntimeConfig => _ai;
     public string GetDebugSummary() => _debugSummary;
 
+    /// <summary>
+    /// Drops the commitment and the time-on-ball accumulation (A1.5).
+    ///
+    /// A committed action is a guess that the situation will last; a restart is the authoritative
+    /// statement that it did not. Keeping the commitment would make the first decision after a stoppage
+    /// defend a position chosen for a passage of play that has ended.
+    /// </summary>
+    public void ResetForPhase(AiResetReason reason)
+    {
+        _committedActionName = "Idle";
+        _committedKey = CandidateKey.None;
+        _commitmentTimer = 0f;
+        _timeOnBall = 0f;
+        _lastSelected = default;
+        _lastRunnerUp = null;
+        _lastCandidateCount = 0;
+        _generator.ResetForPhase(reason);
+        _executor.Clear();
+        _debugSummary = $"Reset ({reason})";
+        LastResetReason = reason;
+    }
+
+    /// <summary>
+    /// Why this controller was last reset, or null if it never has been (A1.5). Diagnostics only: the
+    /// engine re-decides on the very next tick, so a caller cannot infer a reset from the live state.
+    /// </summary>
+    public AiResetReason? LastResetReason { get; private set; }
+
     public FootballerCommand Decide(in FootballerObservation obs, float dt)
     {
+        // Cadence is not a timer: the commitment window and the tackle cooldown advance on every live
+        // tick, whether or not this tick re-scores candidates (A1.2).
         _commitmentTimer = MathF.Max(0f, _commitmentTimer - dt);
         _generator.TickTimers(dt);
-        _generator.Clear();
 
         Vector3 oppGoalCenter = new(obs.AttackingDirectionX * _pitch.HalfLength, 0f, 0f);
         Vector3 ownGoalCenter = new(-obs.AttackingDirectionX * _pitch.HalfLength, 0f, 0f);
@@ -110,6 +143,7 @@ public sealed class TacticalUtilityAiController : IFootballerController
         {
             var restartCmd = EvaluateSetPieceRestart(obs, oppGoalCenter);
             _debugSummary = $"SetPieceRestart ({obs.CurrentMatchPhase})";
+            StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false);
             return restartCmd;
         }
 
@@ -140,6 +174,16 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
         float offsideLineProjX = ComputeOffsideLineProjX(obs);
         _generator.TimeOnBall = _timeOnBall;
+
+        // A1.2: re-emit the live intent instead of re-scoring. This path is unreachable unless scheduled
+        // decisions are switched on, so the default build still decides every tick.
+        if (!_scheduler.ShouldRecompute(obs.Tick, obs.SelfId, onBall) &&
+            _executor.TryGetLiveCommand(obs.Tick, out FootballerCommand liveCommand))
+        {
+            return liveCommand;
+        }
+
+        _generator.Clear();
 
         if (onBall)
         {
@@ -195,8 +239,34 @@ public sealed class TacticalUtilityAiController : IFootballerController
         }
 
         _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";
+        StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job);
         return best.Command;
     }
+
+    /// <summary>
+    /// Publishes the chosen action as an intent (A1.2). Recorded even when scheduling is off, so the
+    /// executor's state always describes the last real decision rather than lagging behind a feature
+    /// switch.
+    /// </summary>
+    private void StoreIntent(int tick, CandidateKey key, string actionName, FootballerCommand command, bool isJob)
+    {
+        _decisionsComputed++;
+        float seconds = isJob ? _ai.JobCommitmentSeconds : _ai.ReactionCommitmentSeconds;
+        int ticks = Math.Max(1, (int)MathF.Round(seconds / SimConstants.FixedDeltaTime));
+
+        // Ticks are absolute, so a suspended tick cannot extend an intent by accident.
+        int start = Math.Max(0, tick);
+        _executor.Set(new PlayerIntent(key, actionName, command, start, start + ticks));
+    }
+
+    /// <summary>
+    /// How many times this controller has generated and scored a candidate set. Cheap decisions (re-emitting
+    /// a live intent) do not count, which is how a test proves the scheduler is doing anything.
+    /// </summary>
+    public int DecisionsComputed => _decisionsComputed;
+
+    /// <summary>The intent currently held by the executor, if any (A1.2).</summary>
+    public PlayerIntent? CurrentIntent => _executor.Current;
 
     /// <summary>
     /// Fallback used only when the observation carries no match-level election: the old

@@ -1,0 +1,13 @@
+﻿=== 11v11 Headless Match in 22428 ms ===
+Simulation version: ai4-rs1 (seed 20260818)
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 326268 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 23 - 18 Away (Direct Counterattack)
+Possession Share  : Home 48.2% | Away 51.8%
+Controlled Ball   : Home 45.9% | Away 54.1%
+Passes Attempted  : Home 850 | Away 792
+Passes Completed  : Home 763 (90%) | Away 706 (89%)
+Shots Attempted   : Home 90 | Away 79
+Mean Team Width   : Home 42.8m | Away 41.0m
+Kicks (execution) : 1828 executed / 2021 requested | refused [OutOfReach, 153], [BallTooHigh, 19], [FacingAway, 1], [LostArbitration, 20]
+Events Logged     : 70
