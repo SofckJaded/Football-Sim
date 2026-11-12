@@ -282,7 +282,8 @@ public sealed class PassSuccessModel
             FlightTimeSeconds: flightSeconds,
             FlightRangeMeters: range,
             DistanceMeters: distanceMeters,
-            CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01));
+            CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01),
+            LandingPressure01: Math.Clamp(1f - defenderTerm, 0f, 1f));
     }
 
     /// <summary>
@@ -456,8 +457,9 @@ public readonly record struct LoftedPassTerms(
     float FlightTimeSeconds,
     float FlightRangeMeters,
     float DistanceMeters,
-    float CompletionProbability01)
+    float CompletionProbability01,
+    float LandingPressure01)
 {
     /// <summary>No raised route to this receiver: out of the execution layer's band.</summary>
-    public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f);
+    public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);
 }

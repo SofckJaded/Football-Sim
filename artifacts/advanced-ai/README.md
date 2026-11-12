@@ -709,6 +709,60 @@ and the success estimate. Allocation is flat (the pass-target buffer and the ter
 
 ---
 
+## 2026-11-12 — A4.3 reception value + A4.4 one documented scale (simulation version `ai14-rs1`)
+
+Files: `a4-reception-scale-tactical-gate.txt`, `a4-reception-scale-match-11v11.txt`,
+`a4-reception-scale-perf.txt`. Release build, reference machine.
+
+### 11v11 headless match — `a4-reception-scale-match-11v11.txt`
+
+| Metric | ai13-rs1 | ai14-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 35 719 ms | 56 540 ms |
+| Ticks | 327 650 | 327 244 |
+| Score | 2 – 4 | **9 – 8** |
+| Possession | 48.9 / 51.1 | 51.1 / 48.9 |
+| Controlled ball | 48.3 / 51.7 | 50.5 / 49.5 |
+| Passes | 1253 / 1398 (77 % / 79 %) | **754 / 714** (71 % / 69 %) |
+| Shots | 47 / 29 | **71 / 50** |
+| Width (all-tick) | 42.6 / 41.0 m | 44.1 / 41.4 m |
+
+**Reading:** the carrier now values what the reception produces instead of the act of passing, so the pass
+count roughly halved and the shot count rose by half. Completion fell 6 pp because fewer, longer and more
+forward balls are played. The goal count (17) is again outside anything defensible as a mechanic signal —
+`KNOWN_ISSUES.md` has said so since `ai10`, and the shot count is the number to watch.
+
+### Tactical differentiation gate — `a4-reception-scale-tactical-gate.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **5/5** seeds, mean
+separation **1.44 m** (possession-scoped span; the unconditional span is printed beside it). **GATE: PASS.**
+
+### Performance — `a4-reception-scale-perf.txt`
+
+| Metric | ai13-rs1 | ai14-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 127.4 µs | 172.5 µs |
+| p50 / p95 | 91.5 / 313.4 µs | 132.7 / 345.6 µs |
+| p99 / max | 490.4 / 1057.7 µs | 538.8 / 1489.3 µs |
+| Allocated per tick | 62 234 B | 62 948 B |
+
+The cost is the reception value: it runs once per planned pass (~8 a decision) and once per carry, and each
+run walks the visible players three times. Allocation is flat. The 60 Hz budget holds at p99 with ~31× to
+spare, and A9.3 owns making the model cheaper (one pass over the visible list per evaluation).
+
+### Why A4.4's shot rework is not in this version
+
+The measured conversion curve (`conversion × goal value − (1 − conversion) × miss cost`) was implemented
+and measured. With it the reference team stopped attacking — a 10-minute probe at 240 s halves produced
+**286 passes and no shot**, and the full match produced 26 goals from 7 shots because the AI preferred
+passing the ball into the box to shooting from it. Thirteen constant sets were tried (goal value 4/5,
+reception maxima 1.35–2.65, loss base 0.45–0.80, forward preference 0.35–0.60) and none produced both
+penetration and shots. A4.4 says to remove the guaranteed close-range bonus *only once a better chance can
+provably win*; that condition failed, so the tested curve stays. `TASKS.md` records the clause as open and
+the missing prerequisite is A5.3's pass power/flight work.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

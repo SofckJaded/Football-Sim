@@ -225,12 +225,20 @@ public enum TeamId
 /// receiver is bounded, because the unbounded solve was measuring 43 m punts to a team-mate 12 m away.
 /// Job-region refinement may no longer slide a duty onto a team-mate's target. Trajectories differ from
 /// version 12.</item>
+/// <item><c>AiBehaviour 14</c> — A4.3/A4.4: a pass's gain is the value of the state after the reception
+/// (<see cref="AI.ReceptionValueModel"/>: progression, turnability, next options, shooting chance, pressure
+/// and the profile's structure), every action's constants live on one documented scale
+/// (<see cref="AI.ActionValueScale"/>, 1.0 = a clean possession retained in midfield), the blanket
+/// final-third backward-pass ban is gone — a recycle is now priced rather than forbidden — and the
+/// guaranteed shot utility is a documented curve on that scale. Passes into your own goal mouth are no
+/// longer offered and keeper support needs an off-his-line keeper, both measured: removing the ban
+/// produced own goals from back-passes. Trajectories differ from version 13.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 13;
+    public const int AiBehaviour = 14;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

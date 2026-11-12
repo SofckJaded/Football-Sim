@@ -111,8 +111,10 @@ public sealed class OnBallActionSetTests
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Keeper support is an own-third option. From deep, the keeper is a legal and valuable outlet; from
-    /// the halfway line the same pass is a turnover waiting to happen, so it must not be generated.
+    /// Keeper support is an own-third option — and an off-his-line one (A4.4). A keeper standing on his
+    /// goal line is not a pass target: the reference match produced own goals from balls played at him that
+    /// he could not stop, so the option requires him to be at least twelve metres off his line. From the
+    /// halfway line it is not offered at all.
     /// </summary>
     [Fact]
     public void KeeperSupport_IsOfferedFromTheOwnThirdOnly()
@@ -120,19 +122,31 @@ public sealed class OnBallActionSetTests
         var deep = new CandidateGenerator(Pitch) { TimeOnBall = 1.0f };
         deep.GenerateOnBallCandidates(
             Observation(
-                new Vector2(-40f, 5f),
-                Home(KeeperId, TacticalRole.Goalkeeper, new Vector2(-48f, 0f)),
-                Mate(MateId, new Vector2(-30f, 14f))),
+                new Vector2(-20f, 5f),
+                Home(KeeperId, TacticalRole.Goalkeeper, new Vector2(-38f, 0f)),
+                Mate(MateId, new Vector2(-8f, 14f))),
             new Vector3(Pitch.HalfLength, 0f, 0f),
             offsideLineProjX: 0f);
 
         Assert.Contains(deep.Candidates, c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetPlayerId == KeeperId);
 
+        // The same own-third ball, but the keeper is standing on his line: no pass.
+        var onHisLine = new CandidateGenerator(Pitch) { TimeOnBall = 1.0f };
+        onHisLine.GenerateOnBallCandidates(
+            Observation(
+                new Vector2(-20f, 5f),
+                Home(KeeperId, TacticalRole.Goalkeeper, new Vector2(-48.5f, 0f)),
+                Mate(MateId, new Vector2(-8f, 14f))),
+            new Vector3(Pitch.HalfLength, 0f, 0f),
+            offsideLineProjX: 0f);
+
+        Assert.DoesNotContain(onHisLine.Candidates, c => c.Key.TargetPlayerId == KeeperId);
+
         var high = new CandidateGenerator(Pitch) { TimeOnBall = 1.0f };
         high.GenerateOnBallCandidates(
             Observation(
                 new Vector2(10f, 5f),
-                Home(KeeperId, TacticalRole.Goalkeeper, new Vector2(-48f, 0f)),
+                Home(KeeperId, TacticalRole.Goalkeeper, new Vector2(-38f, 0f)),
                 Mate(MateId, new Vector2(22f, 10f))),
             new Vector3(Pitch.HalfLength, 0f, 0f),
             offsideLineProjX: 30f);
