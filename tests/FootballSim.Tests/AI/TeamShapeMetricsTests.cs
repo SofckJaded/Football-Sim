@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using FootballSim;
 using FootballSim.Core;
 using FootballSim.Locomotion;
@@ -126,43 +127,84 @@ public sealed class TeamShapeMetricsTests
             $"the shape collapsed after one player left ({widthBefore:F1} m -> {widthAfter:F1} m)");
     }
 
+    /// <summary>
+    /// Every duty a team hands out belongs to the phase it is in. Two seeds of the same fixture are used
+    /// — one with the ball at home, one with it at the away defensive midfielder's feet — so both phases
+    /// are guaranteed to be exercised without depending on an emergent turnover. The *turnover* itself
+    /// (a possession change mid-passage) is pinned deterministically in
+    /// <see cref="TemporaryResponsibilityTests.ATurnover_ReassignsEveryDutyToTheNewPhase"/>.
+    /// </summary>
     [Fact]
-    public void ATurnover_VoidsThePossessionDutiesOfTheTeamThatLostTheBall()
+    public void EveryAssignedDuty_MatchesThePhaseTheTeamIsIn()
     {
-        var engine = new MatchSimulationEngine(ScenarioLibrary.CounterattackThreeVersusThree());
-
         bool sawHomeAttacking = false;
         bool sawHomeDefending = false;
-        for (int tick = 1; tick <= 600 && !(sawHomeAttacking && sawHomeDefending); tick++)
+
+        foreach (MatchScenario scenario in new[]
+                 {
+                     ScenarioLibrary.CounterattackThreeVersusThree(),
+                     ReownedScenario(ScenarioLibrary.CounterattackThreeVersusThree(), ownerId: 206,
+                         ballPosition: new Vector3(10f, 0f, -4f))
+                 })
         {
-            engine.StepTick();
-            TeamId? claim = engine.Tactics.ConfirmedPossessingTeam;
-
-            foreach (FootballerState player in engine.Players)
+            var engine = new MatchSimulationEngine(scenario);
+            for (int tick = 1; tick <= 240; tick++)
             {
-                if (player.Team != TeamId.Home || player.Role == TacticalRole.Goalkeeper) continue;
-                TeamJobAssignment? duty = engine.TeamJobs.Get(player.Id);
-                if (duty is null) continue;
+                engine.StepTick();
+                bool homeHasBall = engine.Tactics.ConfirmedPossessingTeam == TeamId.Home;
 
-                bool defensive = duty.Value.Job is TacticalJob.Presser or TacticalJob.CoverDefender
-                    or TacticalJob.ProtectGap or TacticalJob.Marker or TacticalJob.DefensiveLine;
-                if (claim != TeamId.Home)
+                foreach (FootballerState player in engine.Players)
                 {
-                    sawHomeDefending = true;
-                    Assert.True(defensive || duty.Value.Job == TacticalJob.Shape,
-                        $"home #{player.Id} held {duty.Value.Job} while the opposition had the ball");
-                }
-                else if (duty.Value.Job is TacticalJob.BallResponder or TacticalJob.NearOutlet
-                         or TacticalJob.ThirdPlayerOption or TacticalJob.FarSideWidth
-                         or TacticalJob.DepthRun or TacticalJob.Overlap or TacticalJob.DefensiveCover)
-                {
-                    sawHomeAttacking = true;
+                    if (player.Team != TeamId.Home || !player.IsActiveOnPitch) continue;
+                    if (player.Role == TacticalRole.Goalkeeper) continue;
+
+                    TeamJobAssignment? duty = engine.TeamJobs.Get(player.Id);
+                    if (duty is null) continue;
+
+                    bool defensive = duty.Value.Job is TacticalJob.Presser or TacticalJob.CoverDefender
+                        or TacticalJob.ProtectGap or TacticalJob.Marker or TacticalJob.DefensiveLine;
+                    bool possession = duty.Value.Job is TacticalJob.BallResponder or TacticalJob.NearOutlet
+                        or TacticalJob.ThirdPlayerOption or TacticalJob.FarSideWidth
+                        or TacticalJob.DepthRun or TacticalJob.Overlap or TacticalJob.DefensiveCover;
+
+                    if (homeHasBall)
+                    {
+                        Assert.True(!defensive || duty.Value.Job == TacticalJob.Shape,
+                            $"home #{player.Id} held {duty.Value.Job} while home had the ball");
+                        sawHomeAttacking |= possession;
+                    }
+                    else
+                    {
+                        Assert.True(!possession || duty.Value.Job == TacticalJob.Shape,
+                            $"home #{player.Id} held {duty.Value.Job} while the opposition had the ball");
+                        sawHomeDefending |= defensive;
+                    }
                 }
             }
         }
 
-        Assert.True(sawHomeAttacking, "home never held an attacking duty in the fragment");
-        Assert.True(sawHomeDefending, "home never held a defensive duty in the fragment");
+        Assert.True(sawHomeAttacking, "no fragment exercised home's possession duties");
+        Assert.True(sawHomeDefending, "no fragment exercised home's defensive duties");
+    }
+
+    /// <summary>The same fixture with the ball handed to a different player, so a phase is guaranteed.</summary>
+    private static MatchScenario ReownedScenario(MatchScenario source, int ownerId, Vector3 ballPosition)
+    {
+        var clone = new MatchScenario
+        {
+            Name = source.Name,
+            Seed = source.Seed,
+            Pitch = source.Pitch,
+            HomeProfile = source.HomeProfile,
+            AwayProfile = source.AwayProfile,
+            HalfDurationSeconds = source.HalfDurationSeconds,
+            BallPosition = ballPosition,
+            BallSetup = ScenarioBallSetup.Controlled,
+            BallOwnerPlayerId = ownerId
+        };
+
+        foreach (ScenarioPlayer player in source.Players) clone.Add(player);
+        return clone;
     }
 
     /// <summary>

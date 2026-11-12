@@ -15,10 +15,12 @@ namespace FootballSim.Scenarios;
 /// Conventions, so a reader can orient without a pitch diagram:
 /// <list type="bullet">
 /// <item>Home attacks +X; away attacks −X. The home goal is at X = −52.5, the away goal at X = +52.5.</item>
-/// <item>Player ids are 1xx for home and 2xx for away. Shirts follow the 11-a-side table in
-/// <see cref="Tactics.TeamTacticalCoordinator.GetFormationRoleAndSlot"/> (1 GK, 2/3 FB, 4/5 CB, 6 DM,
-/// 7/11 W, 8/10 CM, 9 ST), because the current anchor model is keyed by shirt number.</item>
+/// <item>Player ids are 1xx for home and 2xx for away. Shirts are the conventional numbers (1 GK,
+/// 2/3 FB, 4/5 CB, 6 DM, 7/11 W, 8/10 CM, 9 ST), but a fragment's shape is not derived from them:
+/// since A3.3 the fixture's own layout is the formation it owns, so the numbers only identify players.</item>
 /// <item>The ball rests at the ball radius above the grass when a fixture does not lift it explicitly.</item>
+/// <item>An opponent that must not react gets an explicit controller
+/// (<see cref="FixedCommandController"/>), never a disabled-AI switch.</item>
 /// </list>
 ///
 /// Each fixture is deliberately small (2–6 players a side). A scenario is a question about one
@@ -115,10 +117,11 @@ public static class ScenarioLibrary
     public const int StepOutAwayCarrier = 201;
 
     /// <summary>
-    /// The away carrier receives between the lines and the *centre-back* has to step out to him: the
-    /// defensive midfielder is deliberately on the far side of the ball so he is not the natural
-    /// presser. That leaves the back line with a vacated region behind the stepping defender — the
-    /// gap A3.3's temporary responsibility has to cover, and hand back when he returns.
+    /// The away carrier receives between the lines and *holds* the ball (a fixed controller), so the
+    /// question is about the defending side: the centre-back has to step out to him. The defensive
+    /// midfielder is deliberately on the far side of the ball so he is not the natural presser. That
+    /// leaves the back line with a vacated region behind the stepping defender — the gap A3.3's
+    /// temporary responsibility has to cover, and hand back.
     /// </summary>
     public static MatchScenario CenterBackStepsOut()
     {
@@ -135,7 +138,9 @@ public static class ScenarioLibrary
         scenario.Add(Player(StepOutHomeCb, TeamId.Home, TacticalRole.CenterBack, -20f, -8f, 4));
         scenario.Add(Player(103, TeamId.Home, TacticalRole.CenterBack, -22f, 6f, 5));
         scenario.Add(Player(106, TeamId.Home, TacticalRole.DefensiveMidfielder, -6f, 16f, 6));
-        scenario.Add(Player(StepOutAwayCarrier, TeamId.Away, TacticalRole.CentralMidfielder, -6f, -10f, 8));
+        scenario.Add(Player(StepOutAwayCarrier, TeamId.Away, TacticalRole.CentralMidfielder, -6f, -10f, 8)
+            .WithController(new FixedCommandController(
+                ScenarioCommands.Hold(new Vector2(-1f, 0f)), "carrier holds")));
         scenario.Add(Player(209, TeamId.Away, TacticalRole.Striker, -8f, 2f, 9));
         scenario.Add(Player(207, TeamId.Away, TacticalRole.Winger, 6f, 26f, 7));
         return scenario;

@@ -210,12 +210,18 @@ public enum TeamId
 /// leaves a region a teammate takes as a temporary responsibility (`TacticalJob.ProtectGap`) until
 /// handback is safe; a long stationary structural mismatch moves one slot by a bounded step. Trajectories
 /// differ from version 9 in both formats, and most visibly in the scenario fixtures.</item>
+/// <item><c>AiBehaviour 11</c> — A3.4: a job target is a region (<see cref="Tactics.JobRegion"/>), and
+/// it is scored against the ball, the teammates already placed in the assignment pass, the opponents the
+/// team believes in and the space around it. Duties are rewarded for width, depth, staggering and
+/// complementary channels — softly and relatively, with no lane index — and the chosen region is then
+/// refined by a bounded two-ring probe. Kept incumbent regions now count as placed, which is what stops
+/// two duties from being handed targets a few centimetres apart. Trajectories differ from version 10.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 10;
+    public const int AiBehaviour = 11;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

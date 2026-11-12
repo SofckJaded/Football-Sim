@@ -534,6 +534,66 @@ Measuring the line from the shape anchor and protecting the slot removed the fal
 
 ---
 
+## 2026-11-12 — A3.4 job targets as scored constraint regions (simulation version `ai11-rs1`)
+
+- A duty's target is now a **region** (`JobRegion`) scored against the ball, the teammates already placed,
+  the opponents the team believes in and the space around it, with soft rewards for width, depth,
+  staggering and complementary channels and no lane index. The chosen target is refined by a bounded
+  two-ring probe.
+- Two structural fixes preceded the numbers: kept incumbent regions now count as placed (before that,
+  `wide-overload-4v3` handed two duties targets 0.4 m apart), and the probe can reach the next channel.
+- The `cb-step-out` carrier is now a fixed controller that holds the ball, so the fixture asks its
+  question deterministically; `cb-step-out` is A3.3's subject and its protection still appears and is
+  handed back.
+
+### 11v11 headless match — `a3-job-regions-11v11-2026-11-12.txt`
+
+| Metric | ai10-rs1 | ai11-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 31 428 ms | 30 800 ms |
+| Ticks | 326 326 | 326 526 |
+| Score | 8 – 4 | **5 – 3** |
+| Possession | 49.0 / 51.0 | 50.4 / 49.6 |
+| Controlled ball | 47.6 / 52.4 | 48.9 / 51.1 |
+| Passes | 839 / 867 (73 % / 75 %) | 788 / 743 (72 % / 72 %) |
+| Shots | 73 / 53 | **78 / 75** |
+| Width | 43.1 / 40.8 m | 43.5 / 41.0 m |
+
+**Reading:** the shot split is close to even for the first time (was 73/53), and the game is less
+high-scoring (8 goals, was 12). Pass completion is ~2 pp lower, which is the honest cost of targets that
+sit in space rather than on a teammate; A4.2's `PassSuccessModel` is where that gets measured properly
+and `docs/KNOWN_ISSUES.md` records it as open.
+
+### Tactical differentiation gate — `a3-job-regions-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **4/5** seeds, mean
+separation **1.90 m**. **GATE: PASS** (majority and > 0.5 m). The separation is lower than `ai10`'s
+3.34 m and the mechanism is recorded in `docs/KNOWN_ISSUES.md`: complementary channels widen *both*
+teams, compressing a possession-vs-direct difference that used to come from stacking.
+
+### Performance — `a3-job-regions-perf-2026-11-12.txt`
+
+| Metric | ai10-rs1 | ai11-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 118.9 µs | 122.0 µs |
+| p50 / p95 | 92.5 / 308.4 µs | 92.8 / 326.7 µs |
+| p99 / max | 428.9 / 833.0 µs | 449.2 / 1594.6 µs |
+| Allocated per tick | 62 262 B | 62 604 B |
+
+≈3 µs/tick for the region scoring: the terms are structs and float math, the assigned-region list is
+reused and cleared per team pass, and the probe only runs for the player who won the duty.
+
+### Tuning history, recorded because it is the evidence
+
+| Configuration | Gate (wider / mean) | Notes |
+| :--- | :--- | :--- |
+| space-dominant (0.45/0.25), one ring, incumbents invisible | 5/5, 2.36 m | passed, but two duties were handed the same point |
+| space-dominant, two rings, incumbents visible | **3/5, 0.17 m** | FAIL — the space term pulls targets together |
+| connection-dominant (0.35/0.35), two rings, incumbents visible, smooth stagger | 5/5, 1.45 m | passed; closest possession pair 4.6 m |
+| connection-dominant, linear stagger 0.30, profile-scaled width/channel | **4/5, 1.90 m** | shipped: passes the gate and the structure invariant |
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

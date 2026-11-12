@@ -110,10 +110,29 @@ public sealed class TeamJobCoordinator
     /// <summary>Largest distance a line player may travel to take a protection job.</summary>
     private const float MaxProtectorTravelMeters = 20f;
 
+    /// <summary>
+    /// How much better a refined job region has to score before the duty's nominal target is moved
+    /// (A3.4). Without a margin the probe would follow the score's noise and the anchor would jitter.
+    /// </summary>
+    private const float RegionSwitchMargin = 0.05f;
+
     private readonly PitchDimensions _pitch;
     private readonly Dictionary<int, TeamJobAssignment> _assignments = new();
     private readonly Dictionary<int, int> _assignedAtTick = new();
     private readonly Dictionary<TeamId, TemporaryResponsibility> _responsibilities = new();
+
+    /// <summary>
+    /// The regions already handed out in this team's assignment pass (A3.4). Reused, because the
+    /// staggering and channel terms need the teammates' targets and a per-pass list would allocate.
+    /// </summary>
+    private readonly List<AssignedRegion> _assignedRegions = new();
+
+    /// <summary>
+    /// How wide the team currently being assigned wants to be (A3.4). Set at the start of its pass so the
+    /// width and channel terms score regions against the profile rather than against the full pitch.
+    /// </summary>
+    private float _attackingWidth01 = 0.55f;
+
     private TeamId? _lastPossessionTeam;
     private int _lastRecomputeTick = -RecomputeIntervalTicks;
 
@@ -200,6 +219,12 @@ public sealed class TeamJobCoordinator
         TeamFormation formation)
     {
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
+
+        // A3.4: each pass scores regions against the teammates already placed, so the list is cleared
+        // per team and reused; the width the team wants is part of the score.
+        _assignedRegions.Clear();
+        _attackingWidth01 = profile.AttackingWidth01;
+
         // Width jobs must respect the team profile: a possession side stretches the pitch, a direct
         // side stays compact (the old constant touchline target erased the profile difference).
         float wideZ = (_pitch.HalfWidth - 3f) * (0.55f + 0.55f * profile.AttackingWidth01);
@@ -278,6 +303,8 @@ public sealed class TeamJobCoordinator
             {
                 counts[existing.Job] = counts.GetValueOrDefault(existing.Job) + 1;
                 taken.Add(player.Id);
+                // A3.4: a kept assignment is still a region the later jobs have to work around.
+                RecordRegion(player.Id, existing.Job, existing.Anchor);
                 continue;
             }
 
@@ -673,8 +700,9 @@ public sealed class TeamJobCoordinator
     {
         if (counts.GetValueOrDefault(job) >= MaxPerJob(job)) return;
 
+        bool attackingJob = IsAttackingJob(job);
         FootballerState? best = null;
-        Vector3 bestAnchor = default;
+        Vector2 bestAnchor = default;
         float bestScore = float.MinValue;
 
         foreach (FootballerState player in available)
@@ -682,45 +710,117 @@ public sealed class TeamJobCoordinator
             if (taken.Contains(player.Id)) continue;
             Vector2? maybeAnchor = anchorFactory(player);
             if (maybeAnchor is not Vector2 anchorXZ) continue;
-            Vector3 anchor = new(anchorXZ.X, 0f, anchorXZ.Y);
 
             // Hard guard: a job target must never be clearly beyond the offside line.
-            bool attackingJob = job is TacticalJob.NearOutlet or TacticalJob.ThirdPlayerOption
-                or TacticalJob.FarSideWidth or TacticalJob.DepthRun or TacticalJob.Overlap;
-            if (attackingJob && anchor.X * attackDirX > offsideLineProj + 2f)
+            if (attackingJob && anchorXZ.X * attackDirX > offsideLineProj + 2f)
                 continue;
 
-            float space = opponents.NearestDistance(new Vector2(anchor.X, anchor.Z));
-            float travel = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), new Vector2(anchor.X, anchor.Z));
+            float travel = Vector2.Distance(new Vector2(player.Position.X, player.Position.Z), anchorXZ);
 
             // A job more than ~20 m away would drag the player across the pitch and leave a hole in
             // the shape (an overlap assigned to a full-back 50 m behind, a far-side width run from
             // the wrong flank). Leave the player on his shape instead.
             if (travel > MaxAssignmentTravel(job)) continue;
 
+            // A3.4: the duty's target is a region, and the region is scored against the ball, the
+            // teammates already placed, the opponents the team believes in and the space around it.
             float score = baseScore
                         + RoleFit(job, player.Role) * 1.25f
-                        + Math.Clamp(space / 10f, 0f, 1f) * 0.85f
+                        + ScoreJobRegion(job, anchorXZ, referenceXZ, player.Id, opponents, attackDirX, _attackingWidth01)
                         - travel / 40f;
-
-            if (job is TacticalJob.DepthRun or TacticalJob.ThirdPlayerOption or TacticalJob.FarSideWidth)
-                score += Math.Clamp((anchor.X - referenceXZ.X) * attackDirX / 15f, -0.2f, 0.4f) * 0.5f;
 
             if (score > bestScore)
             {
                 bestScore = score;
                 best = player;
-                bestAnchor = anchor;
+                bestAnchor = anchorXZ;
             }
         }
 
         if (best is null) return;
 
-        Assign(best, job, bestAnchor, null, JobReason(job), tick);
+        // Then slide the chosen target inside a bounded neighbourhood of where the duty wants it. The
+        // probe is deliberately small: a job target can be refined by metres, not re-invented, and it
+        // only moves when it scores better by a margin.
+        Vector2 anchor = RefineJobRegion(job, bestAnchor, referenceXZ, best.Id, opponents, attackDirX, offsideLineProj, _attackingWidth01);
+
+        Assign(best, job, new Vector3(anchor.X, 0f, anchor.Y), null, JobReason(job), tick);
         taken.Add(best.Id);
         available.Remove(best);
         counts[job] = counts.GetValueOrDefault(job) + 1;
     }
+
+    /// <summary>
+    /// A3.4: one region's structure score, with the teammates placed so far in this pass. Pure and
+    /// allocation-free; the terms live in <see cref="JobRegionScoring"/> so they can be tested alone.
+    /// </summary>
+    private float ScoreJobRegion(
+        TacticalJob job,
+        Vector2 centre,
+        Vector2 referenceXZ,
+        int playerId,
+        TeamBelief opponents,
+        float attackDirX,
+        float attackingWidth01)
+    {
+        var region = new JobRegion(new Vector3(centre.X, 0f, centre.Y), JobRegionScoring.RadiusOf(job));
+        return JobRegionScoring.Score(
+            region, job, referenceXZ, _assignedRegions, playerId, opponents, attackDirX, _pitch,
+            attackingWidth01);
+    }
+
+    /// <summary>
+    /// A3.4: bounded local search for a better region around the duty's nominal target — two rings of
+    /// lateral and depth probes, clamped to the pitch (and to the offside line when the duty is an
+    /// attacking one). Two rings are deliberate: the scoring penalises stacking on a teammate, and a
+    /// single ring cannot always pay the separation back, so the search has to be able to reach the
+    /// next channel. Fixed probe order and a required margin keep it deterministic and stable.
+    /// </summary>
+    private Vector2 RefineJobRegion(
+        TacticalJob job,
+        Vector2 nominal,
+        Vector2 referenceXZ,
+        int playerId,
+        TeamBelief opponents,
+        float attackDirX,
+        float offsideLineProj,
+        float attackingWidth01)
+    {
+        bool attackingJob = IsAttackingJob(job);
+        float lateral = job is TacticalJob.FarSideWidth or TacticalJob.Overlap ? 6f : 4f;
+        float depth = job is TacticalJob.DepthRun or TacticalJob.Overlap ? 6f : 4f;
+
+        Vector2 best = nominal;
+        float bestScore = ScoreJobRegion(job, nominal, referenceXZ, playerId, opponents, attackDirX, attackingWidth01);
+
+        for (int probe = 0; probe < 8; probe++)
+        {
+            float ring = probe < 4 ? 1f : 2f;
+            Vector2 candidate = nominal;
+            switch (probe % 4)
+            {
+                case 0: candidate.Y += lateral * ring; break;
+                case 1: candidate.Y -= lateral * ring; break;
+                case 2: candidate.X += attackDirX * depth * ring; break;
+                default: candidate.X -= attackDirX * depth * ring; break;
+            }
+
+            candidate = ClampToPitch(candidate);
+            if (attackingJob) candidate = Onside(candidate, offsideLineProj - 1.5f, attackDirX);
+
+            float score = ScoreJobRegion(job, candidate, referenceXZ, playerId, opponents, attackDirX, attackingWidth01);
+            if (score <= bestScore + RegionSwitchMargin) continue;
+
+            bestScore = score;
+            best = candidate;
+        }
+
+        return best;
+    }
+
+    private static bool IsAttackingJob(TacticalJob job) => job is TacticalJob.NearOutlet
+        or TacticalJob.ThirdPlayerOption or TacticalJob.FarSideWidth or TacticalJob.DepthRun
+        or TacticalJob.Overlap;
 
     private void Assign(
         FootballerState player,
@@ -738,6 +838,21 @@ public sealed class TeamJobCoordinator
             IsTemporary = temporary
         };
         _assignedAtTick[player.Id] = tick;
+        RecordRegion(player.Id, job, anchor);
+    }
+
+    /// <summary>Keeps the pass's region list in step with the assignments (A3.4).</summary>
+    private void RecordRegion(int playerId, TacticalJob job, Vector3 anchor)
+    {
+        var region = new JobRegion(anchor, JobRegionScoring.RadiusOf(job));
+        for (int i = 0; i < _assignedRegions.Count; i++)
+        {
+            if (_assignedRegions[i].PlayerId != playerId) continue;
+            _assignedRegions[i] = new AssignedRegion(playerId, region);
+            return;
+        }
+
+        _assignedRegions.Add(new AssignedRegion(playerId, region));
     }
 
     private static int MaxPerJob(TacticalJob job) => job switch

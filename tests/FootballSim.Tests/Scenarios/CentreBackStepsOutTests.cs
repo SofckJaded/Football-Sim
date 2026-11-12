@@ -27,6 +27,7 @@ public sealed class CentreBackStepsOutTests
         int releasedTick = -1;
         TemporaryResponsibility acquired = default;
         FootballerObservation? ownerObservationWhileHeld = null;
+        Vector3 stepperPositionAtAcquisition = default;
 
         for (int tick = 1; tick <= 900; tick++)
         {
@@ -40,6 +41,8 @@ public sealed class CentreBackStepsOutTests
                     acquiredTick = tick;
                     acquired = held;
                     ownerObservationWhileHeld = engine.GetLastObservation(held.OwnerPlayerId);
+                    stepperPositionAtAcquisition = engine
+                        .Players.First(p => p.Id == held.SourcePlayerId).Position;
                 }
 
                 continue;
@@ -72,9 +75,9 @@ public sealed class CentreBackStepsOutTests
         Assert.Equal(ScenarioLibrary.StepOutHomeCb, ownerObservationWhileHeld.ResponsibilitySourcePlayerId);
         Assert.Contains("vacated", ownerObservationWhileHeld.JobReason);
 
-        // The stepping centre-back really did leave the line: the ownership region is behind him.
-        FootballerState stepper = engine.Players.First(p => p.Id == ScenarioLibrary.StepOutHomeCb);
-        Assert.True(stepper.Position.X > slot.X + 8f,
-            $"the centre-back never stepped out (x={stepper.Position.X:F1}, slot x={slot.X:F1})");
+        // He really was out of his line when the region was handed out: the gap was behind him.
+        Assert.True(stepperPositionAtAcquisition.X > slot.X + 8f,
+            $"the centre-back was not out of his line when the gap was covered " +
+            $"(x={stepperPositionAtAcquisition.X:F1}, slot x={slot.X:F1})");
     }
 }

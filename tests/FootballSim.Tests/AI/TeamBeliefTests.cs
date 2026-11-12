@@ -56,11 +56,16 @@ public sealed class TeamBeliefTests
     }
 
     /// <summary>
-    /// Two identical matches that differ only in what a hidden opponent does after the first look. Both
-    /// teams are built the same way, so any difference in the returned jobs would be the leak.
+    /// Two identical matches that differ only in what a hidden opponent does *after* the first look. Both
+    /// worlds give him the same sighting (position and velocity), so the only thing that can differ
+    /// afterwards is what nobody could have seen; any difference in the returned jobs would be the leak.
+    /// The earlier version gave the two worlds different velocities *at* the sighting, which memory is
+    /// entitled to extrapolate — that was testing prediction, not the knowledge boundary.
     /// </summary>
     private static (Dictionary<int, TeamJobAssignment> First, Dictionary<int, TeamJobAssignment> Second, TeamBelief TruthFirst, TeamBelief TruthSecond)
-        HiddenOpponentJobs(Vector3 hiddenPositionA, Vector3 hiddenVelocityA, Vector3 hiddenPositionB, Vector3 hiddenVelocityB)
+        HiddenOpponentJobs(
+            Vector3 positionAfterSightingA, Vector3 velocityAfterSightingA,
+            Vector3 positionAfterSightingB, Vector3 velocityAfterSightingB)
     {
         var home = new List<FootballerState>
         {
@@ -75,18 +80,23 @@ public sealed class TeamBeliefTests
 
         var ball = BallAt(new Vector3(-16f, 0f, 0f));
 
-        (Dictionary<int, TeamJobAssignment> Jobs, TeamBelief Truth) Run(Vector3 hiddenPosition, Vector3 hiddenVelocity)
+        // The one sighting both worlds share: the hidden winger behind the home players' backs.
+        var sightedPosition = new Vector3(-30f, 0f, 0f);
+        var sightedVelocity = new Vector3(0f, 0f, 2f);
+
+        (Dictionary<int, TeamJobAssignment> Jobs, TeamBelief Truth) Run(
+            Vector3 positionAfter, Vector3 velocityAfter)
         {
-            var hidden = Player(11, TeamId.Away, TacticalRole.Winger, hiddenPosition, new Vector2(1f, 0f));
-            hidden.Velocity = hiddenVelocity;
+            var hidden = Player(11, TeamId.Away, TacticalRole.Winger, sightedPosition, new Vector2(1f, 0f));
+            hidden.Velocity = sightedVelocity;
 
             var players = new List<FootballerState>(home) { visible, hidden };
             var perception = new PerceptionSystem();
 
             // First look sees everyone (A2.2), then the hidden player falls behind the home players' backs.
             Observe(perception, players, ball, tick: 1);
-            hidden.Position = hiddenPosition;
-            hidden.Velocity = hiddenVelocity;
+            hidden.Position = positionAfter;
+            hidden.Velocity = velocityAfter;
             Dictionary<int, FootballerObservation> second = Observe(perception, players, ball, tick: 2);
 
             var belief = new TeamBelief(TeamId.Home);
@@ -105,8 +115,10 @@ public sealed class TeamBeliefTests
             return (new Dictionary<int, TeamJobAssignment>(jobs.Assignments), TeamBelief.FromTruth(TeamId.Home, players));
         }
 
-        (Dictionary<int, TeamJobAssignment> firstJobs, TeamBelief firstTruth) = Run(hiddenPositionA, hiddenVelocityA);
-        (Dictionary<int, TeamJobAssignment> secondJobs, TeamBelief secondTruth) = Run(hiddenPositionB, hiddenVelocityB);
+        (Dictionary<int, TeamJobAssignment> firstJobs, TeamBelief firstTruth) =
+            Run(positionAfterSightingA, velocityAfterSightingA);
+        (Dictionary<int, TeamJobAssignment> secondJobs, TeamBelief secondTruth) =
+            Run(positionAfterSightingB, velocityAfterSightingB);
         return (firstJobs, secondJobs, firstTruth, secondTruth);
     }
 
