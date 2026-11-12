@@ -187,12 +187,15 @@ public enum TeamId
 /// An opponent outside the facing cone is no longer measured every tick; the player keeps a predicted
 /// position from the last sighting, with growing uncertainty and decaying confidence. Teammates are
 /// still observed every tick (teammate belief is A7.2's team calls).</item>
+/// <item><c>AiBehaviour 7</c> — A2.3/A2.4: scorers estimate an opponent's body from a scouted
+/// <see cref="CapabilityEstimate"/> band (never the live attributes), and the carrier chooses a carry
+/// direction with a local pressure window (arrival-based, directional) blended into its freedom term.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 6;
+    public const int AiBehaviour = 7;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -495,6 +498,13 @@ public readonly record struct PerceivedEntity(
     /// A scorer may widen its tolerance by this instead of pretending a stale position is exact.
     /// </summary>
     public float PositionUncertaintyMeters { get; init; }
+
+    /// <summary>
+    /// What this observer believes the player is physically capable of (A2.3). Scouting knowledge or a
+    /// conservative default — never the live <see cref="PlayerAttributes"/>. A scorer that estimates
+    /// arrival times must go through this, which is what keeps a new attribute from becoming a leak.
+    /// </summary>
+    public CapabilityEstimate Capability { get; init; } = CapabilityEstimate.Generic;
 }
 
 public enum MatchPhase

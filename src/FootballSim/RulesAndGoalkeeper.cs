@@ -180,9 +180,7 @@ public sealed class GoalkeeperController : IFootballerController
             if (entity.Team == obs.SelfTeam) continue;
 
             ReachEstimate opponentArrival = TimeToReachModel.ToMovingPoint(
-                ReachKinematics.Neutral(
-                    new Vector2(entity.EstimatedPosition.X, entity.EstimatedPosition.Z),
-                    new Vector2(entity.EstimatedVelocity.X, entity.EstimatedVelocity.Z)),
+                ReachKinematics.FromEntity(entity),
                 ballXZ, ballVelXZ, SweepRaceHorizonSeconds);
 
             float arrival = opponentArrival.Reachable ? opponentArrival.Seconds : float.MaxValue;

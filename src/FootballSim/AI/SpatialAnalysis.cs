@@ -1,0 +1,332 @@
+using System;
+using System.Collections.Generic;
+using System.Numerics;
+using FootballSim.Core;
+
+namespace FootballSim.AI;
+
+/// <summary>
+/// One cell of a local pressure grid (A2.4): who can get here first, by how much, and what that means
+/// for the player making the decision.
+/// </summary>
+public readonly record struct PressureCell(
+    Vector2 CentreXZ,
+    float MyArrivalSeconds,
+    float OpponentArrivalSeconds,
+    float ArrivalMarginSeconds,
+    float Pressure01,
+    float Control01,
+    bool IsBoundaryCell,
+    bool IsUnclaimed)
+{
+    /// <summary>True when either side can be at this cell inside the model's horizon.</summary>
+    public bool IsReachable => MyArrivalSeconds >= 0f || OpponentArrivalSeconds >= 0f;
+}
+
+/// <summary>
+/// A small, reusable local pressure field around one decision point (A2.4).
+///
+/// The pitch-wide version of this question ("who controls each 3 m cell?") costs a reach estimate per
+/// cell per player, which is far more than a 60 Hz tick can afford for 22 players. So the field is
+/// *local*: a 5×5 window of 3 m cells centred on the decision maker, built from that player's own belief
+/// picture, at most <see cref="MaxOpponents"/> nearby opponents, and cached for the tick. Every cell
+/// stores what it took to decide — both arrival times, the margin between them, a directional pressure
+/// and a coarse control share — rather than only a final score, because A2.5 has to separate those
+/// notions and cannot recover them from a single number.
+///
+/// The arrival kernel is the reach model's straight-line part (fatigue cap, current velocity along the
+/// route, bounded acceleration) without the per-tick turn term: a turn measured over a 3 m hop is noise,
+/// and 25 cells × 5 opponents has to stay inside a few microseconds.
+///
+/// Cells outside the pitch are marked <see cref="PressureCell.IsBoundaryCell"/> and given explicit values
+/// (nobody can arrive at a cell that is out of play, so control is neutral and the flag is what a caller
+/// reads) rather than being silently treated as empty space.
+/// </summary>
+public sealed class LocalPressureField
+{
+    /// <summary>Edge length of one grid cell (A2.4 asks for roughly 3 m).</summary>
+    public const float CellSizeMeters = 3f;
+
+    /// <summary>Cells to each side of the centre cell, so the window is 5×5 = 15 m across.</summary>
+    public const int GridRadius = 2;
+
+    /// <summary>Cells per side of the window.</summary>
+    public const int CellsPerSide = GridRadius * 2 + 1;
+
+    /// <summary>Total cells in the window.</summary>
+    public const int CellCount = CellsPerSide * CellsPerSide;
+
+    /// <summary>How far ahead arrival is estimated; beyond this a cell is not worth distinguishing.</summary>
+    public const float HorizonSeconds = 1.5f;
+
+    /// <summary>Opponents considered per build — the nearest ones to the window centre.</summary>
+    public const int MaxOpponents = 5;
+
+    /// <summary>Margin, in seconds, at which the coarse control share reaches ~0.73.</summary>
+    public const float ControlWindowSeconds = 0.6f;
+
+    /// <summary>How much of a cell's pressure comes from an opponent's actual closing direction.</summary>
+    public const float DirectionalWeight = 0.25f;
+
+    /// <summary>Cells whose centre is closer than this to a line are treated as boundary cells.</summary>
+    public const float BoundaryMarginMeters = 0.9f;
+
+    private readonly PressureCell[] _cells = new PressureCell[CellCount];
+    private readonly ReachKinematics[] _opponentKinematics = new ReachKinematics[MaxOpponents];
+    private readonly float[] _opponentDistance = new float[MaxOpponents];
+
+    private PitchDimensions _pitch = new();
+    private ReachKinematics _self;
+    private Vector2 _centreXZ;
+    private int _opponentCount;
+    private int _builtForTick = -1;
+    private int _builtForObserver = -1;
+    private float _builtCentreX;
+    private float _builtCentreZ;
+    private bool _hasBuild;
+
+    /// <summary>How many times this field actually recomputed. Tests use it to prove the cache works.</summary>
+    public int BuildCount { get; private set; }
+
+    /// <summary>True once a build has happened; a read before that is a programming error.</summary>
+    public bool HasBuild => _hasBuild;
+
+    /// <summary>Tick the field was built for, or −1.</summary>
+    public int BuiltForTick => _builtForTick;
+
+    /// <summary>Centre of the window, in metres.</summary>
+    public Vector2 CentreXZ => _centreXZ;
+
+    /// <summary>
+    /// Builds or reuses the window for this observation and centre point.
+    ///
+    /// Returns false when the previous build still describes the question (same observer, same tick,
+    /// same centre), so a decision that scores twenty candidates pays for the field once. A tick of 0
+    /// means "no match clock" for a standalone controller, and every call then rebuilds: caching on an
+    /// unknown clock would serve a stale field to the next test without anything to invalidate it.
+    /// </summary>
+    public bool TryBuild(in FootballerObservation obs, Vector2 centreXZ, PitchDimensions? pitch = null)
+    {
+        if (pitch is not null) _pitch = pitch;
+
+        bool cacheable = obs.Tick > 0;
+        if (cacheable && _hasBuild && _builtForTick == obs.Tick && _builtForObserver == obs.SelfId &&
+            MathF.Abs(_builtCentreX - centreXZ.X) < 0.01f && MathF.Abs(_builtCentreZ - centreXZ.Y) < 0.01f)
+        {
+            return false;
+        }
+
+        _hasBuild = true;
+        BuildCount++;
+        _builtForTick = obs.Tick;
+        _builtForObserver = obs.SelfId;
+        _builtCentreX = centreXZ.X;
+        _builtCentreZ = centreXZ.Y;
+        _centreXZ = centreXZ;
+        _self = ReachKinematics.FromObservation(obs);
+
+        CollectOpponents(obs, centreXZ);
+
+        for (int z = 0; z < CellsPerSide; z++)
+        {
+            for (int x = 0; x < CellsPerSide; x++)
+            {
+                Vector2 cellCentre = CellCentre(x, z, centreXZ);
+                _cells[z * CellsPerSide + x] = Evaluate(cellCentre);
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Nearest window cell to a point. <paramref name="insideWindow"/> is false when the point is outside
+    /// the 15 m window, in which case the edge cell's values are returned and the caller knows why.
+    /// </summary>
+    public PressureCell Read(Vector2 pointXZ, out bool insideWindow)
+    {
+        if (!_hasBuild)
+            throw new InvalidOperationException("Read before TryBuild.");
+
+        Vector2 offset = pointXZ - _centreXZ;
+        float half = GridRadius * CellSizeMeters + CellSizeMeters * 0.5f;
+        insideWindow = MathF.Abs(offset.X) <= half && MathF.Abs(offset.Y) <= half;
+
+        int x = Math.Clamp((int)MathF.Round(offset.X / CellSizeMeters) + GridRadius, 0, CellsPerSide - 1);
+        int z = Math.Clamp((int)MathF.Round(offset.Y / CellSizeMeters) + GridRadius, 0, CellsPerSide - 1);
+        return _cells[z * CellsPerSide + x];
+    }
+
+    /// <summary>Pressure at a point, 0..1, for the common "should I go there" question.</summary>
+    public float PressureAt(Vector2 pointXZ) => Read(pointXZ, out _).Pressure01;
+
+    /// <summary>Every cell of the window, in row-major (z, then x) order. Diagnostics and tests read it.</summary>
+    public IReadOnlyList<PressureCell> Cells => _cells;
+
+    /// <summary>Cell centre for a grid coordinate of the window.</summary>
+    public static Vector2 CellCentre(int x, int z, Vector2 centreXZ) => new(
+        centreXZ.X + (x - GridRadius) * CellSizeMeters,
+        centreXZ.Y + (z - GridRadius) * CellSizeMeters);
+
+    private void CollectOpponents(in FootballerObservation obs, Vector2 centreXZ)
+    {
+        _opponentCount = 0;
+
+        // Insertion into a tiny fixed array: the five nearest opponents by distance to the centre. No
+        // per-build collection and no LINQ in a path that runs for every decision.
+        foreach (PerceivedEntity entity in obs.VisiblePlayers)
+        {
+            if (entity.Team == obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
+
+            Vector2 positionXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
+            float distance = Vector2.Distance(positionXZ, centreXZ);
+
+            if (_opponentCount == MaxOpponents && distance >= _opponentDistance[MaxOpponents - 1]) continue;
+
+            int slot = _opponentCount < MaxOpponents ? _opponentCount : MaxOpponents - 1;
+            while (slot > 0 && _opponentDistance[slot - 1] > distance)
+            {
+                _opponentDistance[slot] = _opponentDistance[slot - 1];
+                _opponentKinematics[slot] = _opponentKinematics[slot - 1];
+                slot--;
+            }
+
+            _opponentDistance[slot] = distance;
+            _opponentKinematics[slot] = ReachKinematics.FromEntity(entity);
+            if (_opponentCount < MaxOpponents) _opponentCount++;
+        }
+    }
+
+    private PressureCell Evaluate(Vector2 cellCentre)
+    {
+        if (IsOutsidePitch(cellCentre))
+        {
+            // Explicit: a cell that is out of play has no contested arrival, and pretending otherwise
+            // would let a carrier "find space" off the pitch.
+            return new PressureCell(
+                cellCentre, MyArrivalSeconds: -1f, OpponentArrivalSeconds: -1f, ArrivalMarginSeconds: 0f,
+                Pressure01: 0f, Control01: 0.5f, IsBoundaryCell: true, IsUnclaimed: true);
+        }
+
+        float myArrival = EstimateArrivalSeconds(_self, cellCentre);
+
+        float opponentArrival = -1f;
+        float pressure = 0f;
+        for (int i = 0; i < _opponentCount; i++)
+        {
+            float arrival = EstimateArrivalSeconds(_opponentKinematics[i], cellCentre);
+            if (arrival < 0f) continue;
+
+            if (opponentArrival < 0f || arrival < opponentArrival)
+                opponentArrival = arrival;
+
+            float contribution = PressureFrom(_opponentKinematics[i], cellCentre, arrival);
+            if (contribution > pressure) pressure = contribution;
+        }
+
+        bool iCan = myArrival >= 0f;
+        bool theyCan = opponentArrival >= 0f;
+
+        float margin;
+        if (iCan && theyCan) margin = opponentArrival - myArrival;
+        else if (iCan) margin = HorizonSeconds - myArrival;
+        else if (theyCan) margin = -(HorizonSeconds - opponentArrival);
+        else margin = 0f;
+
+        float control;
+        if (!iCan && !theyCan)
+        {
+            // Nobody can be here inside the horizon. A2.5 replaces the neutral share with an explicit
+            // unclaimed component; until then the flag is the honest part of this answer.
+            control = 0.5f;
+        }
+        else
+        {
+            control = 0.5f + 0.5f * (margin / (MathF.Abs(margin) + ControlWindowSeconds));
+        }
+
+        return new PressureCell(
+            cellCentre,
+            MyArrivalSeconds: myArrival,
+            OpponentArrivalSeconds: opponentArrival,
+            ArrivalMarginSeconds: margin,
+            Pressure01: Math.Clamp(pressure, 0f, 1f),
+            Control01: Math.Clamp(control, 0f, 1f),
+            IsBoundaryCell: false,
+            IsUnclaimed: !iCan && !theyCan);
+    }
+
+    /// <summary>
+    /// How much this opponent threatens a cell: how soon they can be there, weighted by whether they are
+    /// actually running at it. A defender standing still beside a point is a smaller threat than one
+    /// closing on it, which is the "directional" part of local pressure.
+    /// </summary>
+    private static float PressureFrom(in ReachKinematics opponent, Vector2 cellCentre, float arrival)
+    {
+        float timeFactor = 1f - Math.Clamp(arrival / HorizonSeconds, 0f, 1f);
+
+        Vector2 toCell = cellCentre - opponent.PositionXZ;
+        float distance = toCell.Length();
+        float closing = 1f;
+        if (distance > 0.25f)
+        {
+            Vector2 direction = toCell / distance;
+            Vector2 velocity = opponent.VelocityXZ;
+            float speed = velocity.Length();
+            if (speed > 0.5f)
+            {
+                float approach = Vector2.Dot(direction, velocity / speed);
+                closing = 1f - DirectionalWeight * (1f - Math.Clamp(approach, 0f, 1f));
+            }
+        }
+
+        return timeFactor * closing;
+    }
+
+    /// <summary>
+    /// Straight-line arrival time for this body, in seconds, or −1 when it is beyond the horizon.
+    /// Public because A2.5 and the tests need to check the kernel itself, not only its cells.
+    /// </summary>
+    public static float EstimateArrivalSeconds(in ReachKinematics state, Vector2 targetXZ, float horizon = HorizonSeconds)
+    {
+        if (!SimMath.IsFinite(state.PositionXZ) || !SimMath.IsFinite(targetXZ)) return -1f;
+
+        Vector2 offset = targetXZ - state.PositionXZ;
+        float distance = offset.Length();
+        float reach = MathF.Max(0.05f, state.ReachRadius);
+        if (distance <= reach) return 0f;
+
+        // Arrival is a contact, exactly as in the reach model: the player only has to get inside reach,
+        // not stand on the point.
+        distance -= reach;
+
+        float cap = TimeToReachModel.SpeedCap(state, sprint: true);
+        if (cap <= 0.1f) return -1f;
+
+        float balance = float.IsFinite(state.Balance01) ? Math.Clamp(state.Balance01, 0.2f, 1f) : 1f;
+        float acceleration = MathF.Max(1f, (float.IsFinite(state.Acceleration) ? state.Acceleration : 6.8f) * 1.15f * balance);
+
+        float along = distance > 1e-4f ? Vector2.Dot(state.VelocityXZ, offset / distance) : 0f;
+        float seconds;
+
+        if (along >= cap)
+        {
+            // Already faster than the sustainable cap: no acceleration to model.
+            seconds = distance / along;
+        }
+        else
+        {
+            float rampSeconds = (cap - along) / acceleration;
+            float rampDistance = (cap * cap - along * along) / (2f * acceleration);
+            seconds = distance <= rampDistance
+                ? (-along + MathF.Sqrt(along * along + 2f * acceleration * distance)) / acceleration
+                : rampSeconds + (distance - rampDistance) / cap;
+        }
+
+        return seconds >= 0f && seconds <= horizon ? seconds : -1f;
+    }
+
+    private bool IsOutsidePitch(Vector2 pointXZ) =>
+        MathF.Abs(pointXZ.X) > _pitch.HalfLength - BoundaryMarginMeters ||
+        MathF.Abs(pointXZ.Y) > _pitch.HalfWidth - BoundaryMarginMeters;
+}

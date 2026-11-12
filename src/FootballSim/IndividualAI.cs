@@ -299,11 +299,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             if (entity.Team != obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
             Vector2 mateXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
             Vector2 mateInterceptXZ = obs.PossessingTeam == obs.SelfTeam
-                ? ComputeBallInterceptTarget(
-                    ReachKinematics.Neutral(
-                        mateXZ,
-                        new Vector2(entity.EstimatedVelocity.X, entity.EstimatedVelocity.Z)),
-                    ballXZ, ballVelXZ, _pitch)
+                ? ComputeBallInterceptTarget(ReachKinematics.FromEntity(entity), ballXZ, ballVelXZ, _pitch)
                 : ballXZ + ballVelXZ * 0.12f;
 
             float mateDistToBall = Vector2.Distance(mateXZ, ballXZ);

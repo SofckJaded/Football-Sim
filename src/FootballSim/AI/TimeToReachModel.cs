@@ -72,6 +72,17 @@ public readonly record struct ReachKinematics(
     public ReachKinematics WithReachRadius(float reachRadius) => this with { ReachRadius = reachRadius };
 
     /// <summary>
+    /// Estimated kinematics of another player (A2.3): position and velocity as the observer believes
+    /// them, body limits from the capability band the observation carries. There is deliberately no
+    /// overload that takes a <see cref="FootballerState"/>, so a scorer cannot reach live attributes.
+    /// </summary>
+    public static ReachKinematics FromEntity(in PerceivedEntity entity) =>
+        entity.Capability.ToKinematics(
+            new Vector2(entity.EstimatedPosition.X, entity.EstimatedPosition.Z),
+            new Vector2(entity.EstimatedVelocity.X, entity.EstimatedVelocity.Z),
+            goalkeeper: entity.Role == TacticalRole.Goalkeeper);
+
+    /// <summary>
     /// Kinematics of the decision maker itself, built only from what perception published (A2.1). The
     /// controller and candidate generation both use this, so a decision-side reach estimate can never
     /// quietly read the authoritative world for its own numbers.

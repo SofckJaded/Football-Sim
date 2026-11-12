@@ -56,6 +56,14 @@ public sealed class PerceptionSystem
     private readonly Dictionary<int, List<(Vector3 Position, Vector3 Velocity)>> _ballHistory = new();
     private readonly Dictionary<int, float> _historyTimestamp = new();
     private readonly Dictionary<int, PlayerMemory> _memories = new();
+    private readonly ScoutingReport? _scouting;
+
+    /// <param name="scouting">
+    /// Pre-match scouting knowledge of the squads (A2.3). Null (the default) publishes the generic
+    /// capability assumption for every other player, which is what standalone controllers and tests get:
+    /// a conservative band, never the authoritative attributes.
+    /// </param>
+    public PerceptionSystem(ScoutingReport? scouting = null) => _scouting = scouting;
 
     public static int ReactionDelayTicks(float reactionDelaySeconds) =>
         Math.Clamp((int)MathF.Round(reactionDelaySeconds / SimConstants.FixedDeltaTime), 0, MaxReactionDelayTicks);
@@ -153,7 +161,10 @@ public sealed class PerceptionSystem
                     rng.NextGaussian(0f, posNoise * 0.45f));
 
                 memory.Observe(other.Id, other.Team, other.Role, estPos, estVel, confidence, tick);
-                visible.Add(new PerceivedEntity(other.Id, other.Team, other.Role, estPos, estVel, confidence));
+                visible.Add(new PerceivedEntity(other.Id, other.Team, other.Role, estPos, estVel, confidence)
+                {
+                    Capability = CapabilityOf(other.Id)
+                });
                 continue;
             }
 
@@ -162,7 +173,9 @@ public sealed class PerceptionSystem
             if (!memory.TryPredict(other.Id, tick, out PerceivedEntity remembered)) continue;
             if (other.Team != self.Team && remembered.ObservedAgeTicks > knowledgeAgeTicks)
                 knowledgeAgeTicks = remembered.ObservedAgeTicks;
-            visible.Add(remembered);
+
+            // Capability is scouting knowledge, not a position, so it is not aged with the sighting.
+            visible.Add(remembered with { Capability = CapabilityOf(other.Id) });
         }
 
         memory.MarkInitialised();
@@ -273,6 +286,10 @@ public sealed class PerceptionSystem
         Vector3 predictedPosition = samplePosition + sampleVelocity * delaySeconds;
         return (predictedPosition, sampleVelocity);
     }
+
+    /// <summary>Scouted capability band for a player, or the conservative default when unscouted.</summary>
+    private CapabilityEstimate CapabilityOf(int playerId) =>
+        _scouting?.Get(playerId) ?? CapabilityEstimate.Generic;
 
     private static BallPossessionSnapshot InferPossession(BallState ball)
     {

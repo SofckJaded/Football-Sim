@@ -304,6 +304,70 @@ belief store itself allocates one small object per observer/observed pair for th
 
 ---
 
+## 2026-11-12 — A2.3 estimated capability + A2.4 local pressure (simulation version `ai7-rs1`)
+
+Two changes, one re-baseline because both are in A2 and both move trajectories.
+
+- **A2.3 — scorers estimate an opponent's body from a scouted band, never a live attribute.**
+  `PerceivedEntity.Capability` (`CapabilityEstimate`) is either a `ScoutingReport` entry (built once from
+  the squad at kickoff, quantised to 0.25 m/s and 0.8 confidence) or `CapabilityEstimate.Generic`.
+  `ReachKinematics.FromEntity` is the only way in; there is deliberately no overload that takes a
+  `FootballerState`. The keeper's sweep race and the local responder estimate now use it.
+- **A2.4 — the carrier reads a local pressure window.** `LocalPressureField` is 5×5 cells of 3 m around
+  the carrier, at most five nearby opponents, a 1.5 s horizon, built once per decision and cached by
+  (observer, tick, centre). Every cell publishes both arrival times, the margin, a directional
+  pressure, a coarse control share and explicit boundary/unclaimed flags. The carrier's carry-direction
+  score blends it 60/40 with the old distance-to-nearest-opponent term — blended, not multiplied, so the
+  same crowding is not charged twice.
+- **Carry-direction hysteresis was added with it.** Without it the pressure term flipped the carrier's
+  direction left and right every tick and the carrier ran on the spot (0.1 m of travel in two seconds in
+  a 1v1 face-off). The remembered direction now has to be beaten by 0.04 to be abandoned.
+
+### 11v11 headless match — `a2-pressure-11v11-2026-11-12.txt`
+
+| Metric | ai6-rs1 | ai7-rs1 |
+| :--- | :--- | :--- |
+| Ticks | 326 258 | 326 180 |
+| Score | 8 – 6 | 7 – 6 |
+| Possession | 48.8 / 51.2 | 50.6 / 49.4 |
+| Passes | 840 / 854 (77 % / 76 %) | 906 / 818 (76 % / 74 %) |
+| Shots | 79 / 51 | 72 / 45 |
+| Width | 42.5 / 40.9 m | 43.3 / 40.9 m |
+
+**Reading:** a small, sane move — the match still plays, both teams still get on the ball, and the shot
+counts stay in the same band. The mid-batch build (before the hysteresis) scored 14–9; the hysteresis
+removed most of the extra shot volume it created, which is consistent with the carrier no longer
+oscillating but committing to a direction.
+
+### One regression had to be re-stated
+
+`GameplayFeelTests.TwoClosePlayers_DoNotTradeTheBallWithRepeatedTackles` asserted 1–3 tackles in a 1v1
+face-off. With pressure-aware carrying, a defender standing 0.8 m in front is now something the carrier
+turns away from instead of dribbling into: the face-off resolves as an evasion with **no** dispossession
+(measured, and the carrier travels 6 m doing it). The upper bound, the carried ball and the movement are
+the invariants that test exists for; the lower bound was pinning the old behaviour, so it is now 0–3 and
+the reason is recorded in the test itself.
+
+### Tactical differentiation gate — `a2-pressure-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side wider on **4/5** seeds, mean
+separation **1.57 m**. **GATE: PASS** (the gate needs a majority and > 0.5 m mean).
+
+### Performance — `a2-pressure-perf-2026-11-12.txt`
+
+| Metric | ai6-rs1 | ai7-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 106.5 µs | 117.6 µs |
+| p99 / max | 367.6 / 579 µs | 346.4 / 1407 µs |
+| Allocated per tick | 49 232 B | **60 850 B** |
+
+The pressure window itself allocates nothing per tick (25 cells in a preallocated array, five opponents
+in a preallocated buffer, one `CandidateGenerator` per player). The ~11 KB/tick rise is the trajectory:
+this is a different match with more possession changes and more passes attempted. It is nonetheless the
+new high-water mark for A9.3 — allocation is now ≈61 KB/tick.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

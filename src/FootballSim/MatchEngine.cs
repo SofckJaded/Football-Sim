@@ -137,7 +137,6 @@ public sealed class MatchSimulationEngine
         _perceptionRng = RandomStreams.Create(_config.Seed, RandomStream.Perception);
         _ballSolver = new BallPhysicsSolver(null, _pitch);
         _executionSystem = new FootballerExecutionSystem(_pitch);
-        _perceptionSystem = new PerceptionSystem();
         _tacticalCoordinator = new TeamTacticalCoordinator(_pitch);
         _ballResponderElection = new BallResponderElection(_pitch);
         _teamJobs = new TeamJobCoordinator(_pitch);
@@ -176,6 +175,11 @@ public sealed class MatchSimulationEngine
                 Ball.HeldReleaseDelaySeconds = 0f;
             }
         }
+
+        // A2.3: scouting knowledge is built once, from the squad as it is at kickoff, and never
+        // refreshed. A scorer therefore receives an estimate with a confidence band instead of a live
+        // read of an opponent's attributes.
+        _perceptionSystem = new PerceptionSystem(ScoutingReport.FromSquad(_players));
     }
 
     public int CurrentTick { get; private set; }
