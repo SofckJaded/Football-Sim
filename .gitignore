@@ -45,6 +45,16 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+# ---- Working notes, not code ----
+# PROGRESS/TASKS/RESUME are the agent work-state files and README/docs are documentation. They are
+# kept locally and deliberately untracked so this repository holds only the code that ships: a diff
+# then never mixes a behaviour change with a note about it, and reverting code cannot lose the notes.
+/README.md
+/PROGRESS.md
+/TASKS.md
+/RESUME.md
+/docs/
+
 # ---- Historical source snapshot duplicated under artifacts/ ----
 # artifacts/baseline-<date>/ is a full copy of the tree taken by an earlier session.
 # Git history is now the source of truth for old code, so the copy is not versioned.

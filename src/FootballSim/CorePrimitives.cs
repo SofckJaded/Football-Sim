@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using FootballSim.AI;
 using FootballSim.Tactics;
 
 namespace FootballSim.Core;
@@ -757,6 +758,12 @@ public sealed class PreMatchConfig
     public int? DesignatedHumanPlayerId { get; init; } = null;
     public TeamTacticalProfile HomeProfile { get; init; } = TeamTacticalProfile.PossessionControl;
     public TeamTacticalProfile AwayProfile { get; init; } = TeamTacticalProfile.DirectCounterattack;
+
+    /// <summary>
+    /// AI runtime settings for this match. The default reproduces the behaviour that preceded the
+    /// settings object, so an existing caller that does not mention it keeps its exact behaviour.
+    /// </summary>
+    public AiRuntimeConfig Ai { get; init; } = AiRuntimeConfig.Default;
 }
 
 public readonly record struct RecordedTickCommands(int Tick, Dictionary<int, FootballerCommand> CommandsByPlayer);

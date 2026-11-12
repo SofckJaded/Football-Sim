@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
@@ -130,6 +131,12 @@ public sealed class MatchScenario
     public TeamTacticalProfile AwayProfile { get; init; } = TeamTacticalProfile.DirectCounterattack;
 
     /// <summary>
+    /// AI runtime settings for this fragment. A scenario that ablates a behaviour sets them here rather
+    /// than mutating a controller, so the difference is part of the fixture and shows up in the artifact.
+    /// </summary>
+    public AiRuntimeConfig Ai { get; init; } = AiRuntimeConfig.Default;
+
+    /// <summary>
     /// Half length used for full-time detection. Scenarios are short fragments, so the default is far
     /// longer than any scenario is meant to run — the runner stops on its own tick budget instead.
     /// </summary>
@@ -211,7 +218,8 @@ public sealed class MatchScenario
         HalfDurationSeconds = HalfDurationSeconds,
         DesignatedHumanPlayerId = HumanPlayerId,
         HomeProfile = HomeProfile,
-        AwayProfile = AwayProfile
+        AwayProfile = AwayProfile,
+        Ai = Ai
     };
 
     /// <summary>Builds the authoritative ball state this scenario starts from.</summary>

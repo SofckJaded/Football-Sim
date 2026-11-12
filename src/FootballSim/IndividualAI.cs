@@ -261,22 +261,55 @@ public sealed class TacticalUtilityAiController : IFootballerController
     private readonly PitchDimensions _pitch;
     private readonly MatchCommunicationContext? _communication;
     private readonly PassPlanner _passPlanner;
+    private readonly AiRuntimeConfig _ai;
     private string _committedActionName = "Idle";
     private float _commitmentTimer;
     private float _tackleCooldown;
     private float _timeOnBall;
     private string _debugSummary = "Uninitialized";
     private readonly List<UtilityCandidate> _lastCandidates = new();
+    private UtilityCandidate _lastSelected;
+    private UtilityCandidate? _lastRunnerUp;
+    private int _lastCandidateCount;
 
-    public TacticalUtilityAiController(PitchDimensions pitch, MatchCommunicationContext? communication = null)
+    public TacticalUtilityAiController(
+        PitchDimensions pitch,
+        MatchCommunicationContext? communication = null,
+        AiRuntimeConfig? ai = null)
     {
         _pitch = pitch;
         _communication = communication;
         _passPlanner = new PassPlanner(pitch);
+        _ai = ai ?? AiRuntimeConfig.Default;
     }
 
     public ControllerSourceType SourceType => ControllerSourceType.AI;
     public IReadOnlyList<UtilityCandidate> LastCandidates => _lastCandidates;
+
+    /// <summary>
+    /// The candidate this controller actually chose on its last decision, including the commitment
+    /// bonus that was applied to it. Diagnostics read this instead of re-deriving the winner from
+    /// <see cref="LastCandidates"/>, which would report the raw table and miss every committed holding.
+    /// </summary>
+    public UtilityCandidate LastSelected => _lastSelected;
+
+    /// <summary>Best candidate that did not win, after the same bonus was applied.</summary>
+    public UtilityCandidate? LastRunnerUp => _lastRunnerUp;
+
+    /// <summary>Number of candidates generated on the last decision.</summary>
+    public int LastCandidateCount => _lastCandidateCount;
+
+    /// <summary>
+    /// Seconds left on the current commitment window. Exposed so configuration can be proven to reach
+    /// the decision path: immediately after a decision that changed action, this equals the configured
+    /// job or reaction window exactly.
+    /// </summary>
+    public float CommitmentRemainingSeconds => _commitmentTimer;
+
+    /// <summary>Name of the action currently held by commitment, or "Idle" before the first decision.</summary>
+    public string CommittedActionName => _committedActionName;
+
+    public AiRuntimeConfig RuntimeConfig => _ai;
     public string GetDebugSummary() => _debugSummary;
 
     public FootballerCommand Decide(in FootballerObservation obs, float dt)
@@ -336,22 +369,45 @@ public sealed class TacticalUtilityAiController : IFootballerController
             GenerateOffBallCandidates(obs, oppGoalCenter, ownGoalCenter, myInterceptXZ, isPrimaryBallResponder, offsideLineProjX);
         }
 
-        UtilityCandidate best = new("ActiveSupportMove", -999f, FootballerCommand.Idle);
+        UtilityCandidate best = default;
+        UtilityCandidate? runnerUp = null;
+        bool hasBest = false;
         foreach (var cand in _lastCandidates)
         {
             float score = cand.UtilityScore;
             if (_commitmentTimer > 0f && cand.ActionName == _committedActionName)
-                score += 0.10f;
+                score += _ai.CommitmentBonus;
 
-            if (score > best.UtilityScore)
-                best = cand with { UtilityScore = score };
+            UtilityCandidate scored = cand with { UtilityScore = score };
+            if (!hasBest || scored.UtilityScore > best.UtilityScore)
+            {
+                if (hasBest) runnerUp = best;
+                best = scored;
+                hasBest = true;
+            }
+            else if (runnerUp is null || scored.UtilityScore > runnerUp.Value.UtilityScore)
+            {
+                runnerUp = scored;
+            }
         }
+
+        if (!hasBest)
+            best = new UtilityCandidate("ActiveSupportMove", -999f, FootballerCommand.Idle);
+
+        // Expose the decision that was actually taken, including the commitment bonus. The trace must
+        // report this, not the raw candidate table: the two differ exactly when commitment is doing its
+        // job, and a trace that showed the raw winner would describe a decision nobody made.
+        _lastSelected = best;
+        _lastRunnerUp = runnerUp;
+        _lastCandidateCount = _lastCandidates.Count;
 
         if (best.ActionName != _committedActionName)
         {
             _committedActionName = best.ActionName;
             // A job target is a commitment, not a reflex: hold it longer than a reactive press.
-            _commitmentTimer = best.ActionName.StartsWith("Job:", StringComparison.Ordinal) ? 0.45f : 0.18f;
+            _commitmentTimer = best.ActionName.StartsWith("Job:", StringComparison.Ordinal)
+                ? _ai.JobCommitmentSeconds
+                : _ai.ReactionCommitmentSeconds;
         }
 
         _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";

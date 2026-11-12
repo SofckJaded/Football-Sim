@@ -125,6 +125,7 @@ public sealed class MatchSimulationEngine
             SimulationConfigValidation.ValidatePitch(_pitch);
             SimulationConfigValidation.ValidateTacticalProfile(_config.HomeProfile, "Home profile");
             SimulationConfigValidation.ValidateTacticalProfile(_config.AwayProfile, "Away profile");
+            AiRuntimeConfigValidation.Validate(_config.Ai, "AI runtime configuration");
         }
 
         // A1.3: one stream per consumer. Perception no longer advances the stream that decides whether
@@ -279,7 +280,7 @@ public sealed class MatchSimulationEngine
                 }
                 else
                 {
-                    _controllers[playerId] = new TacticalUtilityAiController(_pitch, _communication);
+                    _controllers[playerId] = new TacticalUtilityAiController(_pitch, _communication, _config.Ai);
                 }
             }
         }
@@ -359,7 +360,7 @@ public sealed class MatchSimulationEngine
             }
             else
             {
-                controller = new TacticalUtilityAiController(_pitch, _communication);
+                controller = new TacticalUtilityAiController(_pitch, _communication, _config.Ai);
             }
 
             _controllers[spec.Id] = controller;
@@ -566,41 +567,15 @@ public sealed class MatchSimulationEngine
         if (_controllers.TryGetValue(player.Id, out IFootballerController? controller) &&
             controller is TacticalUtilityAiController ai)
         {
-            string selected = "Idle";
-            float selectedScore = float.NegativeInfinity;
-            string? runnerUp = null;
-            float runnerUpScore = float.NegativeInfinity;
-
-            IReadOnlyList<UtilityCandidate> candidates = ai.LastCandidates;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                UtilityCandidate candidate = candidates[i];
-                if (candidate.UtilityScore > selectedScore)
-                {
-                    if (selectedScore > float.NegativeInfinity)
-                    {
-                        runnerUp = selected;
-                        runnerUpScore = selectedScore;
-                    }
-                    selected = candidate.ActionName;
-                    selectedScore = candidate.UtilityScore;
-                }
-                else if (candidate.UtilityScore > runnerUpScore)
-                {
-                    runnerUp = candidate.ActionName;
-                    runnerUpScore = candidate.UtilityScore;
-                }
-            }
-
-            if (candidates.Count == 0)
-            {
-                selected = controller.GetDebugSummary();
-                selectedScore = 0f;
-            }
+            // The controller owns the selection (it is the only place that knows the commitment
+            // bonus), so the trace reports its decision rather than re-deriving one from the raw table.
+            UtilityCandidate selected = ai.LastSelected;
+            UtilityCandidate? runnerUp = ai.LastRunnerUp;
 
             DecisionTrace.Record(
-                CurrentTick, observation, selected, selectedScore,
-                runnerUp, runnerUpScore, candidates.Count,
+                CurrentTick, observation, selected.ActionName, selected.UtilityScore,
+                runnerUp?.ActionName, runnerUp?.UtilityScore ?? 0f, ai.LastCandidateCount,
+                target: selected.TargetXZ,
                 targetPlayerId: player.LastCommand.IntendedReceiverId);
             return;
         }

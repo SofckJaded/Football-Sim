@@ -1,4 +1,5 @@
 using System;
+using FootballSim.AI;
 using FootballSim.Physics;
 
 namespace FootballSim.Core;
@@ -74,6 +75,7 @@ public static class SimulationConfigValidation
 
         ValidateTacticalProfile(config.HomeProfile, nameof(config.HomeProfile));
         ValidateTacticalProfile(config.AwayProfile, nameof(config.AwayProfile));
+        AiRuntimeConfigValidation.Validate(config.Ai, nameof(config.Ai));
     }
 
     /// <summary>
