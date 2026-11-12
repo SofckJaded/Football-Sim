@@ -1,4 +1,4 @@
-﻿=== Advanced-AI performance sample (11v11, 22 active players) ===
+=== Advanced-AI performance sample (11v11, 22 active players) ===
 Simulation version     : ai9-rs1
 Runtime                : 8.0.32 | Microsoft Windows NT 10.0.26200.0
 CPU                    : AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD

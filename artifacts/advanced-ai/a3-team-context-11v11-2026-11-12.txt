@@ -1,4 +1,4 @@
-﻿=== 11v11 Headless Match in 33456 ms ===
+=== 11v11 Headless Match in 33456 ms ===
 Simulation version: ai9-rs1 (seed 20260818)
 Status            : FULL TIME | phase FullTime | period SecondHalf
 Tick / Clock      : tick 326430 | clock 5400.0s of 5400s
