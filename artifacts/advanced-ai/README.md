@@ -855,6 +855,66 @@ was left open rather than forced.
 
 ---
 
+## 2026-11-12 — the A4 pass audit (simulation version `ai17-rs1`)
+
+Files: `a4-pass-audit-tactical-gate.txt`, `a4-pass-audit-11v11.txt`, `a4-pass-audit-perf.txt`.
+
+Four defects were fixed after a playtest report that passes "miss" (details and the measurement in
+`PROGRESS.md`, batch 20). The measurement is the part worth keeping: a twenty-minute segment counted every
+pass's outcome and compared it with what `PassSuccessModel` predicted.
+
+### What the pass model predicted against what happened (`ai16`, 289 passes)
+
+| Predicted `p` band | Passes | Reached the intended man | Intercepted |
+| :--- | ---: | ---: | ---: |
+| 0.85 – 1.00 | 237 | 70 % | 20 % |
+| 0.70 – 0.85 | 21 | 62 % | 38 % |
+| below 0.40 (no trace — keeper/set-piece) | 30 | 47 % | 47 % |
+| **all** | **289** | **66 %** | **24 %** |
+
+Mean predicted completion **0.82**; 74 % of balls came within 1.5 m of the intended man at some point and
+14 % never came within 6 m. By type: ground 71 %, through 66 %, raised **0/13**. The model is optimistic by
+about fifteen points but ordered correctly; the raised alternative was the one category with no successes
+at all.
+
+### 11v11 headless match — `a4-pass-audit-11v11.txt`
+
+| Metric | ai16-rs1 | ai17-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 47 226 ms | 46 354 ms |
+| Ticks | 326 168 | 326 298 |
+| Score | 1 – 2 | **1 – 1** |
+| Possession | 50.5 / 49.5 | 50.0 / 50.0 |
+| Passes | 607 / 597 (72 % / 70 %) | **647 / 584** (70 % / 67 %) |
+| Shots | 29 / 22 | **30 / 28** |
+| Width (all-tick) | 43.9 / 40.7 m | 43.7 / 41.6 m |
+
+### Tactical differentiation gate — `a4-pass-audit-tactical-gate.txt`
+
+5 seeds × 240 s: full time, played, the possession side wider on **5/5** seeds, mean separation **5.01 m**.
+**GATE: PASS.**
+
+### Performance — `a4-pass-audit-perf.txt`
+
+| Metric | ai16-rs1 (artifact) | ai16-rs1 (re-measured today) | ai17-rs1 |
+| :--- | ---: | ---: | ---: |
+| Per-tick mean | 166.3 µs | 233.7 µs | 169.6 µs |
+| p99 / max | 798.7 / 1154.6 µs | 835.5 / 1616.2 µs | 672.0 / 1269.7 µs |
+| Allocated per tick | 63 622 B | 63 609 B | 64 168 B |
+
+**Perf reading:** single samples on this machine vary by ±40 % with machine state (the `ai16` build
+re-measured today is 233.7 µs, against 166.3 µs when its artifact was captured). The honest comparison is
+the three columns above: the audited build is inside that variance, so the finer lane sampling plus its
+flight-path hoist and conservative reachability pre-filter are **perf-neutral**, and p99 stays far inside
+the 16.7 ms step. A9.3 still owns the allocation work.
+
+**Reading:** the fixes are correctness fixes and they did not move completion on this seed (70/67 % against
+72/70 %). The audit's value is that it rules out "one broken constant" and names the two loss channels:
+interceptions (one pass in four) and passes into space the runner does not continue (A5.3). The lane test
+now samples the ball's travel rather than 0.1 s of flight.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

@@ -160,6 +160,30 @@ public sealed class DecisionExplanationTests
         }
     }
 
+    /// <summary>
+    /// A decision that is not a scored choice still has to be named honestly. A restart taker has exactly
+    /// one thing to do and no candidate table, so the record must say so and must not carry a value
+    /// decomposition it does not have. Until the A4 pass audit this path left the previous decision (or,
+    /// after a reset, the zero value of the record) in <c>LastSelected</c>, which made the trace print a
+    /// fabricated <c>p 0.00</c> for a set piece.
+    /// </summary>
+    [Fact]
+    public void ARestartTaker_IsNamedAndInventsNoTerms()
+    {
+        var controller = new TacticalUtilityAiController(Pitch);
+        FootballerObservation observation = Observation(
+            new Vector2(0f, 0f), isSetPieceTaker: true, MatchPhase.CornerKick);
+
+        FootballerCommand command = controller.Decide(observation, SimConstants.FixedDeltaTime);
+
+        Assert.Equal("SetPieceRestart", controller.LastSelected.ActionName);
+        Assert.Equal(command, controller.LastSelected.Command);
+        Assert.False(controller.LastSelected.Terms.IsPresent,
+            "a restart has no scored alternative, so the trace must report no terms rather than p = 0");
+        Assert.Null(controller.LastRunnerUp);
+        Assert.Equal(0, controller.LastCandidateCount);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
@@ -176,7 +200,11 @@ public sealed class DecisionExplanationTests
         Vector3.Zero,
         1f);
 
-    private static FootballerObservation Observation(Vector2 carrierPosition, params PerceivedEntity[] visible) => new()
+    private static FootballerObservation Observation(Vector2 carrierPosition, params PerceivedEntity[] visible) =>
+        Observation(carrierPosition, isSetPieceTaker: false, MatchPhase.FirstHalf, visible);
+
+    private static FootballerObservation Observation(
+        Vector2 carrierPosition, bool isSetPieceTaker, MatchPhase phase, params PerceivedEntity[] visible) => new()
     {
         SelfId = CarrierId,
         SelfTeam = TeamId.Home,
@@ -197,8 +225,8 @@ public sealed class DecisionExplanationTests
         TacticalAnchorPosition = new Vector3(carrierPosition.X, 0f, carrierPosition.Y),
         AttackingDirectionX = 1f,
         MatchTimeSeconds = 20f,
-        CurrentMatchPhase = MatchPhase.FirstHalf,
-        IsSetPieceTaker = false,
+        CurrentMatchPhase = phase,
+        IsSetPieceTaker = isSetPieceTaker,
         Tick = 800,
         VisiblePlayers = visible,
         TeamProfile = TeamTacticalProfile.PossessionControl,

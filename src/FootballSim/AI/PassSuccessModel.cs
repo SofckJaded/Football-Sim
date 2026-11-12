@@ -86,8 +86,19 @@ public sealed class PassSuccessModel
     /// </summary>
     public const float LaneTurnSpeed = 1.5f;
 
-    /// <summary>Sampling step used to roll the ball's own flight against an opponent's run.</summary>
-    public const float LaneSampleSeconds = 0.1f;
+    /// <summary>
+    /// Largest gap the ball may travel between two lane samples, in metres. The lane test asks "does the
+    /// ball run into a body at some instant", so the sampling step has to be smaller than the contact
+    /// radius or the ball can step straight over a defender standing on the line. It used to be a fixed
+    /// 0.1 s of flight, which at a 19 m/s pass is a 1.94 m step — more than twice the 0.9 m reach.
+    /// </summary>
+    public const float LaneSampleStepMeters = 0.45f;
+
+    /// <summary>Lower bound on lane samples: a short pass still has to be checked properly.</summary>
+    public const int MinLaneSamples = 8;
+
+    /// <summary>Upper bound on lane samples, so the hard-rejection test stays bounded per candidate.</summary>
+    public const int MaxLaneSamples = 64;
 
     /// <summary>Seconds of defender margin at which the arrival term is neutral (0.5).</summary>
     public const float DefenderMarginScaleSeconds = 0.50f;
@@ -283,7 +294,10 @@ public sealed class PassSuccessModel
             FlightRangeMeters: range,
             DistanceMeters: distanceMeters,
             CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01),
-            LandingPressure01: Math.Clamp(1f - defenderTerm, 0f, 1f));
+            LandingPressure01: Math.Clamp(1f - defenderTerm, 0f, 1f))
+        {
+            LandingXZ = landing
+        };
     }
 
     /// <summary>
@@ -356,7 +370,25 @@ public sealed class PassSuccessModel
         Vector2 direction = segment / length;
         Vector2 normal = new(-direction.Y, direction.X);
         float flight = flightTimeSeconds > 0f ? MathF.Min(flightTimeSeconds, 6f) : length / 12f;
-        int samples = Math.Clamp((int)MathF.Ceiling(flight / LaneSampleSeconds), 4, 40);
+
+        // The ball's own travel sets the sampling: one sample every half contact radius, so a defender the
+        // ball passes within reach of cannot fall between two samples.
+        float travelled = MathF.Min(_planner.BallDistanceAtTime(power01, flight), length);
+        int samples = Math.Clamp(
+            (int)MathF.Ceiling(MathF.Max(travelled, 1f) / LaneSampleStepMeters),
+            MinLaneSamples,
+            MaxLaneSamples);
+
+        // One flight path for the whole query: every opponent is tested against the same ball positions,
+        // so the trajectory is resolved once instead of once per defender. Stack-allocated and bounded by
+        // MaxLaneSamples, so the fine sampling costs no allocation.
+        Span<Vector2> ballPath = stackalloc Vector2[MaxLaneSamples + 1];
+        for (int sample = 0; sample <= samples; sample++)
+        {
+            float t = flight * sample / samples;
+            float ballDistance = MathF.Min(_planner.BallDistanceAtTime(power01, t), length);
+            ballPath[sample] = fromXZ + direction * ballDistance;
+        }
 
         for (int i = 0; i < visiblePlayers.Count; i++)
         {
@@ -367,6 +399,16 @@ public sealed class PassSuccessModel
             Vector2 opponentVelocity = new(opponent.EstimatedVelocity.X, opponent.EstimatedVelocity.Z);
             Vector2 relative = opponentXZ - fromXZ;
             float signedPerpendicular = Vector2.Dot(relative, normal);
+            float perpendicular = MathF.Abs(signedPerpendicular);
+            float projectionRaw = Vector2.Dot(relative, direction);
+
+            // Cheap reachability bound *before* the dense sampling: an opponent further from the ball's
+            // line than the fastest close he can produce — a full sprint plus the turn allowance the
+            // step-in rule below grants — cannot be on the ball within the flight, so sampling him is
+            // wasted work. The bound uses the *largest* closing speed the rules below allow, which makes
+            // it conservative: it skips a defender only when neither test could have found him.
+            float reachable = LaneContactReachMeters + (OpponentSprintSpeed + LaneTurnSpeed) * flight;
+            if (perpendicular > reachable) continue;
 
             // 1. Their current run, sampled against the ball's own flight: if the two ever come
             //    within touch range, the pass runs straight into them.
@@ -377,18 +419,16 @@ public sealed class PassSuccessModel
             for (int sample = 0; sample <= samples; sample++)
             {
                 float t = flight * sample / samples;
-                float ballDistance = MathF.Min(_planner.BallDistanceAtTime(power01, t), length);
-                Vector2 ballAt = fromXZ + direction * ballDistance;
-                if (Vector2.Distance(opponentXZ + runVelocity * t, ballAt) <= LaneContactReachMeters)
+                if (Vector2.Distance(opponentXZ + runVelocity * t, ballPath[sample]) <= LaneContactReachMeters)
                     return true;
             }
 
             // 2. They can also see the pass and step into the lane. Compare what the step actually
             //    needs with what they can produce before the ball has gone by.
-            float gap = MathF.Abs(signedPerpendicular) - LaneContactReachMeters;
+            float gap = perpendicular - LaneContactReachMeters;
             if (gap <= 0f) return true;
 
-            float projection = Math.Clamp(Vector2.Dot(relative, direction), 0f, length);
+            float projection = Math.Clamp(projectionRaw, 0f, length);
             float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
             float available = timeToPoint - OpponentReactionSeconds;
             if (available <= 0f) continue;
@@ -450,6 +490,9 @@ public sealed class PassSuccessModel
 /// <summary>
 /// Separate answer for a raised pass (A4.2): the flight is a different physical problem from a rolling
 /// one, so it has its own estimate rather than a ground flight time dressed up as an aerial ball.
+/// <see cref="LandingXZ"/> is where this estimate thinks the ball comes down (not where it was aimed),
+/// which is the point the A4 audit is about: until A5.5 replaces the drag-free range with the real
+/// airborne trajectory, a raised ball may land beyond the man it was played to.
 /// </summary>
 public readonly record struct LoftedPassTerms(
     bool Feasible,
@@ -460,6 +503,12 @@ public readonly record struct LoftedPassTerms(
     float CompletionProbability01,
     float LandingPressure01)
 {
+    /// <summary>
+    /// Estimated point where the raised ball comes down, in pitch XZ. Published for the inspector and for
+    /// A5.5, and not part of the score until that milestone gives the flight a real prediction.
+    /// </summary>
+    public Vector2 LandingXZ { get; init; }
+
     /// <summary>No raised route to this receiver: out of the execution layer's band.</summary>
     public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);
 }

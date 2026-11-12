@@ -216,6 +216,38 @@ public sealed class OnBallActionSetTests
             c => c.Command.KickType == KickIntentType.LoftedPass && c.Key.TargetPlayerId == MateId);
     }
 
+    /// <summary>
+    /// A raised ball still has to clear the completion floor the ground options use. The A4 pass audit
+    /// measured the raised alternative without one: thirteen raised balls in a twenty-minute reference
+    /// match and all thirteen were collected by the opposition, because a drag-free landing estimate made
+    /// every one of them look playable. Here the lane is blocked <i>and</i> a defender is standing on the
+    /// point the ball would come down at, so the estimate itself says the ball is lost — and the option is
+    /// refused with a reason instead of offered.
+    /// </summary>
+    [Fact]
+    public void ARaisedPassTheModelCallsHopeless_IsRefusedWithAReason()
+    {
+        var generator = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(
+            Observation(
+                new Vector2(0f, 8f),
+                Mate(MateId, new Vector2(15f, 8f)),
+                // A body in the ground lane, so only the raised alternative is considered at all.
+                Away(14, TacticalRole.CenterBack, new Vector2(0.6f, 8.55f)),
+                // A marker on the landing point, which is what makes the raised estimate hopeless.
+                Away(15, TacticalRole.CenterBack, new Vector2(15.6f, 8.6f))),
+            new Vector3(Pitch.HalfLength, 0f, 0f),
+            offsideLineProjX: 34f);
+
+        Assert.DoesNotContain(generator.Candidates, c => c.Command.KickType == KickIntentType.LoftedPass);
+
+        List<string> reasons = Enumerable.Range(0, generator.RejectionCount)
+            .Select(generator.GetRejection)
+            .Select(r => r.Reason)
+            .ToList();
+        Assert.Contains(CandidateGenerator.RejectionLowCompletion, reasons);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Bounds
     // ---------------------------------------------------------------------------------------------

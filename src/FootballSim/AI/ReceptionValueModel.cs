@@ -184,7 +184,14 @@ public sealed class ReceptionValueModel
 
     /// <summary>
     /// How much room the reception point has on the goal side — the space a player needs to receive and
-    /// turn. Measured against the <i>believed</i> opponents only, like every other spatial term.
+    /// turn upfield. Measured against the <i>believed</i> opponents only, like every other spatial term.
+    ///
+    /// An opponent is goal-side when he stands <b>closer to the goal being attacked than the reception
+    /// point</b> (a greater attack-relative projection): that is the body a receiver has to turn into.
+    /// An opponent behind the reception is a press from behind, which the caller's pressure term already
+    /// charges — counting him here as well would answer a different question. (The comparison was
+    /// inverted until the A4 pass audit: it kept only the opponents *behind* the reception, so a marked
+    /// forward looked free to turn.)
     /// </summary>
     private float NearestGoalSideOpponentDistance(in FootballerObservation obs, Vector2 arrivalPointXZ)
     {
@@ -198,7 +205,7 @@ public sealed class ReceptionValueModel
             if (entity.Team == obs.SelfTeam) continue;
 
             Vector2 opponentXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
-            if (opponentXZ.X * attackDir >= arrivalProjX) continue;
+            if (opponentXZ.X * attackDir <= arrivalProjX) continue;
             float distance = Vector2.Distance(opponentXZ, arrivalPointXZ);
             if (distance < nearest) nearest = distance;
         }

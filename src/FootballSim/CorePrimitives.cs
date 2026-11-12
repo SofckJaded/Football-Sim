@@ -248,12 +248,17 @@ public enum TeamId
 /// "a clear chance beats a covered one, and a covered one loses to a good pass". The planner's power search
 /// also steps up one notch at a time for a moving receiver instead of jumping to maximum power.
 /// Trajectories differ from version 15.</item>
+/// <item><c>AiBehaviour 17</c> — the A4 pass audit: the reception's "room to turn" is measured against
+/// opponents <b>goal-side</b> of the reception (<see cref="AI.ReceptionValueModel"/>), not behind it —
+/// the comparison was inverted, so a marked forward looked free — and a raised pass must clear the same
+/// completion floor as a ground one instead of being offered at any price. Trajectories differ from
+/// version 16.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 16;
+    public const int AiBehaviour = 17;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

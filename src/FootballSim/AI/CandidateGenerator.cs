@@ -748,6 +748,18 @@ public sealed class CandidateGenerator : IAiStateResettable
         LoftedPassTerms terms = _passSuccess.EstimateLofted(obs, mate, distance, lane);
         if (!terms.Feasible) return false;
 
+        // The same completion floor every ground option has to clear. A raised ball gets no exemption:
+        // measured on the reference match, the raised alternative used to be offered at any price and
+        // every one of the thirteen balls played under it was collected by the opposition, because the
+        // price was a drag-free range that ignores what the landing point is worth. Until A5.5 gives the
+        // raised delivery a real airborne prediction, "priced honestly" means refusing the ones the
+        // estimate itself calls hopeless.
+        if (terms.CompletionProbability01 < MinViableCompletion01)
+        {
+            Reject(mate.PlayerId, RejectionLowCompletion);
+            return false;
+        }
+
         // Same scale as a ground pass (A4.4): the reception at the landing point, the pass score's own
         // completion estimate, and the passer's loss cost.
         ReceptionValueTerms reception = _receptionValue.Evaluate(

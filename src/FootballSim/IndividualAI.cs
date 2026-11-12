@@ -54,7 +54,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     private float _commitmentTimer;
     private float _timeOnBall;
     private string _debugSummary = "Uninitialized";
-    private UtilityCandidate _lastSelected;
+    private UtilityCandidate _lastSelected = new("Idle", 0f, FootballerCommand.Idle) { Key = CandidateKey.None };
     private UtilityCandidate? _lastRunnerUp;
     private int _lastCandidateCount;
     public TacticalUtilityAiController(
@@ -132,7 +132,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         _committedKey = CandidateKey.None;
         _commitmentTimer = 0f;
         _timeOnBall = 0f;
-        _lastSelected = default;
+        _lastSelected = new UtilityCandidate("Idle", 0f, FootballerCommand.Idle) { Key = CandidateKey.None };
         _lastRunnerUp = null;
         _lastCandidateCount = 0;
         _generator.ResetForPhase(reason);
@@ -166,6 +166,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         {
             var restartCmd = EvaluateSetPieceRestart(obs, oppGoalCenter);
             _debugSummary = $"SetPieceRestart ({obs.CurrentMatchPhase})";
+            // A restart taker has exactly one thing to do, but the trace still has to be able to name
+            // it. Until the A4 pass audit this path left the *previous* decision — or, after a reset,
+            // the zero value of the field — as LastSelected, so the recorder published a stale utility
+            // (and a fabricated p = 0 decomposition) for the restart.
+            _lastSelected = new UtilityCandidate("SetPieceRestart", 0f, restartCmd) { Key = CandidateKey.None };
+            _lastRunnerUp = null;
+            _lastCandidateCount = 0;
             StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false);
             return restartCmd;
         }

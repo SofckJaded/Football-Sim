@@ -180,6 +180,30 @@ public sealed class PassSuccessModelTests
         Assert.Equal(fromModel, fromGenerator);
     }
 
+    /// <summary>
+    /// The hard lane test samples the ball's own travel, not a fixed slice of time. A 19 m/s pass used to
+    /// move up to 1.94 m between samples — more than twice the 0.9 m contact radius — so a defender
+    /// standing on the line could be stepped straight over between two samples. Walking one defender along
+    /// the line of a full-power pass must find him everywhere, which a time-sliced sampler cannot guarantee.
+    /// </summary>
+    [Fact]
+    public void AFastPass_SeesADefenderStandingAnywhereOnItsLine()
+    {
+        PassPlan plan = ManualPlan(new Vector2(22f, 0f), power01: 1f, flightSeconds: 1.2f);
+        PerceivedEntity receiver = Mate(MateId, new Vector2(22f, 0f));
+
+        for (float along = 2f; along <= 20f; along += 0.7f)
+        {
+            PerceivedEntity blocker = Opponent(14, new Vector2(along, 0.5f));
+            bool blocked = Model.IsLaneBlocked(
+                BallXZ, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds,
+                new[] { receiver, blocker }, TeamId.Home);
+
+            Assert.True(blocked,
+                $"a defender standing half a metre off the line {along:F1} m into a full-power pass was not seen");
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Bounds, determinism and the raised alternative
     // ---------------------------------------------------------------------------------------------

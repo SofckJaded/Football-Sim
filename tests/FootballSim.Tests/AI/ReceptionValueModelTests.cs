@@ -49,11 +49,35 @@ public sealed class ReceptionValueModelTests
             Observation(Vector2.Zero, (9, new Vector2(-6f, 5f), Vector2.Zero), (14, new Vector2(20f, -20f), Vector2.Zero)),
             9, point, 0.2f);
         ReceptionValueTerms marked = Model.Evaluate(
-            Observation(Vector2.Zero, (9, new Vector2(-6f, 5f), Vector2.Zero), (14, new Vector2(-2f, 5f), Vector2.Zero)),
+            Observation(Vector2.Zero, (9, new Vector2(-6f, 5f), Vector2.Zero), (14, new Vector2(2f, 5f), Vector2.Zero)),
             9, point, 0.2f);
 
         Assert.True(open.Turnability01 > marked.Turnability01);
         Assert.True(open.Value > marked.Value);
+    }
+
+    /// <summary>
+    /// The side matters, not just the distance. The same opponent two metres from the reception is only a
+    /// body in the way when he is <b>between the receiver and the goal</b> (goal-side, +X here). Standing
+    /// behind the reception he is a pressure from behind — charged by the caller's pressure term, not by
+    /// the turn — so the room to turn has to stay intact. (The projection test was inverted until the A4
+    /// pass audit, which made a marked forward look like a free one.)
+    /// </summary>
+    [Fact]
+    public void AnOpponentBehindTheReception_DoesNotTakeTheRoomToTurn()
+    {
+        Vector2 point = new(0f, 5f);
+        ReceptionValueTerms goalSide = Model.Evaluate(
+            Observation(Vector2.Zero, (9, new Vector2(-6f, 5f), Vector2.Zero), (14, new Vector2(2f, 5f), Vector2.Zero)),
+            9, point, 0.2f);
+        ReceptionValueTerms behind = Model.Evaluate(
+            Observation(Vector2.Zero, (9, new Vector2(-6f, 5f), Vector2.Zero), (14, new Vector2(-2f, 5f), Vector2.Zero)),
+            9, point, 0.2f);
+
+        Assert.True(behind.Turnability01 > goalSide.Turnability01,
+            $"an opponent behind the reception ({behind.Turnability01:F2}) must leave more room to turn " +
+            $"than one goal-side of it ({goalSide.Turnability01:F2})");
+        Assert.True(behind.Value > goalSide.Value);
     }
 
     /// <summary>A reception that advances the ball is worth more than one played backwards.</summary>
