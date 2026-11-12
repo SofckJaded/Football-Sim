@@ -46,7 +46,8 @@ public readonly record struct DecisionTraceEntry(
     /// <summary>How stale the observation behind this decision was. Null until A2.2 models memory age.</summary>
     public int? KnowledgeAgeTicks { get; init; }
 
-    /// <summary>Stable candidate identity (action type + target/run/region + variant). Null until A1.1.</summary>
+    /// <summary>Stable candidate identity (action type + target/run/region + variant). Null when the
+    /// controller that decided has no candidate identity to report (a keeper, a human, a script).</summary>
     public string? CandidateKey { get; init; }
 
     /// <summary>Owning intent, when the action continues one. Null until A1.2 introduces persistence.</summary>
@@ -54,7 +55,7 @@ public readonly record struct DecisionTraceEntry(
 
     public string Describe() =>
         $"t{Tick} p{PlayerId} {Job}{(string.IsNullOrEmpty(JobReason) ? string.Empty : $"({JobReason})")} " +
-        $"-> {SelectedAction} U={SelectedUtility:F3}" +
+        $"-> {CandidateKey ?? SelectedAction} U={SelectedUtility:F3}" +
         (RunnerUpAction is null ? string.Empty : $" (2nd {RunnerUpAction} U={RunnerUpUtility:F3})") +
         $" of {CandidateCount}";
 }
@@ -99,7 +100,7 @@ public sealed class DecisionTraceBuffer
     public void Record(
         int tick, FootballerObservation observation, string selectedAction, float selectedUtility,
         string? runnerUpAction, float runnerUpUtility, int candidateCount,
-        Vector3? target = null, int? targetPlayerId = null)
+        Vector3? target = null, int? targetPlayerId = null, string? candidateKey = null)
     {
         Record(new DecisionTraceEntry(
             tick, observation.SelfId, observation.SelfTeam, observation.SelfRole,
@@ -107,7 +108,8 @@ public sealed class DecisionTraceBuffer
             selectedAction, selectedUtility, runnerUpAction, runnerUpUtility, candidateCount)
         {
             Target = target,
-            TargetPlayerId = targetPlayerId
+            TargetPlayerId = targetPlayerId,
+            CandidateKey = candidateKey
         });
     }
 

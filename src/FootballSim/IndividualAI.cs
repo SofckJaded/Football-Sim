@@ -21,6 +21,16 @@ public readonly record struct UtilityCandidate(
     /// just which direction it faces (audit F18).
     /// </summary>
     public Vector3? TargetXZ { get; init; }
+
+    /// <summary>
+    /// Stable identity of this candidate: kind + target + variant (A1.1c). <see cref="ActionName"/> is a
+    /// label for humans and may change; this is what commitment, tracing and deduplication compare.
+    /// Defaults to <see cref="CandidateKey.None"/> for a candidate built without one.
+    /// </summary>
+    public CandidateKey Key { get; init; }
+
+    /// <summary>Text form of <see cref="Key"/>, falling back to the action name when no key was set.</summary>
+    public string Identity => Key.IsNone ? ActionName : Key.Describe();
 }
 
 public sealed class PerceptionSystem
@@ -263,6 +273,7 @@ public sealed class TacticalUtilityAiController : IFootballerController
     private readonly PassPlanner _passPlanner;
     private readonly AiRuntimeConfig _ai;
     private string _committedActionName = "Idle";
+    private CandidateKey _committedKey;
     private float _commitmentTimer;
     private float _tackleCooldown;
     private float _timeOnBall;
@@ -308,6 +319,12 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
     /// <summary>Name of the action currently held by commitment, or "Idle" before the first decision.</summary>
     public string CommittedActionName => _committedActionName;
+
+    /// <summary>
+    /// Stable identity currently held by commitment (A1.1c). <see cref="CommittedActionName"/> is its
+    /// human-readable label; this is what the controller actually compares.
+    /// </summary>
+    public CandidateKey CommittedKey => _committedKey;
 
     public AiRuntimeConfig RuntimeConfig => _ai;
     public string GetDebugSummary() => _debugSummary;
@@ -375,7 +392,9 @@ public sealed class TacticalUtilityAiController : IFootballerController
         foreach (var cand in _lastCandidates)
         {
             float score = cand.UtilityScore;
-            if (_commitmentTimer > 0f && cand.ActionName == _committedActionName)
+            // Identity, not label: the same act against the same target keeps its commitment even if the
+            // display name is reworded or the target point moves by centimetres.
+            if (_commitmentTimer > 0f && cand.Key == _committedKey)
                 score += _ai.CommitmentBonus;
 
             UtilityCandidate scored = cand with { UtilityScore = score };
@@ -401,11 +420,12 @@ public sealed class TacticalUtilityAiController : IFootballerController
         _lastRunnerUp = runnerUp;
         _lastCandidateCount = _lastCandidates.Count;
 
-        if (best.ActionName != _committedActionName)
+        if (best.Key != _committedKey)
         {
+            _committedKey = best.Key;
             _committedActionName = best.ActionName;
             // A job target is a commitment, not a reflex: hold it longer than a reactive press.
-            _commitmentTimer = best.ActionName.StartsWith("Job:", StringComparison.Ordinal)
+            _commitmentTimer = best.Key.Kind == CandidateKind.Job
                 ? _ai.JobCommitmentSeconds
                 : _ai.ReactionCommitmentSeconds;
         }
@@ -568,7 +588,8 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
             _lastCandidates.Add(new UtilityCandidate("ShootAtGoal", shotUtility, shotCmd)
             {
-                TargetXZ = shotTarget
+                TargetXZ = shotTarget,
+                Key = new CandidateKey(CandidateKind.Shot, TargetTag: "goal")
             });
         }
 
@@ -709,7 +730,10 @@ public sealed class TacticalUtilityAiController : IFootballerController
                     IntendedReceiverId = mate.PlayerId
                 };
 
-                _lastCandidates.Add(new UtilityCandidate($"Pass({passType})To#{mate.PlayerId}", passUtility, passCmd));
+                _lastCandidates.Add(new UtilityCandidate($"Pass({passType})To#{mate.PlayerId}", passUtility, passCmd)
+                {
+                    Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, passType.ToString())
+                });
             }
         }
 
@@ -772,7 +796,8 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
         _lastCandidates.Add(new UtilityCandidate("DriveWithBall", dribbleUtility, dribbleCmd)
         {
-            TargetXZ = new Vector3(carryTarget.X, 0f, carryTarget.Y)
+            TargetXZ = new Vector3(carryTarget.X, 0f, carryTarget.Y),
+            Key = new CandidateKey(CandidateKind.Carry, TargetTag: "forward")
         });
     }
 
@@ -872,7 +897,13 @@ public sealed class TacticalUtilityAiController : IFootballerController
                     attemptTackle, false, false, Vector3.Zero,
                     KickIntentType.None, Vector3.UnitX, 0f, 0f);
 
-                _lastCandidates.Add(new UtilityCandidate(attemptTackle ? "ExecuteTackle" : "CloseDownCarrier", 0.99f, pressCmd));
+                _lastCandidates.Add(new UtilityCandidate(attemptTackle ? "ExecuteTackle" : "CloseDownCarrier", 0.99f, pressCmd)
+                {
+                    // The target is the carrier: pressing a different player is a different act, and a
+                    // commitment must not survive a change of who is being pressed.
+                    Key = new CandidateKey(CandidateKind.Press, obs.BallControllingPlayerId ?? 0,
+                        attemptTackle ? "tackle" : "close")
+                });
                 return;
             }
 
@@ -888,7 +919,10 @@ public sealed class TacticalUtilityAiController : IFootballerController
                 false, false, false, Vector3.Zero,
                 KickIntentType.None, Vector3.UnitX, 0f, 0f);
 
-            _lastCandidates.Add(new UtilityCandidate("InterceptPassRay", 0.98f, receiveCmd));
+            _lastCandidates.Add(new UtilityCandidate("InterceptPassRay", 0.98f, receiveCmd)
+            {
+                Key = new CandidateKey(CandidateKind.Intercept, TargetTag: "ray")
+            });
             return;
         }
 
@@ -976,7 +1010,11 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
         _lastCandidates.Add(new UtilityCandidate(obs.PossessingTeam == obs.SelfTeam ? "OnsideSupportLane" : "HoldDefensiveZone", 0.88f, shapeCmd)
         {
-            TargetXZ = new Vector3(targetSpotXZ.X, 0f, targetSpotXZ.Y)
+            TargetXZ = new Vector3(targetSpotXZ.X, 0f, targetSpotXZ.Y),
+            // The possession side is part of the identity: supporting the carrier and holding a
+            // defensive zone are different duties, and a commitment must not carry across a turnover.
+            Key = new CandidateKey(CandidateKind.Shape,
+                TargetTag: obs.PossessingTeam == obs.SelfTeam ? "support" : "defend")
         });
     }
 
@@ -1046,7 +1084,9 @@ public sealed class TacticalUtilityAiController : IFootballerController
         _lastCandidates.Add(new UtilityCandidate(
             attemptTackle ? "ChallengeCarrierTackle" : "ChallengeCarrier", 0.995f, command)
         {
-            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y)
+            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y),
+            Key = new CandidateKey(CandidateKind.Challenge, obs.BallControllingPlayerId ?? 0,
+                attemptTackle ? "tackle" : "body")
         });
         return true;
     }
@@ -1114,10 +1154,15 @@ public sealed class TacticalUtilityAiController : IFootballerController
         float baseUtility = JobBaseUtility(obs.TacticalJob);
         AddJobCandidate(obs, $"{obs.TacticalJob}", jobTargetXZ, baseUtility);
         if (Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
-            AddJobCandidate(obs, $"{obs.TacticalJob}Adj", alternativeXZ, baseUtility - 0.03f);
+            AddJobCandidate(obs, $"{obs.TacticalJob}Adj", alternativeXZ, baseUtility - 0.03f, adjusted: true);
     }
 
-    private void AddJobCandidate(in FootballerObservation obs, string actionName, Vector2 targetXZ, float baseUtility)
+    private void AddJobCandidate(
+        in FootballerObservation obs,
+        string actionName,
+        Vector2 targetXZ,
+        float baseUtility,
+        bool adjusted = false)
     {
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
@@ -1147,7 +1192,11 @@ public sealed class TacticalUtilityAiController : IFootballerController
 
         _lastCandidates.Add(new UtilityCandidate($"Job:{actionName}", utility, command)
         {
-            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y)
+            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y),
+            // The job is the target identity, and the adjusted point is a variant of the same job, not a
+            // different action — that is what lets commitment distinguish "still marking" from "shifted
+            // the mark two metres" without inventing a new action every tick.
+            Key = new CandidateKey(CandidateKind.Job, TargetTag: obs.TacticalJob.ToString(), Adjusted: adjusted)
         });
     }
 

@@ -134,6 +134,26 @@ than assumed because a new random stream is exactly the kind of change that can 
 
 ---
 
+## 2026-11-12 — A1.1c stable candidate keys (simulation version `ai3-rs1`)
+
+Commitment is now matched on a `CandidateKey` (kind + target + variant) instead of the action label.
+The version was bumped for the semantic change, **not** because anything moved: every re-captured number
+is identical to `ai2-rs1`.
+
+| Artifact | Comparison with `ai2-rs1` |
+| :--- | :--- |
+| `a1-candidate-keys-tactical-gate-2026-11-12.txt` | Byte-identical: same per-seed scores, passes, widths; mean separation **2.64 m**; **GATE: PASS** |
+| `a1-candidate-keys-11v11-2026-11-12.txt` | Byte-identical: 326 306 ticks, 29–17, 50.6/49.4 possession, 869/830 passes, 120/59 shots, 42.7/40.7 m width, 1897/2087 kicks |
+| `a1-candidate-keys-perf-2026-11-12.txt` | Within noise: mean 109.7 µs, p99 390.7 µs, **41 651 B/tick** (was 41 300) |
+
+Reading: the key is allocation-free (a `readonly record struct` with an int target and an interned tag),
+so the 41.7 KB/tick figure did not grow. The identity-to-label mapping happens to be one-to-one for every
+candidate the controller generates today, which is why behaviour is unchanged; the key is nonetheless
+strictly more specific for press/challenge targets, which is why the version was bumped rather than
+declaring "no change" from a single match.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

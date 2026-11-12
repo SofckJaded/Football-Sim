@@ -171,12 +171,15 @@ public enum TeamId
 /// <item><c>AiBehaviour 1</c> — everything up to and including A0: one shared random stream.</item>
 /// <item><c>AiBehaviour 2</c> — A1.3: perception and execution draw from separate derived streams, so
 /// trajectories differ from version 1 by construction.</item>
+/// <item><c>AiBehaviour 3</c> — A1.1c: commitment is matched on a stable candidate key
+/// (<see cref="CandidateKey"/>) instead of the action label. The reference 11v11 match is byte-identical
+/// to version 2, so the version bump records a semantic change rather than an observed behaviour change.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 2;
+    public const int AiBehaviour = 3;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

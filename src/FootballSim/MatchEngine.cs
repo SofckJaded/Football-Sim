@@ -576,7 +576,8 @@ public sealed class MatchSimulationEngine
                 CurrentTick, observation, selected.ActionName, selected.UtilityScore,
                 runnerUp?.ActionName, runnerUp?.UtilityScore ?? 0f, ai.LastCandidateCount,
                 target: selected.TargetXZ,
-                targetPlayerId: player.LastCommand.IntendedReceiverId);
+                targetPlayerId: player.LastCommand.IntendedReceiverId,
+                candidateKey: selected.Key.IsNone ? null : selected.Key.Describe());
             return;
         }
 
