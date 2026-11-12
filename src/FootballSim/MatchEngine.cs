@@ -64,7 +64,8 @@ public sealed class MatchSimulationEngine
 {
     private readonly PreMatchConfig _config;
     private readonly PitchDimensions _pitch;
-    private readonly SeededRandom _rng;
+    private readonly SeededRandom _executionRng;
+    private readonly SeededRandom _perceptionRng;
     private readonly BallPhysicsSolver _ballSolver;
     private readonly FootballerExecutionSystem _executionSystem;
     private readonly PerceptionSystem _perceptionSystem;
@@ -79,6 +80,7 @@ public sealed class MatchSimulationEngine
     private readonly Dictionary<int, FootballerObservation> _latestObservations = new();
     private readonly MatchCommunicationContext _communication = new();
     private readonly List<BallContactEvent> _contactLog = new();
+    private readonly ContactGeometrySnapshot _contactGeometry = new();
 
     private double _homeTerritoryAccum;
     private double _awayTerritoryAccum;
@@ -125,7 +127,11 @@ public sealed class MatchSimulationEngine
             SimulationConfigValidation.ValidateTacticalProfile(_config.AwayProfile, "Away profile");
         }
 
-        _rng = new SeededRandom(_config.Seed);
+        // A1.3: one stream per consumer. Perception no longer advances the stream that decides whether
+        // a pass is controlled, so a perception change cannot silently rewrite every later physics
+        // exchange — and a command-only replay sees the same execution stream whether or not the AI ran.
+        _executionRng = RandomStreams.Create(_config.Seed, RandomStream.Execution);
+        _perceptionRng = RandomStreams.Create(_config.Seed, RandomStream.Perception);
         _ballSolver = new BallPhysicsSolver(null, _pitch);
         _executionSystem = new FootballerExecutionSystem(_pitch);
         _perceptionSystem = new PerceptionSystem();
@@ -492,7 +498,7 @@ public sealed class MatchSimulationEngine
                 var obs = _perceptionSystem.BuildObservation(
                     p, _players, Ball, _tacticalCoordinator.ConfirmedPossessingTeam,
                     _rulesEngine.Phase, _rulesEngine.MatchClockSeconds,
-                    attackDirX, isTaker, profile, _rng,
+                    attackDirX, isTaker, profile, _perceptionRng,
                     possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id));
                 _latestObservations[p.Id] = obs;
 
@@ -504,7 +510,7 @@ public sealed class MatchSimulationEngine
             }
 
             _executionSystem.UpdateLocomotionAndContacts(
-                _players, Ball, _rng, dt,
+                _players, Ball, _executionRng, dt,
                 (tacklerId, victimId, pos, sev) => _rulesEngine.EvaluateTackleFoul(tacklerId, victimId, pos, sev, _players, Ball),
                 CurrentTick,
                 new ReceptionAssistContext(possession.State, possession.IntendedReceiverId, humanPlayerId));
@@ -513,6 +519,11 @@ public sealed class MatchSimulationEngine
             // restart kind so the rules engine can apply the Law 11 exemptions (no offside from a
             // throw-in/goal kick/corner) and the no-direct-goal rule for indirect restarts.
             _rulesEngine.StampRestartOrigin(_executionSystem.ContactEvents);
+
+            // A1.4: freeze the world as it was when these contacts were made. The rules engine runs
+            // after the physics step below, so a laws decision read from the live ball would be
+            // decided by where the ball is heading rather than where it was played.
+            _contactGeometry.Capture(CurrentTick, _players, Ball.Position);
 
             // Audit F17: statistics come from the contacts execution actually made, never from the
             // commands above. A kick that lost the tick's arbitration is not a pass attempt.
@@ -536,7 +547,8 @@ public sealed class MatchSimulationEngine
         // triggered by an offside offence cannot be re-evaluated twice.
         _rulesEngine.StepRules(
             _players, Ball, _config.HalfDurationSeconds, dt,
-            livePlay ? _executionSystem.ContactEvents : null);
+            livePlay ? _executionSystem.ContactEvents : null,
+            livePlay ? _contactGeometry : null);
 
         if (livePlay)
             _executionSystem.ContactEvents.Clear();

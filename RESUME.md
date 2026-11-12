@@ -2,90 +2,91 @@
 
 Read this after `AGENTS.md`; do not re-derive state from the planning document.
 
-**Last updated:** 2026-11-12 (session 1, after batch 2)
+**Last updated:** 2026-11-12 (session 1, after batch 3)
 
 ---
 
 ## Current goal
 
-Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` in batches. **A0 is complete and its exit gate
-passed.** The current milestone is **A1 — runtime seams without changing tactical policy**.
+Implement `docs/ADVANCED_AI_IMPLEMENTATION_PLAN.md` in batches.
+**A0 is complete (5/5, exit gate passed). A1 is 2/5** — A1.3 and A1.4 are done.
 
 ## Active batch
 
-**Batch 3 — A1.4 (contact-time offside geometry) then A1.3 (RNG isolation).**
-A0: 5/5 tasks. A1: 0/5 tasks.
+None open. Batch 3 finished clean: suite **260/260 green**, nothing uncommitted.
 
 ## Last completed task
 
-**A0.5** — Release performance sample. Also completed in batch 2: A0.3 (ten scenario fixtures +
-`ScenarioRunner` + `--scenario` CLI) and A0.4 (bounded decision trace, deliberate split between chosen
-action and executed contact). Suite **246/246 green**.
+**A1.3 + A1.4, in one batch.**
+- A1.4: `ContactGeometrySnapshot` captured before the physics step and threaded into the offside
+  judgement, so a laws decision no longer reads a ball the physics already moved.
+- A1.3: `RandomStream`/`RandomStreams.Derive` split perception from execution; `SimulationVersion.Tag`
+  is now `ai2-rs1` and printed by every headless run.
 
 ## Next recommended batch
 
-Batch 3, in this order:
+**Batch 4 — A1.1, in two commits (both behaviour-preserving):**
 
-1. **A1.4 — capture offside geometry at the contact.** Today `MatchRulesEngine` reads the live
-   `BallState` when it processes the contact, after `BallPhysicsSolver.Step` has already advanced the
-   ball. Introduce a `ContactGeometrySnapshot` taken at the moment the contact is made (ball position,
-   owning player positions, contact tick/order) and judge Law 11 from it. Must preserve: event ordering,
-   restart-origin stamping (`StampRestartOrigin`), the deliberate-play/save distinction, and every
-   existing offside exemption test. The proof is an invariant test: **moving the ball after the contact
-   but before the rules tick must not change the offside verdict.**
-2. **A1.3 — separate RNG streams.** Today one `SeededRandom(_config.Seed)` is shared by perception,
-   decisions and physical execution, so adding a perception query shifts every subsequent physics
-   sample. Split into derived match-local streams via a documented integer seed mixer, and prove:
-   diagnostics on/off are identical, two interleaved matches in one process are independent, and an
-   existing recorded-command replay still reproduces exactly.
-3. If both land cleanly, start **A1.1** by extracting the perception block out of `PerceptionSystem`
-   unchanged (behaviour-preserving commit), before touching candidate identity.
+1. **`AiRuntimeConfig`** (small, do this first). A validated settings object owned by match
+   configuration: feature switches, cadences (15/10/6/5/3/1 Hz per plan §3), candidate limits
+   (≤ 12 off-ball, ≤ 20 carrier), hysteresis margins, commitment ranges. Every field needs a validated
+   range and a neutral default that reproduces today's behaviour exactly. Prove it with a test that
+   the default configuration changes nothing and that an out-of-range value is rejected at
+   construction. Do **not** wire the cadence fields into the tick yet — that is A1.2.
+2. **Stable candidate keys.** Today `UtilityCandidate.ActionName` is both the label and the identity,
+   which is why two different passes to two different players can share a name. Add a key of
+   action type + target player/run/region id + variant, keep `ActionName` for display, and put the key
+   into `DecisionTraceEntry.CandidateKey` (currently null by design). This touches every
+   `_lastCandidates.Add(...)` site in `IndividualAI.cs` (~30) — mechanical but wide; do it as one
+   reviewable commit and let the 260 tests prove behaviour is unchanged.
+
+Then **A1.5** (reset hooks for restart / halftime / full time / player removal / training reset /
+controller replacement) and **A1.2** (controller-owned intent executor, scheduler behind a feature
+switch), in that order.
 
 ## Files currently relevant
 
 | File | Why |
 | :--- | :--- |
-| `src/FootballSim/RulesAndGoalkeeper.cs` | `StepRules`, `SnapshotOffsidePositions`, `StampRestartOrigin`, `StartScenario` (added in A0.2) |
-| `src/FootballSim/FootballerLocomotion.cs` | where `BallContactEvent` is created (line ~1285) — the snapshot belongs beside it |
-| `src/FootballSim/MatchEngine.cs` | tick order: decisions → execution → stamp → statistics → possession → physics → rules |
-| `src/FootballSim/CorePrimitives.cs` | `BallContactEvent`, `ControllerSourceType`, `SeededRandom` |
-| `src/FootballSim/AI/DecisionTrace.cs` | trace buffer pattern to reuse for any new bounded log |
-| `src/FootballSim/Scenarios/` | `ScenarioLibrary`, `ScenarioRunner` — fixtures for A1 proofs |
-| `tests/FootballSim.Tests/AuditRegressionTests.cs` | existing offside/restart/replay regressions that must stay green |
-| `docs/DECISIONS.md` | append a decision record for any design choice that a reader would otherwise re-litigate |
+| `src/FootballSim/CorePrimitives.cs` | `RandomStream`, `RandomStreams`, `SimulationVersion`, `PreMatchConfig`, `UtilityCandidate` is in `IndividualAI.cs` |
+| `src/FootballSim/IndividualAI.cs` | `UtilityCandidate`, `TacticalUtilityAiController.Decide`, every `Add(...)` candidate site, `CommitmentTimer` |
+| `src/FootballSim/AI/DecisionTrace.cs` | where `CandidateKey` is waiting to be filled |
+| `src/FootballSim/RulesAndGoalkeeper.cs` | `ContactGeometrySnapshot` (pattern for preallocated reuse) |
+| `src/FootballSim/SimulationConfigValidation.cs` | where `AiRuntimeConfig` validation belongs |
+| `tests/FootballSim.Tests/Scenarios/` | fixture + runner pattern for behaviour-preservation proofs |
+| `docs/DECISIONS.md` | append a decision when a design choice is not self-evident |
 
 ## Known blockers / risks
 
-- **Tick ordering is delicate.** `_rulesEngine.StepRules` runs *after* `_ballSolver.Step`, which is
-  exactly why the offside snapshot is stale. Reordering the tick is *not* the fix (physics and rules
-  both depend on this order); capture geometry instead.
-- **One shared RNG.** Splitting streams changes every recorded trajectory, so the existing
-  byte-identical replay tests will fail by design unless the split preserves the *existing* stream for
-  the existing consumers. Keep the legacy stream as stream 0 and derive new streams for new consumers;
-  a change of physics trajectories is a versioned behaviour change, not a refactor.
-- **46 files of audit regressions** pin current behaviour. Any refactor that "tidies" a formula will
-  break them; that is the suite working, not an obstacle to route around.
-- **41.7 KB allocated per tick** (measured) is the headroom A1 extraction must not enlarge.
+- **Any change to candidate generation risks changing decisions.** The safe pattern used so far is:
+  one commit for the pure refactor, a test that the same scenario produces the same 240-tick state
+  before/after, and only then a behaviour change.
+- **`IndividualAI.cs` is 1 340 lines.** A1.1 extraction is the moment to split it, but only in
+  behaviour-preserving moves (perception → its own file, candidate generation → its own file). Do not
+  restructure and re-tune in the same commit.
+- **41.3 KB allocated per tick** — unchanged by A1.3/A1.4. New per-candidate arrays will make it worse;
+  reuse buffers as `ContactGeometrySnapshot` does.
+- **Trajectory versioning.** `SimulationVersion.AiBehaviour` must be incremented for anything that
+  changes trajectories, and artifacts re-captured with the new tag. Do not compare across versions.
 - No git identity is configured globally on this machine.
 
 ## Important decisions
 
-- A0's two deferred items (rendered clips → A9.4, per-phase tick breakdown → A9.3) are recorded in
-  `TASKS.md` with reasons; do not silently drop them.
-- Controller decisions are traced by reading `TacticalUtilityAiController.LastCandidates` at the engine
-  level rather than by adding a callback to the controller. Keep the engine as the single observer until
-  A1.2 introduces a real intent object.
-- Scenario ownership is seeded directly, never faked with a synthetic contact event (a fake contact would
-  also fire statistics and rule handlers).
-- `MatchRulesEngine.StartScenario` takes primitives, not a `MatchScenario`, to keep the rules engine free
-  of the scenario type.
+- Laws geometry is frozen at the play (`ContactGeometrySnapshot`), not fixed by reordering the tick.
+  Physics-then-rules order is load-bearing for boundary and goal handling.
+- Passing no snapshot keeps the legacy live-state path, so standalone rule probes and older unit tests
+  remain valid. A test pins that fallback.
+- The RNG split is a declared version bump, not a silent change; cross-version trajectory identity is
+  explicitly not required (same-version command replay still is).
+- The decision stream (`RandomStream.Decision`) is reserved but unused, so its seed never has to move.
+- Scenario fixtures live in the simulation assembly (not the test assembly) because the CLI and the
+  suite must run the same fragment.
 
 ## What not to redo
 
-- Do not re-run the baseline suite, the tactical gate or the perf sample to confirm them — all recorded
-  for 2026-11-12 under `artifacts/advanced-ai/`.
+- Do not re-run the baseline suite, tactical gate, 11v11 match or perf sample to confirm recorded
+  numbers — all four are in `artifacts/advanced-ai/` for 2026-11-12 under tags `ai1` and `ai2-rs1`.
 - Do not re-read the planning document end to end; read the A1 section only.
-- Do not add tactical assertions to scenario tests yet; the trace exists, but the behaviours it would
-  assert (support, cover, timing) are A3–A6 work.
-- Do not "fix" the wide/shirt-keyed anchors — A3.3 owns structural ownership.
-- Do not delete or weaken any of the 246 tests to make a refactor pass.
+- Do not add tactical assertions to scenario tests yet (behaviours are A3–A6 work).
+- Do not "fix" shirt-keyed anchors or the 5-a-side table for unbalanced sides — A3 owns structure.
+- Do not weaken any of the 260 tests to make a refactor pass.

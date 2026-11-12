@@ -161,7 +161,7 @@ public static class Program
         double allocatedPerTick = (double)(allocatedAfter - allocatedBefore) / measureTicks;
 
         Console.WriteLine("=== Advanced-AI performance sample (11v11, 22 active players) ===");
-        Console.WriteLine($"Build                  : {typeof(MatchSimulationEngine).Assembly.GetName().Version}");
+        Console.WriteLine($"Simulation version     : {SimulationVersion.Tag}");
         Console.WriteLine($"Runtime                : {Environment.Version} | {Environment.OSVersion}");
         Console.WriteLine($"CPU                    : {Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER")}");
         Console.WriteLine($"Ticks                  : {warmupTicks} warm-up + {measureTicks} measured");
@@ -242,6 +242,7 @@ public static class Program
         var a = engine.Analytics;
 
         Console.WriteLine($"=== {playersPerTeam}v{playersPerTeam} Headless Match in {sw.ElapsedMilliseconds} ms ===");
+        Console.WriteLine($"Simulation version: {SimulationVersion.Tag} (seed {seed})");
         Console.WriteLine($"Status            : {(completed ? "FULL TIME" : $"INCOMPLETE — tick cap {maxTicks} reached")}" +
                           $" | phase {engine.Rules.Phase} | period {engine.Rules.Period}");
         Console.WriteLine($"Tick / Clock      : tick {engine.CurrentTick} | clock {engine.Rules.MatchClockSeconds:F1}s of {halfDurationSeconds * 2f:F0}s");

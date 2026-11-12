@@ -272,6 +272,76 @@ public readonly record struct MatchRuleEvent(
     public bool IsOwnGoal => OwnGoalPlayerId.HasValue;
 }
 
+/// <summary>
+/// The world as it stood when the ball was played, captured by the engine before the physics step and
+/// handed to the rules engine with the tick's contacts.
+///
+/// Why it exists: <see cref="MatchRulesEngine.StepRules"/> runs *after* <c>BallPhysicsSolver.Step</c>,
+/// so the live <see cref="BallState"/> has already moved when a contact is judged. A laws decision
+/// read from a post-integration ball is decided by where the ball is going, not by where it was played.
+///
+/// The buffer is reused: <see cref="Capture"/> overwrites a preallocated array, so turning this on
+/// costs no per-tick allocation. Player geometry is recorded even though locomotion and contact
+/// resolution currently happen in one call, because A1.2 moves kicks to the intent executor and the
+/// positions can then legitimately differ between the play and the rules pass.
+/// </summary>
+public sealed class ContactGeometrySnapshot
+{
+    private readonly int[] _playerIds;
+    private readonly TeamId[] _playerTeams;
+    private readonly Vector3[] _playerPositions;
+    private readonly bool[] _playerActive;
+
+    public ContactGeometrySnapshot(int capacity = 24)
+    {
+        if (capacity < 1) throw new ArgumentOutOfRangeException(nameof(capacity), capacity, "Capacity must be positive.");
+        _playerIds = new int[capacity];
+        _playerTeams = new TeamId[capacity];
+        _playerPositions = new Vector3[capacity];
+        _playerActive = new bool[capacity];
+    }
+
+    /// <summary>True once <see cref="Capture"/> ran for the current tick.</summary>
+    public bool IsCaptured { get; private set; }
+
+    public int Tick { get; private set; }
+    public Vector3 BallPosition { get; private set; }
+    public int Count { get; private set; }
+
+    public void Reset()
+    {
+        IsCaptured = false;
+        Tick = 0;
+        BallPosition = default;
+        Count = 0;
+    }
+
+    /// <summary>Overwrites the buffer with the players and ball position of one play.</summary>
+    public void Capture(int tick, IReadOnlyList<FootballerState> players, Vector3 ballPosition)
+    {
+        Tick = tick;
+        BallPosition = ballPosition;
+        Count = 0;
+
+        for (int i = 0; i < players.Count && Count < _playerIds.Length; i++)
+        {
+            FootballerState player = players[i];
+            _playerIds[Count] = player.Id;
+            _playerTeams[Count] = player.Team;
+            _playerPositions[Count] = player.Position;
+            _playerActive[Count] = player.IsActiveOnPitch;
+            Count++;
+        }
+
+        IsCaptured = true;
+    }
+
+    public int PlayerIdAt(int index) => _playerIds[index];
+    public TeamId TeamAt(int index) => _playerTeams[index];
+    public Vector3 PositionAt(int index) => _playerPositions[index];
+    public bool IsActiveAt(int index) => _playerActive[index];
+}
+
 public sealed class MatchRulesEngine
 {
     private readonly PitchDimensions _pitch;
@@ -429,7 +499,8 @@ public sealed class MatchRulesEngine
         BallState ball,
         float halfDurationSeconds,
         float dt,
-        IReadOnlyList<BallContactEvent>? contactEvents = null)
+        IReadOnlyList<BallContactEvent>? contactEvents = null,
+        ContactGeometrySnapshot? contactGeometry = null)
     {
         if (Phase == MatchPhase.FullTime)
             return;
@@ -462,7 +533,7 @@ public sealed class MatchRulesEngine
             return;
         }
 
-        if (contactEvents is { Count: > 0 } && ProcessContactEvents(contactEvents, players, ball, homeDirX))
+        if (contactEvents is { Count: > 0 } && ProcessContactEvents(contactEvents, players, ball, homeDirX, contactGeometry))
             return;
 
         TryResolveBoundaryEvent(ball, players, homeDirX);
@@ -696,7 +767,8 @@ public sealed class MatchRulesEngine
         IReadOnlyList<BallContactEvent> contacts,
         IReadOnlyList<FootballerState> players,
         BallState ball,
-        float homeDirX)
+        float homeDirX,
+        ContactGeometrySnapshot? contactGeometry)
     {
         foreach (var contact in contacts)
         {
@@ -717,13 +789,18 @@ public sealed class MatchRulesEngine
                 TeamId defendingTeam = contact.Team == TeamId.Home ? TeamId.Away : TeamId.Home;
                 // Audit F14: an offside offence is restarted with an INDIRECT free kick, so the ball
                 // must be touched again before a goal can count (see StepRules).
+                // The spot is where the offence happened — the touch — not where the ball has since
+                // been integrated to (A1.4).
+                Vector3 offenceSpot = contactGeometry is { IsCaptured: true }
+                    ? contactGeometry.BallPosition
+                    : contact.BallPosition;
                 TriggerSetPiece(MatchPhase.FreeKick, defendingTeam,
-                    new Vector3(ball.Position.X, _ballRadius, ball.Position.Z), players, ball,
+                    new Vector3(offenceSpot.X, _ballRadius, offenceSpot.Z), players, ball,
                     $"Offside against Player #{contact.PlayerId}", RestartKind.IndirectFreeKick);
                 return true;
             }
 
-            bool armsSecondTouch = ApplyContactToOffsidePhase(contact, players, ball, homeDirX);
+            bool armsSecondTouch = ApplyContactToOffsidePhase(contact, players, ball, homeDirX, contactGeometry);
 
             // Any touch other than the restart kick itself satisfies an indirect restart's
             // second-touch requirement, after which a goal is allowed again.
@@ -743,7 +820,8 @@ public sealed class MatchRulesEngine
         BallContactEvent contact,
         IReadOnlyList<FootballerState> players,
         BallState ball,
-        float homeDirX)
+        float homeDirX,
+        ContactGeometrySnapshot? contactGeometry)
     {
         // Law 11 restart exemptions: no offside offence can be committed from a throw-in, a goal
         // kick or a corner kick, so the restarting team's receivers are deliberately not snapshot.
@@ -756,7 +834,7 @@ public sealed class MatchRulesEngine
                 return false;
             }
 
-            SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX);
+            SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX, contactGeometry);
 
             if (RestartRules.RequiresSecondTouchBeforeGoal(contact.RestartOrigin))
             {
@@ -782,7 +860,7 @@ public sealed class MatchRulesEngine
         {
             // A kick or a tackle is a deliberate play: it ends the previous offside phase and opens
             // a new one for the team that just played the ball.
-            SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX);
+            SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX, contactGeometry);
         }
 
         return false;
@@ -805,23 +883,54 @@ public sealed class MatchRulesEngine
         TeamId passerTeam,
         IReadOnlyList<FootballerState> players,
         BallState ball,
-        float homeDirX)
+        float homeDirX,
+        ContactGeometrySnapshot? contactGeometry)
     {
         _lastPassTeam = passerTeam;
         _playersInOffsidePositionAtLastPass.Clear();
 
         float attackDirX = passerTeam == TeamId.Home ? homeDirX : -homeDirX;
 
+        // A1.4: judge the play by the geometry that existed when the ball was played. Without a
+        // snapshot this falls back to live state, which is what every pre-A1.4 caller and test does.
+        bool useSnapshot = contactGeometry is { IsCaptured: true };
+
         var oppCoords = new List<float>();
-        foreach (var p in players)
+        if (useSnapshot)
         {
-            if (!p.IsActiveOnPitch || p.Team == passerTeam) continue;
-            oppCoords.Add(p.Position.X * attackDirX);
+            for (int i = 0; i < contactGeometry!.Count; i++)
+            {
+                if (!contactGeometry.IsActiveAt(i) || contactGeometry.TeamAt(i) == passerTeam) continue;
+                oppCoords.Add(contactGeometry.PositionAt(i).X * attackDirX);
+            }
         }
+        else
+        {
+            foreach (var p in players)
+            {
+                if (!p.IsActiveOnPitch || p.Team == passerTeam) continue;
+                oppCoords.Add(p.Position.X * attackDirX);
+            }
+        }
+
         oppCoords.Sort();
         float secondLastOpponentProj = oppCoords.Count >= 2 ? oppCoords[^2] : _pitch.HalfLength;
-        float ballProj = ball.Position.X * attackDirX;
+        Vector3 ballAtPlay = useSnapshot ? contactGeometry!.BallPosition : ball.Position;
+        float ballProj = ballAtPlay.X * attackDirX;
         float offsideLineProj = MathF.Max(0f, MathF.Max(secondLastOpponentProj, ballProj));
+
+        if (useSnapshot)
+        {
+            for (int i = 0; i < contactGeometry!.Count; i++)
+            {
+                if (!contactGeometry.IsActiveAt(i) || contactGeometry.TeamAt(i) != passerTeam) continue;
+                if (contactGeometry.PlayerIdAt(i) == passerId) continue;
+                if (contactGeometry.PositionAt(i).X * attackDirX > offsideLineProj + 0.15f)
+                    _playersInOffsidePositionAtLastPass.Add(contactGeometry.PlayerIdAt(i));
+            }
+
+            return;
+        }
 
         foreach (var mate in players)
         {

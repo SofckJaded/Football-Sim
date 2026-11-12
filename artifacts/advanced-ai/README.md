@@ -81,6 +81,59 @@ expanded utility set affordable. The allocation figure is the opposite story —
 is the first thing A9.3 has to fix before A2–A6 start caching per-player spatial data. See
 `docs/KNOWN_ISSUES.md`.
 
+## 2026-11-12 — A1.3/A1.4 re-baseline (simulation version `ai2-rs1`)
+
+A1.4 (contact-time offside geometry) and A1.3 (split perception/execution random streams) change
+behaviour by design, so the A0 baseline above is **no longer the current build**. The version tag
+`SimulationVersion.Tag` (`ai2-rs1`) is printed by every headless run and is the key for comparing
+artifacts: **only same-version numbers are comparable.**
+
+### What changed and why the numbers moved
+
+- A1.4: offside, and the offside free-kick spot, are judged from a `ContactGeometrySnapshot` captured
+  before the physics step. Previously the offside line was drawn from a ball position the physics had
+  already advanced, so a long pass could lift the line past a genuinely offside attacker.
+- A1.3: perception draws from its own derived stream. Trajectories therefore differ from
+  `ai1` everywhere, not only where offside matters.
+
+### 11v11 headless match — `a1-rng-split-11v11-2026-11-12.txt`
+
+| Metric | ai1 (A0 baseline) | ai2-rs1 |
+| :--- | :--- | :--- |
+| Wall time | 22 024 ms | 25 310 ms |
+| Ticks | 326 152 | 326 306 |
+| Score | 25 – 10 | 29 – 17 |
+| Possession | 47.0 / 53.0 | 50.6 / 49.4 |
+| Controlled ball | 43.3 / 56.7 | 48.6 / 51.4 |
+| Passes | 812 / 767 (86 % / 90 %) | 869 / 830 (88 % / 88 %) |
+| Shots | 96 / 69 | 120 / 59 |
+| Width | 42.4 / 41.7 m | 42.7 / 40.7 m |
+| Kicks executed | 1767 / 1938 | 1897 / 2087 |
+
+The wider scoreline is a property of the current AI, not a regression from these two changes in
+isolation: both teams still reach full time, both still play, and the tactical gate below still passes.
+
+### Performance — `a1-rng-split-perf-2026-11-12.txt`
+
+| Metric | ai1 | ai2-rs1 |
+| :--- | :--- | :--- |
+| Per-tick mean | 101.7 µs | 113.0 µs |
+| p50 / p95 | 68.5 / 273.6 µs | 70.5 / 292.9 µs |
+| p99 / max | 343.3 / 963.7 µs | 421.9 / 1091.2 µs |
+| Allocated per tick | 41 727 B | 41 300 B |
+
+The ≈ 11 µs/tick increase is the contact-geometry capture plus the extra stream. Allocation did not
+grow, which is the important part: the snapshot reuses a preallocated buffer. Still ~40× inside the
+60 Hz budget; the allocation figure remains the open issue (`docs/KNOWN_ISSUES.md`).
+
+### Tactical differentiation gate — `a1-rng-split-tactical-gate-2026-11-12.txt`
+
+5 seeds × 240 s: all reached full time, all played, the possession side was wider on **5/5** seeds,
+mean width separation **2.64 m** (was 1.92 m under `ai1`). **GATE: PASS.** The gate was re-run rather
+than assumed because a new random stream is exactly the kind of change that can flip a marginal gate.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

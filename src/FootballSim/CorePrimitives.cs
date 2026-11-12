@@ -101,12 +101,88 @@ public sealed class SeededRandom
     }
 }
 
+/// <summary>
+/// Independent random consumers in one match. One shared <see cref="SeededRandom"/> used to mean that
+/// adding a perception query (or a diagnostic probe that observed the ball) shifted every subsequent
+/// physics sample: two features could never be developed without invalidating each other's replays.
+/// </summary>
+public enum RandomStream
+{
+    /// <summary>
+    /// Physical execution: contact arbitration, first touch, tackles, keeper saves. This is the stream a
+    /// command-only replay must reproduce, so nothing else may draw from it.
+    /// </summary>
+    Execution = 0,
+
+    /// <summary>Perception: observation noise, later scanning uncertainty and attention jitter.</summary>
+    Perception = 1,
+
+    /// <summary>
+    /// Decision uncertainty: reservation or intent-conversion noise. Reserved now so that the derived
+    /// seeds of the existing streams never have to move when it starts being used.
+    /// </summary>
+    Decision = 2
+}
+
+/// <summary>
+/// Derives a match-local random stream from the match seed.
+///
+/// The mixer is SplitMix64's finalizer over <c>seed + golden-ratio * (ordinate + 1)</c>. It only has to
+/// satisfy two properties, and both are tested: the same (seed, ordinate) always yields the same value,
+/// and different ordinates yield different streams. It is deliberately not cryptographic — a football
+/// match's replay identity is versioned, not secret.
+/// </summary>
+public static class RandomStreams
+{
+    /// <summary>Golden-ratio increment used to separate stream ordinates before mixing.</summary>
+    private const ulong OrdinateStride = 0x9E3779B97F4A7C15UL;
+
+    /// <summary>Creates the stream for <paramref name="stream"/> under <paramref name="matchSeed"/>.</summary>
+    public static SeededRandom Create(ulong matchSeed, RandomStream stream) =>
+        new(Derive(matchSeed, stream));
+
+    /// <summary>
+    /// The seed <paramref name="stream"/> would start from. Exposed because diagnostics record it, and
+    /// because a replay tool has to be able to rebuild one stream without rebuilding the match.
+    /// </summary>
+    public static ulong Derive(ulong matchSeed, RandomStream stream)
+    {
+        ulong z = matchSeed + OrdinateStride * ((ulong)stream + 1UL);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9UL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBUL;
+        z ^= z >> 31;
+        return z == 0UL ? OrdinateStride : z;
+    }
+}
+
 public enum TeamId
 {
     Home = 0,
     Away = 1
 }
 
+/// <summary>
+/// Behavioural version of the simulation. Two builds with different values are not required to produce
+/// identical trajectories, so every recorded artifact states it.
+///
+/// History:
+/// <list type="bullet">
+/// <item><c>AiBehaviour 1</c> — everything up to and including A0: one shared random stream.</item>
+/// <item><c>AiBehaviour 2</c> — A1.3: perception and execution draw from separate derived streams, so
+/// trajectories differ from version 1 by construction.</item>
+/// </list>
+/// </summary>
+public static class SimulationVersion
+{
+    /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
+    public const int AiBehaviour = 2;
+
+    /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
+    public const int RandomStreamsDerivation = 1;
+
+    /// <summary>Compact tag for artifacts, e.g. <c>ai2-rs1</c>.</summary>
+    public static string Tag => $"ai{AiBehaviour}-rs{RandomStreamsDerivation}";
+}
 public enum TacticalRole
 {
     Goalkeeper,

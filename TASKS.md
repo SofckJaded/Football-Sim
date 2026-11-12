@@ -12,7 +12,7 @@ Legend: `[ ]` not started · `[~]` in progress (details in `PROGRESS.md`) · `[x
 | Milestone | State | Tasks |
 | :--- | :--- | :--- |
 | A0 Baseline + scenario harness | **complete** | 5 / 5 |
-| A1 Runtime seams | not started | 0 / 5 |
+| A1 Runtime seams | **in progress** | 2 / 5 |
 | A2 Spatial foundations | not started | 0 / 6 |
 | A3 Team context + responsibilities | not started | 0 / 6 |
 | A4 Carrier decisions | not started | 0 / 6 |
@@ -79,10 +79,20 @@ Primary files: `MatchEngine.cs`, `CorePrimitives.cs`, `IndividualAI.cs`, `Simula
   config, stable candidate keys, bounded trace buffers, explicit reset hooks.
 - [ ] **A1.2** Controller-owned intent executor; keep current decision cadence initially. Scheduling behind
   a feature switch only after command/contact behaviour is pinned.
-- [ ] **A1.3** Separate RNG streams; extend command replay coverage before any cadence/noise change.
-  Interleaved matches and diagnostics-on/off stay isolated.
-- [ ] **A1.4** Capture offside geometry at the contact instead of reading an advanced ball position.
+- [x] **A1.3** Separate RNG streams; extend command replay coverage before any cadence/noise change.
+  Interleaved matches and diagnostics-on/off stay isolated. — *`RandomStream` + `RandomStreams.Derive`
+  (SplitMix64 finalizer over `seed + goldenRatio*(stream+1)`); engine now owns `_executionRng` and
+  `_perceptionRng`; `SimulationVersion.Tag = ai2-rs1`. 9 tests in `RandomStreamTests` including
+  "perception draws do not change the execution sequence" and interleaved-match isolation. Behaviour
+  change accepted and re-baselined: tactical gate re-run → PASS (5/5 seeds, mean width separation
+  2.64 m), 11v11 re-captured (29–17).*
+- [x] **A1.4** Capture offside geometry at the contact instead of reading an advanced ball position.
   Preserve event ordering, restart-origin stamping, deliberate-play/save distinctions, exemption tests.
+  — *`ContactGeometrySnapshot` (preallocated, reused; ball + player geometry captured before the physics
+  step) threaded through `StepRules`/`ProcessContactEvents`/`ApplyContactToOffsidePhase`/
+  `SnapshotOffsidePositions`; the offside free-kick spot uses the contact geometry too. Passing no
+  snapshot keeps the legacy live-state path. 5 tests in `ContactTimeOffsideTests`, the key one being
+  "offside verdict does not change when the ball moves after the contact".*
 - [ ] **A1.5** Reset handling for restart, halftime/direction reversal, full time, player removal, training
   reset, controller replacement — clear memory, caches, intent, queued calls, contracts explicitly.
 

@@ -5,6 +5,43 @@ changed, where, and what proves it. Details that a future session needs go in `R
 
 ---
 
+## 2026-11-12 — Session 1, batch 3: A1.4 contact-time offside + A1.3 random-stream split
+
+- **A1.4 — laws judged from the play, not from the physics result.** The rules engine runs after
+  `BallPhysicsSolver.Step`, so it was drawing the offside line from a ball position the physics had
+  already advanced: a long pass could lift the line past a genuinely offside attacker, and the offside
+  free kick was placed where the ball ended up rather than where the offence happened.
+  - New `ContactGeometrySnapshot` (in `RulesAndGoalkeeper.cs`): preallocated, reused buffer holding the
+    tick, the ball position and every player's id/team/position/active flag as of the play.
+  - `MatchSimulationEngine.StepTick` captures it right after contact execution and **before**
+    `_ballSolver.Step`, then passes it to `StepRules`.
+  - `SnapshotOffsidePositions` and the offside-offence restart spot use the snapshot when present, and
+    fall back to live state when it is not — so standalone probes, dry-run rule invocations and every
+    pre-A1.4 test keep working unchanged.
+  - 5 tests (`ContactTimeOffsideTests`), including the invariant the plan asks for: **moving the ball
+    after the contact does not change the offside verdict**, plus a test that pins the old live-state
+    behaviour of the no-snapshot path so the fallback cannot silently become the main path.
+- **A1.3 — separate random streams.** One `SeededRandom` was shared by perception noise, and physical
+  execution, so any perception change shifted every later physics sample.
+  - `RandomStream` (Execution / Perception / Decision) and `RandomStreams.Derive`: SplitMix64's
+    finalizer over `seed + goldenRatio*(stream+1)`, documented and tested for determinism, separation
+    and collision-freedom over 512 consecutive seeds.
+  - Engine now owns `_executionRng` and `_perceptionRng`; the decision stream is reserved but unused so
+    its seed never has to move later.
+  - `SimulationVersion.Tag` (`ai2-rs1`) printed by every headless run, so artifacts state which
+    behaviour produced them.
+  - 9 tests (`RandomStreamTests`): derive determinism, stream separation, no state sharing, "perception
+    draws do not change the execution sequence", same-seed identity, interleaved matches, different
+    seeds diverging, scenario replay identity.
+- **Behaviour change handled explicitly, not hidden.** Both changes alter trajectories, so the tactical
+  differentiation gate was re-run rather than assumed: **PASS** (5/5 seeds, mean width separation
+  2.64 m, up from 1.92 m). 11v11 re-captured: 29–17 (was 25–10), possession 50.6/49.4. Perf re-measured:
+  mean 113.0 µs, p99 421.9 µs, allocation unchanged at 41.3 KB/tick. All recorded under
+  `artifacts/advanced-ai/` with the new version tag, and the decision records are in `docs/DECISIONS.md`.
+- **Suite: 260/260 green.**
+
+---
+
 ## 2026-11-12 — Session 1, batch 2: A0 complete (fixtures, trace, performance)
 
 - **A0.3 scenario library** — `src/FootballSim/Scenarios/ScenarioLibrary.cs`: the ten required fixtures
