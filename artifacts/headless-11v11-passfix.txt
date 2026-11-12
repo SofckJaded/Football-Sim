@@ -1,0 +1,12 @@
+=== 11v11 Headless Match in 75533 ms ===
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 326152 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 25 - 10 Away (Direct Counterattack)
+Possession Share  : Home 47.0% | Away 53.0%
+Controlled Ball   : Home 43.3% | Away 56.7%
+Passes Attempted  : Home 812 | Away 767
+Passes Completed  : Home 700 (86%) | Away 692 (90%)
+Shots Attempted   : Home 96 | Away 69
+Mean Team Width   : Home 42.4m | Away 41.7m
+Kicks (execution) : 1767 executed / 1938 requested | refused [OutOfReach, 102], [BallTooHigh, 52], [LostArbitration, 16], [FacingAway, 1]
+Events Logged     : 68

@@ -1,0 +1,16 @@
+# Audit diagnostic probe
+
+Reproduces the baseline findings documented in `docs/AUDIT_HANDOFF_2026-11-06.md` without editing production gameplay code. Uses only the existing core project and .NET 8; no extra NuGet dependencies.
+
+From `C:\Games\geminiball`:
+
+```powershell
+dotnet build tools/FootballSim.AuditProbe/FootballSim.AuditProbe.csproj
+dotnet run --project tools/FootballSim.AuditProbe --no-build > artifacts/audit-probe-2026-11-06.json
+```
+
+The JSON includes controlled moving-receiver, goalkeeper catch/hold (`keeper_catch_facing_*`, `keeper_hold_release`, `keeper_hold_tackle`), parry spin, restart period/pause, full-time, sticky taker, stale offside, live tackle, match isolation, numerical-guard, ball-ownership (`possession_deflection`), idle-human responder (`idle_human_responder`), reception-assistance scoping (`reception_assist_scope`), off-ball-job (`jobs_in_possession` with open-option count, `jobs_turnover`), human shot-aim (`human_shot_aim`, where movement/cursor aims cross the goal line), shooting-model (`shot_power_height`, `shot_types`, `shot_foot`), offside restart/contact (`offside_exempt_restarts`, `offside_deliberate_play_vs_save`, `offside_indirect_restart_goal`, `offside_direct_free_kick_goal`, `offside_engine_restart_stamp`), boundary/attribution (`boundary_classification` with the recorded crossings in time order, `boundary_whole_ball`, `goal_attribution`), player-contact (`player_contacts`: coincident centres, airborne-above-grounded, grounded overlap, head-on closing speed), presentation/config (`ball_geometry`: physics vs rendered radius; `frame_timing`: 30/60/144 FPS step counts, bounded catch-up, camera smoothing vs the legacy per-frame lerp; `config_validation`: every rejected degenerate setup with its field name; `inspector_index`: resolved inspector ids) and coverage (`recorded_replay`: 600 recorded ticks replayed with zero mismatches; `match_completion`: HalfTime → SecondHalf → terminal FullTime; `multi_seed_tactical`: four complete matches with width/pass/shot/kick metrics) scenarios. It also includes two fixed 18,000-tick match samples (AI-only and idle human #9) with possession/territory/pass/shot metrics, selected-action counts, traces around the first three goals, and a four-seed short health sample (`match_health_multi_seed`).
+
+`natural_parry_replay` replays the first parry from the human-idle sample through ball physics, retaining or clearing the original spin. The match samples report both the crude last-touch view (`defendingLastTouchGoals`, `keeperLastTouchGoals`) and the authoritative attribution added in audit F20 (`attributedScorerGoals`, `attributedOwnGoals`, plus `scorer`/`ownGoal` on each goal sample); only the latter is official, and it is kept separate from `PlayerId` (the physical last toucher).
+
+These are diagnostics, not assertions of desired behavior. A zero exit status only means the probe ran. The controlled pass scenario deliberately leaves reception assistance out to isolate the planner/ball trajectory. The collision impulse check uses reflection to inspect an existing private method; it ruled out a suspected impulse-sign issue. Do not promote defect-observation outputs into tests that require those defects to remain.

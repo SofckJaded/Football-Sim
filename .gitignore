@@ -1,0 +1,51 @@
+# ---- .NET build output ----
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.cache
+*.pdb
+*.dll
+*.exe
+
+# ---- IDE / editor ----
+.vs/
+.idea/
+*.DotSettings.user
+*.sln.DotSettings
+
+# ---- Godot ----
+.godot/
+src/FootballSim.Godot/.godot/
+export_presets.cfg
+*.translation
+*.import
+
+# ---- Test / coverage output ----
+TestResults/
+coverage*.xml
+coverage*.json
+*.coverage
+*.trx
+*.coveragexml
+*.msCoverageSourceRootsMapping_*
+
+# ---- Local scratch / logs ----
+scratch/
+tmp/
+*.tmp
+*.log
+*.orig
+*.bak
+*.rej
+
+# ---- OS junk ----
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- Historical source snapshot duplicated under artifacts/ ----
+# artifacts/baseline-<date>/ is a full copy of the tree taken by an earlier session.
+# Git history is now the source of truth for old code, so the copy is not versioned.
+artifacts/baseline-*/

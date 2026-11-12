@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://footballsimmain"]
+
+[ext_resource type="Script" path="res://MatchClientNode.cs" id="1_script"]
+
+[node name="MainMatchScene" type="Node3D"]
+script = ExtResource("1_script")

@@ -1,0 +1,4921 @@
+{
+  "moving_receiver": {
+    "plannerMaxDistance": 37.626396,
+    "plan": {
+      "Feasible": true,
+      "AimDirectionXZ": {},
+      "TargetXZ": {},
+      "Power01": 0.9,
+      "FlightTimeSeconds": 1.8000001,
+      "DistanceMeters": 22.378561
+    },
+    "commandedAim": {
+      "x": 0.88143754,
+      "y": 0,
+      "z": 0.47230056
+    },
+    "KickPower01": 0.9,
+    "closestDistanceMeters": 0.14973928,
+    "closestTimeSeconds": 1.7666668
+  },
+  "keeper_catch_facing_-1": {
+    "firstDiagnostic": "GK:CleanCatch",
+    "catchPos": {
+      "x": -52.2,
+      "y": 1.05,
+      "z": -2.6226834E-08
+    },
+    "heldByAfterCatch": 1,
+    "ownGoal": false,
+    "goalTick": 0,
+    "finalBall": {
+      "x": -37.423035,
+      "y": 3.865104,
+      "z": 5.0656657
+    },
+    "finalDiagnostic": "Kick:LoftedPass Pwr=72% Align=100%",
+    "timeline": [
+      {
+        "tick": 10,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.78087,
+          "y": 1.05,
+          "z": -0.27533072
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.38,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.40s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 20,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.600002,
+          "y": 1.05,
+          "z": 0
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.22,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.23s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 30,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.600002,
+          "y": 1.05,
+          "z": 0
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.05,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.07s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 34,
+        "keeper": {
+          "x": -51.897953,
+          "y": 0,
+          "z": 0.00071759464
+        },
+        "ball": {
+          "x": -51.194336,
+          "y": 0.2490747,
+          "z": 0.24695866
+        },
+        "velocity": {
+          "x": 16.695988,
+          "y": 8.272941,
+          "z": 5.842097
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.3,
+        "state": "Distribution",
+        "command": "GK:SafeDistribution",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 40,
+        "keeper": {
+          "x": -51.845425,
+          "y": 0,
+          "z": 0.026327882
+        },
+        "ball": {
+          "x": -49.550343,
+          "y": 1.0255834,
+          "z": 0.82220924
+        },
+        "velocity": {
+          "x": 16.202326,
+          "y": 7.284664,
+          "z": 5.6693616
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.19999999,
+        "state": "Recovering",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 50,
+        "keeper": {
+          "x": -51.621532,
+          "y": 0,
+          "z": 0.17560066
+        },
+        "ball": {
+          "x": -46.91396,
+          "y": 2.1036382,
+          "z": 1.744699
+        },
+        "velocity": {
+          "x": 15.460587,
+          "y": 5.6851373,
+          "z": 5.40982
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.03333333,
+        "state": "Recovering",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 60,
+        "keeper": {
+          "x": -51.36251,
+          "y": 0,
+          "z": 0.3974596
+        },
+        "ball": {
+          "x": -44.39403,
+          "y": 2.9192574,
+          "z": 2.6264443
+        },
+        "velocity": {
+          "x": 14.801569,
+          "y": 4.1357617,
+          "z": 5.179223
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 70,
+        "keeper": {
+          "x": -51.304485,
+          "y": 0,
+          "z": 0.45548677
+        },
+        "ball": {
+          "x": -41.97824,
+          "y": 3.4803526,
+          "z": 3.47175
+        },
+        "velocity": {
+          "x": 14.2071295,
+          "y": 2.6292162,
+          "z": 4.971223
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 80,
+        "keeper": {
+          "x": -51.32335,
+          "y": 0,
+          "z": 0.44440153
+        },
+        "ball": {
+          "x": -39.65713,
+          "y": 3.7935348,
+          "z": 4.2839313
+        },
+        "velocity": {
+          "x": 13.663582,
+          "y": 1.1617049,
+          "z": 4.78103
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 90,
+        "keeper": {
+          "x": -51.245655,
+          "y": 0,
+          "z": 0.45145494
+        },
+        "ball": {
+          "x": -37.423035,
+          "y": 3.865104,
+          "z": 5.0656657
+        },
+        "velocity": {
+          "x": 13.16215,
+          "y": -0.26798633,
+          "z": 4.6055746
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      }
+    ]
+  },
+  "keeper_catch_facing_1": {
+    "firstDiagnostic": "GK:CleanCatch",
+    "catchPos": {
+      "x": -51.600002,
+      "y": 1.05,
+      "z": 0
+    },
+    "heldByAfterCatch": 1,
+    "ownGoal": false,
+    "goalTick": 0,
+    "finalBall": {
+      "x": -37.423035,
+      "y": 3.865104,
+      "z": 5.0656657
+    },
+    "finalDiagnostic": "Kick:LoftedPass Pwr=72% Align=100%",
+    "timeline": [
+      {
+        "tick": 10,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.600002,
+          "y": 1.05,
+          "z": 0
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.38,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.40s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 20,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.600002,
+          "y": 1.05,
+          "z": 0
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.22,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.23s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 30,
+        "keeper": {
+          "x": -51.9,
+          "y": 0,
+          "z": 0
+        },
+        "ball": {
+          "x": -51.600002,
+          "y": 1.05,
+          "z": 0
+        },
+        "velocity": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "heldBy": 1,
+        "holdRemaining": 0.05,
+        "KickRecoveryTimer": 0,
+        "state": "HoldingBall",
+        "command": "GK:HoldingBall(0.07s)",
+        "execution": "GK:CleanCatch"
+      },
+      {
+        "tick": 34,
+        "keeper": {
+          "x": -51.897953,
+          "y": 0,
+          "z": 0.00071759464
+        },
+        "ball": {
+          "x": -51.194336,
+          "y": 0.2490747,
+          "z": 0.24695866
+        },
+        "velocity": {
+          "x": 16.695988,
+          "y": 8.272941,
+          "z": 5.842097
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.3,
+        "state": "Distribution",
+        "command": "GK:SafeDistribution",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 40,
+        "keeper": {
+          "x": -51.845425,
+          "y": 0,
+          "z": 0.026327882
+        },
+        "ball": {
+          "x": -49.550343,
+          "y": 1.0255834,
+          "z": 0.82220924
+        },
+        "velocity": {
+          "x": 16.202326,
+          "y": 7.284664,
+          "z": 5.6693616
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.19999999,
+        "state": "Recovering",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 50,
+        "keeper": {
+          "x": -51.621532,
+          "y": 0,
+          "z": 0.17560066
+        },
+        "ball": {
+          "x": -46.91396,
+          "y": 2.1036382,
+          "z": 1.744699
+        },
+        "velocity": {
+          "x": 15.460587,
+          "y": 5.6851373,
+          "z": 5.40982
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0.03333333,
+        "state": "Recovering",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 60,
+        "keeper": {
+          "x": -51.36251,
+          "y": 0,
+          "z": 0.3974596
+        },
+        "ball": {
+          "x": -44.39403,
+          "y": 2.9192574,
+          "z": 2.6264443
+        },
+        "velocity": {
+          "x": 14.801569,
+          "y": 4.1357617,
+          "z": 5.179223
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 70,
+        "keeper": {
+          "x": -51.304485,
+          "y": 0,
+          "z": 0.45548677
+        },
+        "ball": {
+          "x": -41.97824,
+          "y": 3.4803526,
+          "z": 3.47175
+        },
+        "velocity": {
+          "x": 14.2071295,
+          "y": 2.6292162,
+          "z": 4.971223
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 80,
+        "keeper": {
+          "x": -51.32335,
+          "y": 0,
+          "z": 0.44440153
+        },
+        "ball": {
+          "x": -39.65713,
+          "y": 3.7935348,
+          "z": 4.2839313
+        },
+        "velocity": {
+          "x": 13.663582,
+          "y": 1.1617049,
+          "z": 4.78103
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      },
+      {
+        "tick": 90,
+        "keeper": {
+          "x": -51.245655,
+          "y": 0,
+          "z": 0.45145494
+        },
+        "ball": {
+          "x": -37.423035,
+          "y": 3.865104,
+          "z": 5.0656657
+        },
+        "velocity": {
+          "x": 13.16215,
+          "y": -0.26798633,
+          "z": 4.6055746
+        },
+        "heldBy": null,
+        "holdRemaining": 0,
+        "KickRecoveryTimer": 0,
+        "state": "Positioning",
+        "command": "GK:AngleBisect",
+        "execution": "Kick:LoftedPass Pwr=72% Align=100%"
+      }
+    ]
+  },
+  "keeper_hold_release": {
+    "releaseTick": 34,
+    "releaseCommand": "GK:PassTo#6",
+    "releasedTo": 6,
+    "keeperKicks": 1,
+    "heldAtEnd": null,
+    "finalBall": {
+      "x": -33.525635,
+      "y": 0.11,
+      "z": -6.8892107
+    },
+    "finalVelocity": {
+      "x": 2.4626198,
+      "y": 0,
+      "z": -0.32510847
+    }
+  },
+  "keeper_hold_tackle": {
+    "heldAfterCatch": 1,
+    "heldAtEnd": 1,
+    "lastTouchedBy": 1,
+    "keeperDiagnostic": "GK:CleanCatch",
+    "opponentDiagnostic": "Idle"
+  },
+  "parry_spin_0": {
+    "LastExecutionDiagnostic": "GK:ReflexParry",
+    "parryVelocity": {
+      "x": 5.485963,
+      "y": 1.4,
+      "z": 4.6630683
+    },
+    "mostGoalwardVelocity": 0,
+    "crossedOwnGoal": false,
+    "finalBall": {
+      "x": -42.3159,
+      "y": 0.11,
+      "z": 7.3814983
+    }
+  },
+  "parry_spin_24": {
+    "LastExecutionDiagnostic": "GK:ReflexParry",
+    "parryVelocity": {
+      "x": 5.485963,
+      "y": 1.4,
+      "z": 4.6630683
+    },
+    "mostGoalwardVelocity": 0,
+    "crossedOwnGoal": false,
+    "finalBall": {
+      "x": -42.3159,
+      "y": 0.11,
+      "z": 7.3814983
+    }
+  },
+  "parry_spin_120": {
+    "LastExecutionDiagnostic": "GK:ReflexParry",
+    "parryVelocity": {
+      "x": 5.485963,
+      "y": 1.4,
+      "z": 4.6630683
+    },
+    "mostGoalwardVelocity": 0,
+    "crossedOwnGoal": false,
+    "finalBall": {
+      "x": -42.3159,
+      "y": 0.11,
+      "z": 7.3814983
+    }
+  },
+  "collision": {
+    "initialClosingSpeed": 2,
+    "finalClosingSpeed": 1.1
+  },
+  "restart_half_1": {
+    "secondHalf": "SecondHalf",
+    "duringRestartDirection": -1,
+    "resumedPhase": "SecondHalf",
+    "resumedDirection": -1
+  },
+  "restart_half_2700": {
+    "secondHalf": "SecondHalf",
+    "duringRestartDirection": -1,
+    "resumedPhase": "SecondHalf",
+    "resumedDirection": -1
+  },
+  "human_call_for_pass": {
+    "presses": 120,
+    "ticksWithCall": 2694,
+    "share": 0.748,
+    "throughCalls": false
+  },
+  "call_for_pass_accuracy": {
+    "closestMeters": 0.7494323,
+    "power": 0.7
+  },
+  "after_fulltime": {
+    "phase": "FullTime",
+    "moved": false
+  },
+  "restart_pause": {
+    "phase": "ThrowIn",
+    "PhasePauseTimer": 0.23333333,
+    "ballVelocity": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "ballMovedDuringPause": false
+  },
+  "sticky_kickoff_taker": {
+    "DesignatedSetPieceTakerId": null,
+    "ballLastTouchedBy": 11,
+    "phase": "FirstHalf"
+  },
+  "stale_offside": {
+    "receiverOnsideAtPass": true,
+    "actualPhase": "FirstHalf",
+    "lastEvent": "First Half Kickoff"
+  },
+  "close_human_tackle": {
+    "distanceMeters": 0.6,
+    "RequestTackle": true
+  },
+  "cross_match_call_reset": {
+    "callerBeforeCreatingOtherMatch": 9,
+    "callerAfterCreatingOtherMatch": 9
+  },
+  "override_lock": {
+    "noHumanConfigLateHumanOverride": "InvalidOperationException: Cannot switch human control to another footballer during an active match.",
+    "noHumanConfigLateReplayOverride": "InvalidOperationException: Cannot switch human control to another footballer during an active match.",
+    "wrongPlayerHumanController": "InvalidOperationException: Pre-match lock violation: a HumanInputController locked to Player #6 cannot control Player #5.",
+    "unknownPlayerId": "ArgumentOutOfRangeException: No footballer with id 999 is part of this match. (Parameter \u0027playerId\u0027)\r\nActual value was 999.",
+    "replaceLockedHumanController": "ok",
+    "lockedReferenceUpdated": true,
+    "lockedPlayerToAiAfterKickoff": "InvalidOperationException: Cannot hand the locked human player (#5) to a non-human controller during an active match; the human lock is chosen before kickoff."
+  },
+  "nonfinite_guards": {
+    "keeperGeneratedNonFiniteMove": false,
+    "ballStillNonFiniteZ": false
+  },
+  "possession_deflection": {
+    "afterHomeControl": "Home",
+    "controlStateAfterHomeControl": "Controlled",
+    "afterAwayParry": "Home",
+    "stateAfterParry": "Loose",
+    "afterAwayClearance": "Away",
+    "ballSpeed": 6.0827627
+  },
+  "idle_human_responder": {
+    "electedResponder": 10,
+    "humanIsNearest": true,
+    "offered": [
+      "InterceptPassRay"
+    ]
+  },
+  "reception_assist_scope": {
+    "noPass": {
+      "intendedZ": 1.656,
+      "bystanderZ": 2.656
+    },
+    "incomingPass": {
+      "intendedZ": 0.744,
+      "bystanderZ": 2.656
+    },
+    "humanReceiverRunningAway": {
+      "intendedZ": 1.656,
+      "bystanderZ": 2.656
+    }
+  },
+  "match_health_multi_seed": [
+    {
+      "seed": 20260818,
+      "goals": "1-0",
+      "passes": 33,
+      "passCompletions": 32,
+      "shots": 5,
+      "possessionHome": 0.491,
+      "controlledPossessionHome": 0.393,
+      "homeTerritoryX": 0.7,
+      "awayTerritoryX": 5
+    },
+    {
+      "seed": 31337,
+      "goals": "1-0",
+      "passes": 35,
+      "passCompletions": 32,
+      "shots": 5,
+      "possessionHome": 0.564,
+      "controlledPossessionHome": 0.587,
+      "homeTerritoryX": 20.9,
+      "awayTerritoryX": -9.8
+    },
+    {
+      "seed": 777,
+      "goals": "0-0",
+      "passes": 35,
+      "passCompletions": 32,
+      "shots": 2,
+      "possessionHome": 0.509,
+      "controlledPossessionHome": 0.447,
+      "homeTerritoryX": 6.2,
+      "awayTerritoryX": 1.2
+    },
+    {
+      "seed": 4242,
+      "goals": "0-1",
+      "passes": 41,
+      "passCompletions": 34,
+      "shots": 2,
+      "possessionHome": 0.498,
+      "controlledPossessionHome": 0.502,
+      "homeTerritoryX": 4.1,
+      "awayTerritoryX": 3.6
+    }
+  ],
+  "jobs_in_possession": {
+    "jobs": [
+      {
+        "Id": 2,
+        "job": "Overlap",
+        "anchor": {
+          "x": 7,
+          "z": 31
+        }
+      },
+      {
+        "Id": 3,
+        "job": "Shape",
+        "anchor": {
+          "x": -8,
+          "z": -18
+        }
+      },
+      {
+        "Id": 4,
+        "job": "DefensiveCover",
+        "anchor": {
+          "x": -10.8,
+          "z": 7.9
+        }
+      },
+      {
+        "Id": 5,
+        "job": "Shape",
+        "anchor": {
+          "x": -20,
+          "z": -6
+        }
+      },
+      {
+        "Id": 6,
+        "job": "NearOutlet",
+        "anchor": {
+          "x": -5,
+          "z": 3
+        }
+      },
+      {
+        "Id": 7,
+        "job": "Shape",
+        "anchor": {
+          "x": 10,
+          "z": 26
+        }
+      },
+      {
+        "Id": 8,
+        "job": "BallResponder",
+        "anchor": {
+          "x": 0,
+          "z": 10
+        }
+      },
+      {
+        "Id": 9,
+        "job": "DepthRun",
+        "anchor": {
+          "x": 28,
+          "z": 0
+        }
+      },
+      {
+        "Id": 10,
+        "job": "ThirdPlayerOption",
+        "anchor": {
+          "x": 12,
+          "z": 1
+        }
+      },
+      {
+        "Id": 11,
+        "job": "FarSideWidth",
+        "anchor": {
+          "x": 6,
+          "z": -31
+        }
+      }
+    ],
+    "openOptions": 8
+  },
+  "jobs_turnover": {
+    "home": [
+      {
+        "Id": 2,
+        "job": "DefensiveLine",
+        "anchorX": -8
+      },
+      {
+        "Id": 3,
+        "job": "DefensiveLine",
+        "anchorX": -8
+      },
+      {
+        "Id": 4,
+        "job": "CoverDefender",
+        "anchorX": -13
+      },
+      {
+        "Id": 5,
+        "job": "DefensiveLine",
+        "anchorX": -20
+      },
+      {
+        "Id": 6,
+        "job": "Presser",
+        "anchorX": 4
+      },
+      {
+        "Id": 7,
+        "job": "Shape",
+        "anchorX": 10
+      },
+      {
+        "Id": 8,
+        "job": "Shape",
+        "anchorX": 0
+      },
+      {
+        "Id": 9,
+        "job": "Shape",
+        "anchorX": 18
+      },
+      {
+        "Id": 10,
+        "job": "Shape",
+        "anchorX": 6
+      },
+      {
+        "Id": 11,
+        "job": "Shape",
+        "anchorX": 10
+      }
+    ],
+    "away": [
+      {
+        "Id": 13,
+        "job": "DefensiveCover",
+        "anchorX": 14.9
+      },
+      {
+        "Id": 14,
+        "job": "Shape",
+        "anchorX": 20
+      },
+      {
+        "Id": 15,
+        "job": "BallResponder",
+        "anchorX": 12
+      },
+      {
+        "Id": 16,
+        "job": "Shape",
+        "anchorX": 26
+      },
+      {
+        "Id": 17,
+        "job": "Shape",
+        "anchorX": 26
+      },
+      {
+        "Id": 18,
+        "job": "NearOutlet",
+        "anchorX": 9
+      },
+      {
+        "Id": 19,
+        "job": "Shape",
+        "anchorX": 30
+      },
+      {
+        "Id": 20,
+        "job": "Shape",
+        "anchorX": 30
+      },
+      {
+        "Id": 21,
+        "job": "Shape",
+        "anchorX": 34
+      },
+      {
+        "Id": 22,
+        "job": "Shape",
+        "anchorX": 22
+      }
+    ]
+  },
+  "human_shot_aim": {
+    "moveLeft": {
+      "aimX": 0.965,
+      "aimZ": -0.263,
+      "crossingZ": -3.3,
+      "crossingY": 0.18,
+      "onTarget": true
+    },
+    "moveRight": {
+      "aimX": 0.965,
+      "aimZ": 0.263,
+      "crossingZ": 3.32,
+      "crossingY": 0.18,
+      "onTarget": true
+    },
+    "cursorLeft": {
+      "aimX": 0.97,
+      "aimZ": -0.243,
+      "crossingZ": -3.04,
+      "crossingY": 0.18,
+      "onTarget": true
+    },
+    "cursorRight": {
+      "aimX": 0.97,
+      "aimZ": 0.243,
+      "crossingZ": 3.06,
+      "crossingY": 0.18,
+      "onTarget": true
+    }
+  },
+  "shot_power_height": [
+    {
+      "type": "Shot",
+      "power": 0.3,
+      "crossingY": 0.27,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 0.73,
+      "initialVelocity": {
+        "x": 23.999992,
+        "y": 3.933743,
+        "z": 0.018176405
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.559853,
+        "y": 0.27067745,
+        "z": 0.012238679
+      },
+      "onTarget": true,
+      "execution": "Kick:Shot Pwr=30% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 0.6,
+      "crossingY": 0.94,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 1.31,
+      "initialVelocity": {
+        "x": 25.999992,
+        "y": 5.606825,
+        "z": 0.019691104
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.75798,
+        "y": 0.9424615,
+        "z": 0.012388721
+      },
+      "onTarget": true,
+      "execution": "Kick:Shot Pwr=60% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 0.75,
+      "crossingY": 1.75,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 1.84,
+      "initialVelocity": {
+        "x": 27.499992,
+        "y": 6.828256,
+        "z": 0.02082713
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.501328,
+        "y": 1.7520505,
+        "z": 0.012194331
+      },
+      "onTarget": true,
+      "execution": "Kick:Shot Pwr=75% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 0.85,
+      "crossingY": 2.13,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 2.15,
+      "initialVelocity": {
+        "x": 28.499992,
+        "y": 7.491935,
+        "z": 0.021584481
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.644615,
+        "y": 2.12798,
+        "z": 0.012302846
+      },
+      "onTarget": true,
+      "execution": "Kick:Shot Pwr=85% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 0.9,
+      "crossingY": 1.94,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 2.32,
+      "initialVelocity": {
+        "x": 28.99999,
+        "y": 7.8437285,
+        "z": 0.021963155
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.525475,
+        "y": 1.9378166,
+        "z": 0.012430864
+      },
+      "onTarget": true,
+      "execution": "Kick:Shot Pwr=90% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 0.96,
+      "crossingY": 3.07,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 3.07,
+      "initialVelocity": {
+        "x": 29.599989,
+        "y": 9.23791,
+        "z": 0.022417564
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.81048,
+        "y": 3.074155,
+        "z": 0.012428481
+      },
+      "onTarget": false,
+      "execution": "Kick:Shot Pwr=96% Align=100% StrongFoot"
+    },
+    {
+      "type": "Shot",
+      "power": 1,
+      "crossingY": 3.73,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 3.73,
+      "initialVelocity": {
+        "x": 29.99999,
+        "y": 10.521846,
+        "z": 0.022720505
+      },
+      "initialSpin": {
+        "x": 0.009088202,
+        "y": 0,
+        "z": -11.999996
+      },
+      "finalBall": {
+        "x": 52.60261,
+        "y": 3.734943,
+        "z": 0.012271028
+      },
+      "onTarget": false,
+      "execution": "Kick:Shot Pwr=100% Align=100% StrongFoot"
+    }
+  ],
+  "shot_types": {
+    "finesse": {
+      "type": "CurledShot",
+      "power": 0.85,
+      "crossingY": 2.22,
+      "crossingZ": 1.09,
+      "maxOffLine": 2.08,
+      "maxY": 2.27,
+      "initialVelocity": {
+        "x": 25.324345,
+        "y": 7.536358,
+        "z": 4.9312916
+      },
+      "initialSpin": {
+        "x": 1.9113533,
+        "y": 55,
+        "z": -9.815638
+      },
+      "finalBall": {
+        "x": 52.568954,
+        "y": 2.2206006,
+        "z": 1.0895821
+      },
+      "onTarget": true,
+      "execution": "Kick:CurledShot Pwr=85% Align=100% StrongFoot"
+    },
+    "chip": {
+      "type": "ChipShot",
+      "power": 0.85,
+      "crossingY": 1.75,
+      "crossingZ": 0.01,
+      "maxOffLine": 0.01,
+      "maxY": 2.16,
+      "initialVelocity": {
+        "x": 18.099995,
+        "y": 6.0050445,
+        "z": 0.013708038
+      },
+      "initialSpin": {
+        "x": -0.013632303,
+        "y": 0,
+        "z": 17.999994
+      },
+      "finalBall": {
+        "x": 52.603573,
+        "y": 1.7536197,
+        "z": 0.012271773
+      },
+      "onTarget": true,
+      "execution": "Kick:ChipShot Pwr=85% Align=100% StrongFoot"
+    },
+    "trivela": {
+      "type": "TrivelaShot",
+      "power": 0.85,
+      "crossingY": 2.18,
+      "crossingZ": 0.3,
+      "maxOffLine": 1.71,
+      "maxY": 2.2,
+      "initialVelocity": {
+        "x": 28.439203,
+        "y": 7.4892917,
+        "z": 3.469033
+      },
+      "initialSpin": {
+        "x": 1.2108318,
+        "y": 50,
+        "z": -9.926423
+      },
+      "finalBall": {
+        "x": 52.680836,
+        "y": 2.1844833,
+        "z": 0.30094334
+      },
+      "onTarget": true,
+      "execution": "Kick:TrivelaShot Pwr=85% Align=100% StrongFoot"
+    },
+    "trivelaCentre": {
+      "type": "TrivelaShot",
+      "power": 0.85,
+      "crossingY": 2.19,
+      "crossingZ": -1.66,
+      "maxOffLine": 1.66,
+      "maxY": 2.2,
+      "initialVelocity": {
+        "x": 28.649992,
+        "y": 7.4985747,
+        "z": 0.021698082
+      },
+      "initialSpin": {
+        "x": 0.0075735017,
+        "y": 50,
+        "z": -9.999997
+      },
+      "finalBall": {
+        "x": 52.598743,
+        "y": 2.1897123,
+        "z": -1.6604214
+      },
+      "onTarget": true,
+      "execution": "Kick:TrivelaShot Pwr=85% Align=100% StrongFoot"
+    }
+  },
+  "shot_foot": {
+    "strongSide": {
+      "type": "Shot",
+      "power": 0.85,
+      "crossingY": 1.79,
+      "crossingZ": 11.78,
+      "maxOffLine": 0.23,
+      "maxY": 2.1,
+      "initialVelocity": {
+        "x": 23.034954,
+        "y": 7.3952346,
+        "z": 16.782162
+      },
+      "initialSpin": {
+        "x": 7.066173,
+        "y": 0,
+        "z": -9.698928
+      },
+      "finalBall": {
+        "x": 52.570164,
+        "y": 1.7870266,
+        "z": 11.780807
+      },
+      "onTarget": false,
+      "execution": "Kick:Shot Pwr=85% Align=98% StrongFoot"
+    },
+    "acrossBody": {
+      "type": "Shot",
+      "power": 0.85,
+      "crossingY": 1.79,
+      "crossingZ": -11.75,
+      "maxOffLine": 0.26,
+      "maxY": 2.1,
+      "initialVelocity": {
+        "x": 23.072016,
+        "y": 7.3947086,
+        "z": -16.731173
+      },
+      "initialSpin": {
+        "x": -7.044704,
+        "y": 0,
+        "z": -9.714533
+      },
+      "finalBall": {
+        "x": 52.596172,
+        "y": 1.7866615,
+        "z": -11.745013
+      },
+      "onTarget": false,
+      "execution": "Kick:Shot Pwr=85% Align=98% OffFoot"
+    }
+  },
+  "execution_metrics": {
+    "kickTypes": [
+      {
+        "type": "GroundPass",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "LoftedPass",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "ThroughPass",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "LobbedThroughPass",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "DrivenPass",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "Cross",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 1,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "Shot",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 1
+      },
+      {
+        "type": "CurledShot",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 1
+      },
+      {
+        "type": "ChipShot",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 1
+      },
+      {
+        "type": "TrivelaShot",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 1
+      },
+      {
+        "type": "Header",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 0
+      },
+      {
+        "type": "Clearance",
+        "contactEvents": 1,
+        "rejection": "None",
+        "passAttempts": 0,
+        "passCompletions": 0,
+        "shots": 0
+      }
+    ],
+    "outOfReach": {
+      "type": "GroundPass",
+      "contactEvents": 0,
+      "rejection": "OutOfReach",
+      "passAttempts": 0,
+      "passCompletions": 0,
+      "shots": 0
+    },
+    "facingAway": {
+      "type": "GroundPass",
+      "contactEvents": 0,
+      "rejection": "FacingAway",
+      "passAttempts": 0,
+      "passCompletions": 0,
+      "shots": 0
+    },
+    "aerialBall": {
+      "type": "Shot",
+      "contactEvents": 0,
+      "rejection": "BallTooHigh",
+      "passAttempts": 0,
+      "passCompletions": 0,
+      "shots": 0
+    },
+    "inRecovery": {
+      "type": "GroundPass",
+      "contactEvents": 0,
+      "rejection": "InRecovery",
+      "passAttempts": 0,
+      "passCompletions": 0,
+      "shots": 0
+    },
+    "lostArbitration": {
+      "loser": [
+        {
+          "executed": true,
+          "rejection": "None"
+        }
+      ],
+      "contact": [
+        {
+          "kind": "Kick",
+          "PlayerId": 9
+        }
+      ]
+    }
+  },
+  "behaviour_fields": {
+    "shielding": {
+      "withoutShieldContact": 10,
+      "withShieldContact": 9
+    },
+    "shootingAppetite": {
+      "low": 1.14,
+      "high": 1.44
+    },
+    "riskTolerance": {
+      "playerLow": 0.968,
+      "playerHigh": 1.069,
+      "teamLow": 0.99,
+      "teamHigh": 1.066
+    },
+    "directPassPreference": {
+      "low": 0.928,
+      "high": 1.108
+    },
+    "dribblePreference": {
+      "low": 0.97,
+      "high": 1.352
+    },
+    "pressingAggression": {
+      "low": "CloseDownCarrier",
+      "high": "ExecuteTackle"
+    },
+    "positionalDriftMeters": {
+      "undisciplined": 14.48,
+      "disciplined": 3.53,
+      "freeRole": 8.91,
+      "rigidShape": 5
+    },
+    "tempoReleaseTick": {
+      "lowTempo": 34,
+      "highTempo": 21
+    },
+    "reactionDelay": {
+      "instant": {
+        "reactionDelay": 0,
+        "steadyErrorMeters": 0,
+        "errorThreeTicksAfterReversal": 0,
+        "errorEightTicksAfterReversal": 0
+      },
+      "normal": {
+        "reactionDelay": 0.08,
+        "steadyErrorMeters": 0,
+        "errorThreeTicksAfterReversal": 1.2,
+        "errorEightTicksAfterReversal": 0
+      },
+      "slow": {
+        "reactionDelay": 0.2,
+        "steadyErrorMeters": 0,
+        "errorThreeTicksAfterReversal": 1.2,
+        "errorEightTicksAfterReversal": 3.2
+      }
+    },
+    "kickAlignment": {
+      "facingTheAim": {
+        "facingX": 1,
+        "diagnostic": "Kick:Shot Pwr=85% Align=100% StrongFoot",
+        "deviationRad": 0.0022
+      },
+      "facingAway": {
+        "facingX": -1,
+        "diagnostic": "Kick:Shot Pwr=85% Align=50% StrongFoot",
+        "deviationRad": 0.0071
+      }
+    },
+    "shotPowerMax": {
+      "strong": {
+        "maxPower": 31,
+        "horizontalSpeed": 28.5,
+        "crossingY": 2.13
+      },
+      "weak": {
+        "maxPower": 24,
+        "horizontalSpeed": 22.06,
+        "crossingY": 1.97
+      }
+    }
+  },
+  "offside_exempt_restarts": {
+    "throwIn": {
+      "restart": "ThrowIn",
+      "stampedContact": "ThrowIn",
+      "receiverX": 30,
+      "ballLineX": 10,
+      "secondLastDefenderX": 10,
+      "phaseAfterReception": "FirstHalf",
+      "offsideAwarded": false,
+      "lastEvent": "Throw-In"
+    },
+    "goalKick": {
+      "restart": "GoalKick",
+      "stampedContact": "GoalKick",
+      "receiverX": 30,
+      "ballLineX": -47,
+      "secondLastDefenderX": 10,
+      "phaseAfterReception": "FirstHalf",
+      "offsideAwarded": false,
+      "lastEvent": "Goal Kick"
+    },
+    "cornerKick": {
+      "restart": "CornerKick",
+      "stampedContact": "CornerKick",
+      "receiverX": 52.2,
+      "ballLineX": 52,
+      "secondLastDefenderX": 10,
+      "phaseAfterReception": "FirstHalf",
+      "offsideAwarded": false,
+      "lastEvent": "Corner Kick"
+    }
+  },
+  "offside_deliberate_play_vs_save": {
+    "deliberatePlay": {
+      "opponentTouch": "Kick",
+      "phaseAfterReception": "FirstHalf",
+      "offsideAwarded": false,
+      "lastEvent": "First Half Kickoff"
+    },
+    "save": {
+      "opponentTouch": "Save",
+      "phaseAfterReception": "FreeKick",
+      "offsideAwarded": true,
+      "lastEvent": "Offside against Player #9"
+    }
+  },
+  "offside_indirect_restart_goal": {
+    "straightIn": {
+      "restart": "IndirectFreeKick",
+      "stampedContact": "IndirectFreeKick",
+      "awaitingSecondTouchAfterKick": true,
+      "secondTouch": false,
+      "score": "0-0",
+      "phaseAfterBallCrossedTheLine": "GoalKick",
+      "restartTeamAfterBallCrossedTheLine": "Home",
+      "goalAwarded": false,
+      "lastEvent": "Goal Kick (indirect restart cannot score directly)"
+    },
+    "afterSecondTouch": {
+      "restart": "IndirectFreeKick",
+      "stampedContact": "IndirectFreeKick",
+      "awaitingSecondTouchAfterKick": true,
+      "secondTouch": true,
+      "score": "0-1",
+      "phaseAfterBallCrossedTheLine": "GoalScored",
+      "restartTeamAfterBallCrossedTheLine": "Home",
+      "goalAwarded": true,
+      "lastEvent": "Goal! Score 0-1 (scorer #14)"
+    }
+  },
+  "offside_direct_free_kick_goal": {
+    "restarted": true,
+    "restart": "FreeKick",
+    "stampedContact": "FreeKick",
+    "awaitingSecondTouchAfterKick": false,
+    "score": "0-1",
+    "goalAwarded": true
+  },
+  "offside_engine_restart_stamp": {
+    "forcedPhase": "ThrowIn",
+    "activeRestart": "ThrowIn",
+    "ticksUntilFirstContact": 17,
+    "stampedOnFirstContact": "ThrowIn",
+    "activeRestartAfterTheKick": "None",
+    "phaseAfterTheKick": "FirstHalf"
+  },
+  "boundary_classification": {
+    "highShotDescending": {
+      "ticks": 1,
+      "phase": "GoalKick",
+      "restartTeam": "Away",
+      "restartSpot": {
+        "x": 47,
+        "y": 0.11,
+        "z": 0
+      },
+      "score": "0-0",
+      "crossings": [
+        {
+          "boundary": "GoalLinePositiveX",
+          "at": {
+            "x": 52.61,
+            "y": 2.7582955,
+            "z": 0
+          },
+          "elapsedSeconds": 0.0017,
+          "lineCoordinate": 52.61,
+          "radius": 0.11
+        }
+      ],
+      "lastEvent": "Goal Kick"
+    },
+    "diagonalCornerExit": {
+      "ticks": 1,
+      "phase": "ThrowIn",
+      "restartTeam": "Home",
+      "restartSpot": {
+        "x": 51.5,
+        "y": 0.11,
+        "z": 33.8
+      },
+      "score": "0-0",
+      "crossings": [
+        {
+          "boundary": "TouchlinePositiveZ",
+          "at": {
+            "x": 52.57,
+            "y": 0.11,
+            "z": 34.11
+          },
+          "elapsedSeconds": 0.01,
+          "lineCoordinate": 34.11,
+          "radius": 0.11
+        },
+        {
+          "boundary": "GoalLinePositiveX",
+          "at": {
+            "x": 52.61,
+            "y": 0.11,
+            "z": 34.15
+          },
+          "elapsedSeconds": 0.0134,
+          "lineCoordinate": 52.61,
+          "radius": 0.11
+        }
+      ],
+      "lastEvent": "Throw-In"
+    },
+    "postRebound": {
+      "ticks": 10,
+      "phase": "FirstHalf",
+      "restartTeam": "Home",
+      "restartSpot": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "score": "0-0",
+      "crossings": [],
+      "lastEvent": "First Half Kickoff"
+    }
+  },
+  "boundary_whole_ball": {
+    "ballCentreX": 52.65,
+    "defaultRadius": {
+      "radius": 0.11,
+      "phase": "GoalScored"
+    },
+    "largeRadius": {
+      "radius": 0.2,
+      "phase": "FirstHalf"
+    }
+  },
+  "goal_attribution": {
+    "attacker": {
+      "label": "attacker",
+      "phase": "GoalScored",
+      "score": "1-0",
+      "lastToucher": 9,
+      "scorer": 9,
+      "ownGoal": null,
+      "isOwnGoal": false,
+      "details": "Goal! Score 1-0 (scorer #9)"
+    },
+    "afterSave": {
+      "label": "afterSave",
+      "phase": "GoalScored",
+      "score": "1-0",
+      "lastToucher": 12,
+      "scorer": 9,
+      "ownGoal": null,
+      "isOwnGoal": false,
+      "details": "Goal! Score 1-0 (scorer #9)"
+    },
+    "ownGoal": {
+      "label": "ownGoal",
+      "phase": "GoalScored",
+      "score": "1-0",
+      "lastToucher": 13,
+      "scorer": null,
+      "ownGoal": 13,
+      "isOwnGoal": true,
+      "details": "Goal! Score 1-0 (own goal #13)"
+    }
+  },
+  "player_contacts": {
+    "capsuleDiameter": 0.72,
+    "playerHeight": 1.82,
+    "coincident": {
+      "distanceAfter": 0.72,
+      "horizontalClosingSpeed": -0,
+      "a": {
+        "x": 4.64,
+        "y": 0,
+        "z": -3
+      },
+      "b": {
+        "x": 5.36,
+        "y": 0,
+        "z": -3
+      }
+    },
+    "airborneAboveGrounded": {
+      "distanceAfter": 0,
+      "horizontalClosingSpeed": -0,
+      "a": {
+        "x": 5,
+        "y": 2.4,
+        "z": -3
+      },
+      "b": {
+        "x": 5,
+        "y": 0,
+        "z": -3
+      }
+    },
+    "groundedOverlap": {
+      "distanceAfter": 0.72,
+      "horizontalClosingSpeed": -0,
+      "a": {
+        "x": 4.74,
+        "y": 0,
+        "z": -3
+      },
+      "b": {
+        "x": 5.46,
+        "y": 0,
+        "z": -3
+      }
+    },
+    "headOnContact": {
+      "distanceAfter": 0.72,
+      "horizontalClosingSpeed": 2.02,
+      "a": {
+        "x": 4.94,
+        "y": 0,
+        "z": -3
+      },
+      "b": {
+        "x": 5.66,
+        "y": 0,
+        "z": -3
+      }
+    }
+  },
+  "ball_geometry": {
+    "previousRenderRadius": 0.16,
+    "enginePhysicsRadius": 0.11,
+    "renderSphereRadius": 0.11,
+    "renderSphereHeight": 0.22,
+    "renderShadowRadius": 0.242,
+    "restingCentreHeight": 0.11,
+    "matchBallRestY": 0.11,
+    "practiceRadius": 0.11,
+    "freeTrainingSpawnRadius": 0.11,
+    "customRadius": {
+      "physics": 0.2,
+      "render": 0.2
+    }
+  },
+  "frame_timing": {
+    "at30Fps": {
+      "fps": 30,
+      "frames": 30,
+      "steps": 60,
+      "simulatedSeconds": 1,
+      "leftoverSeconds": 0,
+      "alpha": 0
+    },
+    "at60Fps": {
+      "fps": 60,
+      "frames": 60,
+      "steps": 60,
+      "simulatedSeconds": 1,
+      "leftoverSeconds": 0,
+      "alpha": 0
+    },
+    "at144Fps": {
+      "fps": 144,
+      "frames": 144,
+      "steps": 60,
+      "simulatedSeconds": 1,
+      "leftoverSeconds": 0,
+      "alpha": 0
+    },
+    "stalledFrame": {
+      "frameSeconds": 3,
+      "steps": 12,
+      "maxStepsPerFrame": 12,
+      "droppedSeconds": 2.8,
+      "cappedFrames": 1,
+      "nextFrameSteps": 1
+    },
+    "camera": {
+      "legacyWeightPerFrame": 0.14,
+      "halfLifeSeconds": 0.0766,
+      "weightAt60Hz": 0.14,
+      "weightAt30Hz": 0.2604,
+      "weightAt144Hz": 0.0609,
+      "afterOneSecondX": {
+        "halfLife30": 9.999,
+        "halfLife60": 9.999,
+        "halfLife144": 9.999,
+        "legacy30": 9.892,
+        "legacy144": 10
+      },
+      "afterOneTenthSecondX": {
+        "halfLife30": 5.954,
+        "halfLife144": 5.851,
+        "legacy30": 3.639,
+        "legacy144": 8.789
+      }
+    }
+  },
+  "config_validation": {
+    "playersPerTeamZero": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "PlayersPerTeam",
+      "message": "PlayersPerTeam must be between 1 and 11. (Parameter \u0027PlayersPerTeam\u0027)\r\nActual value was 0."
+    },
+    "playersPerTeamTwelve": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "PlayersPerTeam",
+      "message": "PlayersPerTeam must be between 1 and 11. (Parameter \u0027PlayersPerTeam\u0027)\r\nActual value was 12."
+    },
+    "halfDurationZero": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "HalfDurationSeconds",
+      "message": "HalfDurationSeconds must be greater than zero and at most 21600 s. (Parameter \u0027HalfDurationSeconds\u0027)\r\nActual value was 0."
+    },
+    "halfDurationNegative": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "HalfDurationSeconds",
+      "message": "HalfDurationSeconds must be greater than zero and at most 21600 s. (Parameter \u0027HalfDurationSeconds\u0027)\r\nActual value was -30."
+    },
+    "halfDurationNaN": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "HalfDurationSeconds",
+      "message": "HalfDurationSeconds must be a finite number. (Parameter \u0027HalfDurationSeconds\u0027)\r\nActual value was NaN."
+    },
+    "humanIdNotInMatch": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "DesignatedHumanPlayerId",
+      "message": "DesignatedHumanPlayerId must be an existing player id between 1 and 22 for 11-a-side. (Parameter \u0027DesignatedHumanPlayerId\u0027)\r\nActual value was 23."
+    },
+    "humanIdZero": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "DesignatedHumanPlayerId",
+      "message": "DesignatedHumanPlayerId must be an existing player id between 1 and 22 for 11-a-side. (Parameter \u0027DesignatedHumanPlayerId\u0027)\r\nActual value was 0."
+    },
+    "goalWiderThanPitch": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "GoalWidth",
+      "message": "The goal must be narrower than the pitch. (Parameter \u0027GoalWidth\u0027)\r\nActual value was 80."
+    },
+    "pitchWidthZero": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "Width",
+      "message": "Width must be greater than zero. (Parameter \u0027Width\u0027)\r\nActual value was 0."
+    },
+    "penaltyAreaTooLong": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "PenaltyAreaLength",
+      "message": "The penalty area cannot be longer than a half. (Parameter \u0027PenaltyAreaLength\u0027)\r\nActual value was 60."
+    },
+    "ballRadiusZero": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "Radius",
+      "message": "Radius must be greater than zero. (Parameter \u0027Radius\u0027)\r\nActual value was 0."
+    },
+    "invalidAttributes": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "attributes.ReachRadius",
+      "message": "attributes.ReachRadius must be greater than zero. (Parameter \u0027attributes.ReachRadius\u0027)\r\nActual value was -1."
+    },
+    "invalidTeamProfile": {
+      "rejected": true,
+      "type": "ArgumentOutOfRangeException",
+      "field": "HomeProfile.PositionalFreedom01",
+      "message": "HomeProfile.PositionalFreedom01 must be between 0 and 1. (Parameter \u0027HomeProfile.PositionalFreedom01\u0027)\r\nActual value was 3."
+    },
+    "accepted": {
+      "defaultMatchPlayers": 22,
+      "fiveASideWithHuman10": 10,
+      "defaultAttributesValid": {
+        "valid": true,
+        "message": null
+      },
+      "defaultProfileValid": {
+        "valid": true,
+        "message": null
+      }
+    }
+  },
+  "inspector_index": {
+    "spectator22": 9,
+    "human9Of22": 9,
+    "human9Of4": 4,
+    "human5Of10": 5,
+    "outOfRange99Of22": 9,
+    "previousAssumption": "Players[DesignatedHumanPlayerId - 1]"
+  },
+  "recorded_replay": {
+    "ticks": 600,
+    "engines": 2,
+    "mismatchedTicks": 0,
+    "bitIdentical": true,
+    "recordedPasses": {
+      "home": 3,
+      "away": 1
+    },
+    "replayedPasses": {
+      "home": 3,
+      "away": 1
+    },
+    "recordedScore": {
+      "home": 0,
+      "away": 0
+    },
+    "replayedScore": {
+      "home": 0,
+      "away": 0
+    },
+    "replayedBall": {
+      "x": -28.88805,
+      "y": 0.11,
+      "z": -0.31869525
+    }
+  },
+  "match_completion": {
+    "phases": [
+      "FirstHalf",
+      "HalfTime",
+      "SecondHalf",
+      "FullTime"
+    ],
+    "reachedFullTime": true,
+    "clockSeconds": 24.02,
+    "expectedClockSeconds": 24,
+    "fullTimeTick": 1471,
+    "tickAfterFullTime": 1471,
+    "clockAfterFullTime": 24.02,
+    "halfTimeEvents": 1,
+    "fullTimeEvents": 1,
+    "eventsAtFullTime": 3,
+    "secondHalfHomeAttackDirectionX": -1,
+    "finalScore": {
+      "home": 0,
+      "away": 0
+    }
+  },
+  "multi_seed_tactical": {
+    "seeds": [
+      2026,
+      4242,
+      91,
+      777
+    ],
+    "perSeed": [
+      {
+        "seed": 2026,
+        "completed": true,
+        "clockSeconds": 120,
+        "score": "1-1",
+        "widthHome": 42.5,
+        "widthAway": 38.8,
+        "widthDifference": 3.78,
+        "passes": {
+          "home": 28,
+          "away": 14
+        },
+        "completions": {
+          "home": 26,
+          "away": 12
+        },
+        "shots": {
+          "home": 4,
+          "away": 3
+        },
+        "possessionShareHome": 0.596,
+        "kicks": {
+          "executed": 49,
+          "requested": 50
+        }
+      },
+      {
+        "seed": 4242,
+        "completed": true,
+        "clockSeconds": 120,
+        "score": "0-0",
+        "widthHome": 41.6,
+        "widthAway": 39.3,
+        "widthDifference": 2.27,
+        "passes": {
+          "home": 23,
+          "away": 21
+        },
+        "completions": {
+          "home": 18,
+          "away": 17
+        },
+        "shots": {
+          "home": 0,
+          "away": 0
+        },
+        "possessionShareHome": 0.498,
+        "kicks": {
+          "executed": 44,
+          "requested": 44
+        }
+      },
+      {
+        "seed": 91,
+        "completed": true,
+        "clockSeconds": 120,
+        "score": "1-2",
+        "widthHome": 41.6,
+        "widthAway": 41.7,
+        "widthDifference": -0.08,
+        "passes": {
+          "home": 19,
+          "away": 20
+        },
+        "completions": {
+          "home": 15,
+          "away": 16
+        },
+        "shots": {
+          "home": 1,
+          "away": 6
+        },
+        "possessionShareHome": 0.42,
+        "kicks": {
+          "executed": 46,
+          "requested": 46
+        }
+      },
+      {
+        "seed": 777,
+        "completed": true,
+        "clockSeconds": 120,
+        "score": "0-0",
+        "widthHome": 42.8,
+        "widthAway": 42.4,
+        "widthDifference": 0.37,
+        "passes": {
+          "home": 17,
+          "away": 19
+        },
+        "completions": {
+          "home": 12,
+          "away": 17
+        },
+        "shots": {
+          "home": 3,
+          "away": 1
+        },
+        "possessionShareHome": 0.431,
+        "kicks": {
+          "executed": 42,
+          "requested": 44
+        }
+      }
+    ],
+    "meanWidthDifference": 1.58,
+    "widerSeeds": 3,
+    "gatePassed": true
+  },
+  "match_human_False": {
+    "CurrentTick": 18000,
+    "clock": 298.6712,
+    "HomeGoals": 1,
+    "AwayGoals": 0,
+    "possessionShareHome": 0.454,
+    "homeTerritoryX": -1.11,
+    "awayTerritoryX": 9.59,
+    "homeWidth": 40.8,
+    "awayWidth": 41.6,
+    "passes": {
+      "home": 46,
+      "away": 44
+    },
+    "passCompletions": {
+      "home": 38,
+      "away": 41
+    },
+    "passCompletionShare": {
+      "home": 0.826,
+      "away": 0.932
+    },
+    "controlledPossessionShareHome": 0.405,
+    "shots": {
+      "home": 4,
+      "away": 8
+    },
+    "kickCommands": 118,
+    "executedKicks": 106,
+    "rejectedKicks": {
+      "OutOfReach": 8,
+      "BallTooHigh": 4
+    },
+    "defendingLastTouchGoals": 0,
+    "keeperLastTouchGoals": 0,
+    "attributedScorerGoals": 1,
+    "attributedOwnGoals": 0,
+    "actionCounts": {
+      "OnsideSupportLane [Shape]": 82811,
+      "OnsideSupportLane [DefensiveCover]": 1817,
+      "SetPieceRestart (FirstHalf)": 3,
+      "Job:NearOutlet [NearOutlet]": 13083,
+      "HoldDefensiveZone [DefensiveLine]": 37681,
+      "Job:CoverDefender [CoverDefender]": 13735,
+      "HoldDefensiveZone [Shape]": 86177,
+      "CloseDownCarrier [Presser]": 16993,
+      "Job:BallResponder [BallResponder]": 258,
+      "InterceptPassRay [Shape]": 33,
+      "Job:FarSideWidth [FarSideWidth]": 9736,
+      "Job:ThirdPlayerOption [ThirdPlayerOption]": 8142,
+      "InterceptPassRay [BallResponder]": 7163,
+      "Job:DefensiveCover [DefensiveCover]": 13774,
+      "DriveWithBall [BallResponder]": 10160,
+      "Pass(GroundPass)To#8 [BallResponder]": 8,
+      "InterceptPassRay [ThirdPlayerOption]": 105,
+      "OnsideSupportLane [BallResponder]": 258,
+      "OnsideSupportLane [ThirdPlayerOption]": 2950,
+      "Job:DepthRun [DepthRun]": 6925,
+      "Job:ThirdPlayerOptionAdj [ThirdPlayerOption]": 4805,
+      "OnsideSupportLane [DepthRun]": 1373,
+      "Job:NearOutletAdj [NearOutlet]": 3200,
+      "OnsideSupportLane [Overlap]": 1705,
+      "Job:Overlap [Overlap]": 1820,
+      "CloseDownCarrier [Shape]": 253,
+      "Job:PresserAdj [Presser]": 158,
+      "Pass(GroundPass)To#9 [BallResponder]": 5,
+      "CloseDownCarrier [CoverDefender]": 108,
+      "Job:Presser [Presser]": 277,
+      "Job:DefensiveCoverAdj [DefensiveCover]": 2134,
+      "ExecuteTackle [Presser]": 129,
+      "Job:Marker [Marker]": 2623,
+      "CloseDownCarrier [Marker]": 43,
+      "HoldDefensiveZone [Presser]": 45,
+      "OnsideSupportLane [FarSideWidth]": 4222,
+      "Job:MarkerAdj [Marker]": 17318,
+      "HoldDefensiveZone [Marker]": 931,
+      "Job:CoverDefenderAdj [CoverDefender]": 2233,
+      "DriveWithBall [Presser]": 383,
+      "Pass(GroundPass)To#11 [BallResponder]": 5,
+      "CloseDownCarrier [DefensiveLine]": 73,
+      "Job:DepthRunAdj [DepthRun]": 2111,
+      "ChallengeCarrier [CoverDefender]": 487,
+      "ShootAtGoal [BallResponder]": 18,
+      "InterceptPassRay [FarSideWidth]": 23,
+      "Job:FarSideWidthAdj [FarSideWidth]": 165,
+      "Pass(GroundPass)To#13 [BallResponder]": 2,
+      "Pass(GroundPass)To#19 [BallResponder]": 8,
+      "ExecuteTackle [Shape]": 2,
+      "Pass(GroundPass)To#21 [BallResponder]": 8,
+      "OnsideSupportLane [NearOutlet]": 979,
+      "Pass(GroundPass)To#22 [BallResponder]": 8,
+      "Job:BallResponderAdj [BallResponder]": 45,
+      "InterceptPassRay [DepthRun]": 27,
+      "InterceptPassRay [NearOutlet]": 17,
+      "ShootAtGoal [Presser]": 9,
+      "Pass(GroundPass)To#2 [BallResponder]": 3,
+      "Pass(GroundPass)To#7 [BallResponder]": 6,
+      "Pass(GroundPass)To#18 [BallResponder]": 8,
+      "Pass(GroundPass)To#6 [BallResponder]": 2,
+      "Pass(GroundPass)To#5 [BallResponder]": 2,
+      "Pass(GroundPass)To#3 [BallResponder]": 5,
+      "HoldDefensiveZone [CoverDefender]": 171,
+      "Pass(GroundPass)To#16 [BallResponder]": 1,
+      "Pass(GroundPass)To#10 [BallResponder]": 7,
+      "DriveWithBall [CoverDefender]": 1,
+      "Pass(GroundPass)To#20 [BallResponder]": 5,
+      "DriveWithBall [DefensiveLine]": 6,
+      "Pass(GroundPass)To#17 [BallResponder]": 2,
+      "DriveWithBall [Shape]": 9,
+      "InterceptPassRay [DefensiveCover]": 11,
+      "ChallengeCarrier [Presser]": 4,
+      "ChallengeCarrier [Marker]": 151,
+      "DriveWithBall [NearOutlet]": 21,
+      "ExecuteTackle [DefensiveLine]": 1,
+      "Job:OverlapAdj [Overlap]": 8,
+      "DriveWithBall [DefensiveCover]": 12
+    },
+    "goalSamples": [
+      {
+        "tick": 4547,
+        "scoringTeam": "Home",
+        "PlayerId": 11,
+        "defendingLastTouch": false,
+        "scorer": 11,
+        "ownGoal": null,
+        "details": "Goal! Score 1-0 (scorer #11)",
+        "lastKeeperContact": null,
+        "trace": [
+          {
+            "tick": 4533,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.903687,
+              "y": 1.9178225,
+              "z": 0.9757341
+            },
+            "vel": {
+              "x": 11.579418,
+              "y": -2.7380464,
+              "z": 18.829378
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29517,
+                  "y": 0,
+                  "z": -0.14578262
+                },
+                "facing": 0.9999782,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.87468,
+                  "y": 0,
+                  "z": -1.6915623
+                },
+                "facing": -0.9820526,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4534,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.096134,
+              "y": 1.870538,
+              "z": 1.2886797
+            },
+            "vel": {
+              "x": 11.521916,
+              "y": -2.913933,
+              "z": 18.735874
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.295578,
+                  "y": 0,
+                  "z": -0.13275586
+                },
+                "facing": 0.9999536,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.86832,
+                  "y": 0,
+                  "z": -1.6650345
+                },
+                "facing": -0.9291294,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4535,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.287632,
+              "y": 1.8203315,
+              "z": 1.6000726
+            },
+            "vel": {
+              "x": 11.464795,
+              "y": -3.088821,
+              "z": 18.642986
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.296036,
+                  "y": 0,
+                  "z": -0.11755744
+                },
+                "facing": 0.9999202,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.862312,
+                  "y": 0,
+                  "z": -1.6363634
+                },
+                "facing": -0.843505,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4536,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.47818,
+              "y": 1.7672194,
+              "z": 1.9099232
+            },
+            "vel": {
+              "x": 11.408048,
+              "y": -3.262721,
+              "z": 18.550709
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29654,
+                  "y": 0,
+                  "z": -0.10018729
+                },
+                "facing": 0.99987817,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.856796,
+                  "y": 0,
+                  "z": -1.6055762
+                },
+                "facing": -0.7285564,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4537,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.667786,
+              "y": 1.7112185,
+              "z": 2.218241
+            },
+            "vel": {
+              "x": 11.3516655,
+              "y": -3.4356441,
+              "z": 18.459023
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297085,
+                  "y": 0,
+                  "z": -0.08064531
+                },
+                "facing": 0.9998278,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.851883,
+                  "y": 0,
+                  "z": -1.5727023
+                },
+                "facing": -0.5886191,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4538,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.856457,
+              "y": 1.6523443,
+              "z": 2.5250366
+            },
+            "vel": {
+              "x": 11.29564,
+              "y": -3.607601,
+              "z": 18.36792
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29767,
+                  "y": 0,
+                  "z": -0.058931448
+                },
+                "facing": 0.99976933,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.847668,
+                  "y": 0,
+                  "z": -1.537771
+                },
+                "facing": -0.42881465,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4539,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.044197,
+              "y": 1.5906132,
+              "z": 2.830319
+            },
+            "vel": {
+              "x": 11.2399645,
+              "y": -3.7786021,
+              "z": 18.277386
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29829,
+                  "y": 0,
+                  "z": -0.03504567
+                },
+                "facing": 0.9997029,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.844227,
+                  "y": 0,
+                  "z": -1.5008106
+                },
+                "facing": -0.25485593,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4540,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.23101,
+              "y": 1.5260412,
+              "z": 3.1340978
+            },
+            "vel": {
+              "x": 11.184631,
+              "y": -3.9486575,
+              "z": 18.187405
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29884,
+                  "y": 0,
+                  "z": -0.013897851
+                },
+                "facing": 0.9996287,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.84163,
+                  "y": 0,
+                  "z": -1.4618483
+                },
+                "facing": -0.072836615,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4541,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.41691,
+              "y": 1.4586434,
+              "z": 3.4363818
+            },
+            "vel": {
+              "x": 11.129633,
+              "y": -4.117777,
+              "z": 18.097971
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299316,
+                  "y": 0,
+                  "z": 0.004512001
+                },
+                "facing": 0.99954706,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.839935,
+                  "y": 0,
+                  "z": -1.4209099
+                },
+                "facing": 0.11098559,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4542,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.4791,
+              "y": 1.397954,
+              "z": 3.301813
+            },
+            "vel": {
+              "x": 1.6170194,
+              "y": -3.515499,
+              "z": -15.359796
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299725,
+                  "y": 0,
+                  "z": 0.020183887
+                },
+                "facing": 0.9994581,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.839195,
+                  "y": 0,
+                  "z": -1.3780205
+                },
+                "facing": 0.29040533,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4543,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.50598,
+              "y": 1.3380119,
+              "z": 3.0463462
+            },
+            "vel": {
+              "x": 1.6092565,
+              "y": -3.6543295,
+              "z": -15.305322
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30006,
+                  "y": 0,
+                  "z": 0.03311781
+                },
+                "facing": 0.99936205,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.83946,
+                  "y": 0,
+                  "z": -1.3332043
+                },
+                "facing": 0.3266554,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4544,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.532726,
+              "y": 1.2757603,
+              "z": 2.7917843
+            },
+            "vel": {
+              "x": 1.6014657,
+              "y": -3.7927353,
+              "z": -15.251172
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300323,
+                  "y": 0,
+                  "z": 0.043313764
+                },
+                "facing": 0.99925905,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.840767,
+                  "y": 0,
+                  "z": -1.2864838
+                },
+                "facing": 0.34154302,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4545,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.559334,
+              "y": 1.211206,
+              "z": 2.5381217
+            },
+            "vel": {
+              "x": 1.5936476,
+              "y": -3.9307177,
+              "z": -15.19734
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300518,
+                  "y": 0,
+                  "z": 0.050771754
+                },
+                "facing": 0.9991494,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.84316,
+                  "y": 0,
+                  "z": -1.2378805
+                },
+                "facing": 0.3547724,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4546,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.585827,
+              "y": 1.1443561,
+              "z": 2.2853532
+            },
+            "vel": {
+              "x": 1.5858028,
+              "y": -4.0682774,
+              "z": -15.143824
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30064,
+                  "y": 0,
+                  "z": 0.05549178
+                },
+                "facing": 0.99903315,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.84667,
+                  "y": 0,
+                  "z": -1.1874146
+                },
+                "facing": 0.3665996,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 4547,
+            "phase": "GoalScored",
+            "ball": {
+              "x": 52.612183,
+              "y": 1.0752177,
+              "z": 2.033474
+            },
+            "vel": {
+              "x": 1.5779321,
+              "y": -4.205416,
+              "z": -15.090617
+            },
+            "touch": 11,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300694,
+                  "y": 0,
+                  "z": 0.05747384
+                },
+                "facing": 0.9989106,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:GroundPass Pwr=100% Align=98%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.851326,
+                  "y": 0,
+                  "z": -1.1351057
+                },
+                "facing": 0.37723273,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "natural_parry_replay": {
+    "sourceTick": 3152,
+    "initialBall": {
+      "x": 50.27207,
+      "y": 2.2543612,
+      "z": 0.62491155
+    },
+    "initialVelocity": {
+      "x": -3.456773,
+      "y": 1.2241806,
+      "z": 10.301077
+    },
+    "initialSpin": {
+      "x": 5.6712255,
+      "y": 0,
+      "z": 1.9031155
+    },
+    "replayResults": [
+      {
+        "retainSpin": true,
+        "goal": false,
+        "finalBall": {
+          "x": 44.09445,
+          "y": 0.11,
+          "z": 19.034088
+        }
+      },
+      {
+        "retainSpin": false,
+        "goal": false,
+        "finalBall": {
+          "x": 44.159546,
+          "y": 0.11,
+          "z": 18.8401
+        }
+      }
+    ]
+  },
+  "match_human_True": {
+    "CurrentTick": 18000,
+    "clock": 296.37177,
+    "HomeGoals": 3,
+    "AwayGoals": 1,
+    "possessionShareHome": 0.546,
+    "homeTerritoryX": 5.69,
+    "awayTerritoryX": 12.43,
+    "homeWidth": 43.7,
+    "awayWidth": 39.8,
+    "passes": {
+      "home": 35,
+      "away": 45
+    },
+    "passCompletions": {
+      "home": 29,
+      "away": 38
+    },
+    "passCompletionShare": {
+      "home": 0.829,
+      "away": 0.844
+    },
+    "controlledPossessionShareHome": 0.548,
+    "shots": {
+      "home": 8,
+      "away": 12
+    },
+    "kickCommands": 147,
+    "executedKicks": 102,
+    "rejectedKicks": {
+      "OutOfReach": 39,
+      "LostArbitration": 6
+    },
+    "defendingLastTouchGoals": 0,
+    "keeperLastTouchGoals": 0,
+    "attributedScorerGoals": 4,
+    "attributedOwnGoals": 0,
+    "actionCounts": {
+      "OnsideSupportLane [Shape]": 82470,
+      "OnsideSupportLane [DefensiveCover]": 2701,
+      "SetPieceRestart (FirstHalf)": 9,
+      "Job:NearOutlet [NearOutlet]": 12407,
+      "HoldDefensiveZone [DefensiveLine]": 39019,
+      "Job:CoverDefender [CoverDefender]": 12482,
+      "HoldDefensiveZone [Shape]": 82045,
+      "CloseDownCarrier [Presser]": 17277,
+      "Job:BallResponder [BallResponder]": 279,
+      "Job:ThirdPlayerOption [ThirdPlayerOption]": 7459,
+      "Job:FarSideWidth [FarSideWidth]": 11996,
+      "Job:DefensiveCover [DefensiveCover]": 12683,
+      "Job:CoverDefenderAdj [CoverDefender]": 2120,
+      "OnsideSupportLane [DepthRun]": 1412,
+      "Job:DepthRun [DepthRun]": 5884,
+      "ExecuteTackle [Presser]": 99,
+      "Job:MarkerAdj [Marker]": 12296,
+      "OnsideSupportLane [ThirdPlayerOption]": 2299,
+      "DriveWithBall [BallResponder]": 8956,
+      "Job:PresserAdj [Presser]": 103,
+      "CloseDownCarrier [Shape]": 153,
+      "Job:DepthRunAdj [DepthRun]": 1049,
+      "CloseDownCarrier [Marker]": 60,
+      "Job:DefensiveCoverAdj [DefensiveCover]": 2292,
+      "Job:Marker [Marker]": 2849,
+      "Job:ThirdPlayerOptionAdj [ThirdPlayerOption]": 2172,
+      "OnsideSupportLane [FarSideWidth]": 2766,
+      "Pass(GroundPass)To#11 [BallResponder]": 7,
+      "InterceptPassRay [FarSideWidth]": 26,
+      "InterceptPassRay [BallResponder]": 7586,
+      "Job:NearOutletAdj [NearOutlet]": 3252,
+      "OnsideSupportLane [Overlap]": 599,
+      "Job:Overlap [Overlap]": 273,
+      "Pass(GroundPass)To#8 [BallResponder]": 1,
+      "InterceptPassRay [ThirdPlayerOption]": 84,
+      "OnsideSupportLane [BallResponder]": 185,
+      "CloseDownCarrier [CoverDefender]": 99,
+      "Job:Presser [Presser]": 221,
+      "HoldDefensiveZone [Marker]": 1160,
+      "OnsideSupportLane [NearOutlet]": 778,
+      "CloseDownCarrier [DefensiveLine]": 74,
+      "Pass(GroundPass)To#21 [BallResponder]": 4,
+      "Job:BallResponderAdj [BallResponder]": 45,
+      "Pass(GroundPass)To#7 [BallResponder]": 5,
+      "DriveWithBall [Presser]": 232,
+      "ChallengeCarrier [DefensiveLine]": 13,
+      "ShootAtGoal [BallResponder]": 33,
+      "Pass(GroundPass)To#19 [BallResponder]": 10,
+      "HoldDefensiveZone [Presser]": 56,
+      "Pass(GroundPass)To#20 [BallResponder]": 4,
+      "Job:FarSideWidthAdj [FarSideWidth]": 80,
+      "Pass(GroundPass)To#22 [BallResponder]": 8,
+      "InterceptPassRay [DepthRun]": 43,
+      "Pass(GroundPass)To#18 [BallResponder]": 7,
+      "DriveWithBall [DepthRun]": 121,
+      "HoldDefensiveZone [CoverDefender]": 227,
+      "InterceptPassRay [DefensiveCover]": 23,
+      "Pass(GroundPass)To#16 [BallResponder]": 2,
+      "Pass(GroundPass)To#18 [Presser]": 2,
+      "ChallengeCarrier [CoverDefender]": 997,
+      "InterceptPassRay [NearOutlet]": 24,
+      "InterceptPassRay [Shape]": 35,
+      "Pass(GroundPass)To#4 [BallResponder]": 3,
+      "Pass(GroundPass)To#2 [BallResponder]": 3,
+      "Pass(GroundPass)To#17 [DefensiveCover]": 2,
+      "ShootAtGoal [DepthRun]": 16,
+      "ShootAtGoal [CoverDefender]": 9,
+      "Pass(GroundPass)To#10 [BallResponder]": 4,
+      "DriveWithBall [Shape]": 41,
+      "Pass(GroundPass)To#21 [Shape]": 1,
+      "Pass(GroundPass)To#17 [BallResponder]": 2,
+      "ShootAtGoal [Presser]": 1,
+      "Pass(GroundPass)To#15 [BallResponder]": 1,
+      "Pass(GroundPass)To#4 [DefensiveCover]": 2,
+      "ChallengeCarrier [Presser]": 1,
+      "Pass(GroundPass)To#5 [BallResponder]": 2,
+      "ChallengeCarrier [Marker]": 239,
+      "Pass(GroundPass)To#9 [BallResponder]": 2,
+      "DriveWithBall [DefensiveCover]": 18
+    },
+    "goalSamples": [
+      {
+        "tick": 1546,
+        "scoringTeam": "Home",
+        "PlayerId": 7,
+        "defendingLastTouch": false,
+        "scorer": 7,
+        "ownGoal": null,
+        "details": "Goal! Score 1-0 (scorer #7)",
+        "lastKeeperContact": null,
+        "trace": [
+          {
+            "tick": 1532,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 48.7355,
+              "y": 2.1491704,
+              "z": -0.23741041
+            },
+            "vel": {
+              "x": 18.140198,
+              "y": -1.6490346,
+              "z": -13.779229
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.301067,
+                  "y": 0,
+                  "z": 0.14156319
+                },
+                "facing": 1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.001026,
+                  "y": 0,
+                  "z": 0.4699498
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.9m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1533,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.03698,
+              "y": 2.1199768,
+              "z": -0.46641442
+            },
+            "vel": {
+              "x": 18.049042,
+              "y": -1.8312382,
+              "z": -13.709988
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.3009,
+                  "y": 0,
+                  "z": 0.11984162
+                },
+                "facing": 0.9999969,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.02526,
+                  "y": 0,
+                  "z": 0.372341
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.0m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1534,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.33695,
+              "y": 2.0877566,
+              "z": -0.6942691
+            },
+            "vel": {
+              "x": 17.958548,
+              "y": -2.012365,
+              "z": -13.641248
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300755,
+                  "y": 0,
+                  "z": 0.10085886
+                },
+                "facing": 0.99998873,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.049973,
+                  "y": 0,
+                  "z": 0.2726129
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.0m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1535,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.635414,
+              "y": 2.0525277,
+              "z": -0.9209828
+            },
+            "vel": {
+              "x": 17.8687,
+              "y": -2.1924298,
+              "z": -13.573
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30063,
+                  "y": 0,
+                  "z": 0.0846149
+                },
+                "facing": 0.99997574,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.075127,
+                  "y": 0,
+                  "z": 0.17075863
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.0m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1536,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.932384,
+              "y": 2.0143075,
+              "z": -1.1465634
+            },
+            "vel": {
+              "x": 17.779484,
+              "y": -2.371445,
+              "z": -13.505232
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300526,
+                  "y": 0,
+                  "z": 0.07110976
+                },
+                "facing": 0.99995804,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.100685,
+                  "y": 0,
+                  "z": 0.066770226
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.0m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1537,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.227886,
+              "y": 1.9731134,
+              "z": -1.371019
+            },
+            "vel": {
+              "x": 17.690884,
+              "y": -2.549424,
+              "z": -13.437934
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30044,
+                  "y": 0,
+                  "z": 0.06034342
+                },
+                "facing": 0.99993575,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.1266,
+                  "y": 0,
+                  "z": -0.03936155
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.0m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1538,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.521923,
+              "y": 1.9289628,
+              "z": -1.5943573
+            },
+            "vel": {
+              "x": 17.602892,
+              "y": -2.7263794,
+              "z": -13.371096
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30038,
+                  "y": 0,
+                  "z": 0.052315887
+                },
+                "facing": 0.99990904,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.152798,
+                  "y": 0,
+                  "z": -0.14764675
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.1m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1539,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.814495,
+              "y": 1.8818723,
+              "z": -1.8165859
+            },
+            "vel": {
+              "x": 17.515491,
+              "y": -2.9023232,
+              "z": -13.304708
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30034,
+                  "y": 0,
+                  "z": 0.047027163
+                },
+                "facing": 0.9998781,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.17919,
+                  "y": 0,
+                  "z": -0.2580955
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-2.1m)",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1540,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.105602,
+              "y": 1.8318588,
+              "z": -2.037712
+            },
+            "vel": {
+              "x": 17.428673,
+              "y": -3.0772681,
+              "z": -13.238759
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30032,
+                  "y": 0,
+                  "z": 0.044477247
+                },
+                "facing": 0.99984306,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.203472,
+                  "y": 0,
+                  "z": -0.36905763
+                },
+                "facing": -0.9875781,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1541,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.39527,
+              "y": 1.7789389,
+              "z": -2.2577434
+            },
+            "vel": {
+              "x": 17.342419,
+              "y": -3.2512245,
+              "z": -13.173242
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30032,
+                  "y": 0,
+                  "z": 0.044477247
+                },
+                "facing": 0.99980396,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.22581,
+                  "y": 0,
+                  "z": -0.4809901
+                },
+                "facing": -0.9506243,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1542,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.683506,
+              "y": 1.7231288,
+              "z": -2.476687
+            },
+            "vel": {
+              "x": 17.256718,
+              "y": -3.4242036,
+              "z": -13.108147
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30032,
+                  "y": 0,
+                  "z": 0.044477247
+                },
+                "facing": 0.99976104,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.24694,
+                  "y": 0,
+                  "z": -0.5947282
+                },
+                "facing": -0.8901455,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1543,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.97032,
+              "y": 1.6644449,
+              "z": -2.694549
+            },
+            "vel": {
+              "x": 17.171564,
+              "y": -3.596217,
+              "z": -13.043464
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30032,
+                  "y": 0,
+                  "z": 0.044477247
+                },
+                "facing": 0.99971443,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.269512,
+                  "y": 0,
+                  "z": -0.71009153
+                },
+                "facing": -0.80793124,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1544,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.255722,
+              "y": 1.6029031,
+              "z": -2.911337
+            },
+            "vel": {
+              "x": 17.08694,
+              "y": -3.7672734,
+              "z": -12.979185
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300335,
+                  "y": 0,
+                  "z": 0.04230508
+                },
+                "facing": 0.9996642,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.2942,
+                  "y": 0,
+                  "z": -0.8259429
+                },
+                "facing": -0.7063025,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1545,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.539715,
+              "y": 1.5385191,
+              "z": -3.1270573
+            },
+            "vel": {
+              "x": 17.002838,
+              "y": -3.937384,
+              "z": -12.915301
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.30037,
+                  "y": 0,
+                  "z": 0.03796076
+                },
+                "facing": 0.9996105,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.32106,
+                  "y": 0,
+                  "z": -0.9418617
+                },
+                "facing": -0.58769625,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          },
+          {
+            "tick": 1546,
+            "phase": "GoalScored",
+            "ball": {
+              "x": 52.82231,
+              "y": 1.4713088,
+              "z": -3.3417165
+            },
+            "vel": {
+              "x": 16.919245,
+              "y": -4.1065583,
+              "z": -12.851805
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.300423,
+                  "y": 0,
+                  "z": 0.03144432
+                },
+                "facing": 0.9995534,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Idle"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.350086,
+                  "y": 0,
+                  "z": -1.0576428
+                },
+                "facing": -0.45497623,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "Idle"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tick": 10739,
+        "scoringTeam": "Home",
+        "PlayerId": 10,
+        "defendingLastTouch": false,
+        "scorer": 10,
+        "ownGoal": null,
+        "details": "Goal! Score 2-0 (scorer #10)",
+        "lastKeeperContact": null,
+        "trace": [
+          {
+            "tick": 10725,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 47.783684,
+              "y": 2.2312727,
+              "z": 1.1616266
+            },
+            "vel": {
+              "x": 22.6431,
+              "y": 0.5839025,
+              "z": 8.610336
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29543,
+                  "y": 0,
+                  "z": -0.09037573
+                },
+                "facing": 0.99994713,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.61495,
+                  "y": 0,
+                  "z": -4.280967
+                },
+                "facing": 0.044083685,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10726,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 48.159977,
+              "y": 2.239187,
+              "z": 1.3047168
+            },
+            "vel": {
+              "x": 22.525316,
+              "y": 0.38776127,
+              "z": 8.56555
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.295635,
+                  "y": 0,
+                  "z": -0.085563555
+                },
+                "facing": 0.9999318,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.613136,
+                  "y": 0,
+                  "z": -4.269787
+                },
+                "facing": -0.1491364,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10727,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 48.534317,
+              "y": 2.2438438,
+              "z": 1.4470643
+            },
+            "vel": {
+              "x": 22.408539,
+              "y": 0.19289856,
+              "z": 8.521144
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.295723,
+                  "y": 0,
+                  "z": -0.083487764
+                },
+                "facing": 0.99991477,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.61347,
+                  "y": 0,
+                  "z": -4.2582703
+                },
+                "facing": -0.33688676,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10728,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 48.90672,
+              "y": 2.2452648,
+              "z": 1.5886753
+            },
+            "vel": {
+              "x": 22.292747,
+              "y": -0.00070559233,
+              "z": 8.477113
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.295723,
+                  "y": 0,
+                  "z": -0.083487764
+                },
+                "facing": 0.9998961,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.615948,
+                  "y": 0,
+                  "z": -4.2464123
+                },
+                "facing": -0.51194984,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10729,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.2772,
+              "y": 2.24347,
+              "z": 1.7295557
+            },
+            "vel": {
+              "x": 22.17792,
+              "y": -0.19307056,
+              "z": 8.433448
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.295723,
+                  "y": 0,
+                  "z": -0.083487764
+                },
+                "facing": 0.9998759,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.62057,
+                  "y": 0,
+                  "z": -4.234207
+                },
+                "facing": -0.6676802,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10730,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.645763,
+              "y": 2.2384584,
+              "z": 1.8697066
+            },
+            "vel": {
+              "x": 22.06403,
+              "y": -0.38422352,
+              "z": 8.39014
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29579,
+                  "y": 0,
+                  "z": -0.08131662
+                },
+                "facing": 0.99985415,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.62734,
+                  "y": 0,
+                  "z": -4.2216487
+                },
+                "facing": -0.7982549,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10731,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.012436,
+              "y": 2.2302725,
+              "z": 2.009139
+            },
+            "vel": {
+              "x": 21.951061,
+              "y": -0.5741743,
+              "z": 8.347182
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29593,
+                  "y": 0,
+                  "z": -0.076974295
+                },
+                "facing": 0.9998309,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.636246,
+                  "y": 0,
+                  "z": -4.2087297
+                },
+                "facing": -0.8330146,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10732,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.37724,
+              "y": 2.2189317,
+              "z": 2.1478586
+            },
+            "vel": {
+              "x": 21.838995,
+              "y": -0.7629404,
+              "z": 8.304568
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29613,
+                  "y": 0,
+                  "z": -0.07046076
+                },
+                "facing": 0.9998063,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.647293,
+                  "y": 0,
+                  "z": -4.1954427
+                },
+                "facing": -0.7734335,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10733,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.740177,
+              "y": 2.2044556,
+              "z": 2.2858713
+            },
+            "vel": {
+              "x": 21.727812,
+              "y": -0.95053905,
+              "z": 8.262289
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.2964,
+                  "y": 0,
+                  "z": -0.061775982
+                },
+                "facing": 0.99978036,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.66048,
+                  "y": 0,
+                  "z": -4.1817803
+                },
+                "facing": -0.69726056,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10734,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.101276,
+              "y": 2.186864,
+              "z": 2.4231822
+            },
+            "vel": {
+              "x": 21.617498,
+              "y": -1.1369869,
+              "z": 8.22034
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29673,
+                  "y": 0,
+                  "z": -0.05091994
+                },
+                "facing": 0.9997531,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.675808,
+                  "y": 0,
+                  "z": -4.1677365
+                },
+                "facing": -0.6031589,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10735,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.460545,
+              "y": 2.1661751,
+              "z": 2.5597973
+            },
+            "vel": {
+              "x": 21.508026,
+              "y": -1.3223,
+              "z": 8.178712
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.296978,
+                  "y": 0,
+                  "z": -0.042801507
+                },
+                "facing": 0.9997246,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.69327,
+                  "y": 0,
+                  "z": -4.1533065
+                },
+                "facing": -0.49201357,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10736,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.817993,
+              "y": 2.1424086,
+              "z": 2.6957216
+            },
+            "vel": {
+              "x": 21.39938,
+              "y": -1.5064943,
+              "z": 8.137398
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297142,
+                  "y": 0,
+                  "z": -0.037420686
+                },
+                "facing": 0.999695,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.71287,
+                  "y": 0,
+                  "z": -4.1384883
+                },
+                "facing": -0.36764708,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10737,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.173637,
+              "y": 2.1155825,
+              "z": 2.83096
+            },
+            "vel": {
+              "x": 21.291544,
+              "y": -1.6895846,
+              "z": 8.096394
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297222,
+                  "y": 0,
+                  "z": -0.034777477
+                },
+                "facing": 0.9996642,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.73461,
+                  "y": 0,
+                  "z": -4.1232805
+                },
+                "facing": -0.23648748,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10738,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.527493,
+              "y": 2.0857153,
+              "z": 2.965518
+            },
+            "vel": {
+              "x": 21.1845,
+              "y": -1.871586,
+              "z": 8.055688
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297222,
+                  "y": 0,
+                  "z": -0.034777477
+                },
+                "facing": 0.9996323,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.758488,
+                  "y": 0,
+                  "z": -4.1076813
+                },
+                "facing": -0.10603785,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          },
+          {
+            "tick": 10739,
+            "phase": "GoalScored",
+            "ball": {
+              "x": 52.87957,
+              "y": 2.0528247,
+              "z": 3.0994005
+            },
+            "vel": {
+              "x": 21.078228,
+              "y": -2.0525126,
+              "z": 8.015277
+            },
+            "touch": 10,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297287,
+                  "y": 0,
+                  "z": -0.03260617
+                },
+                "facing": 0.9995994,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 33.7845,
+                  "y": 0,
+                  "z": -4.0916905
+                },
+                "facing": 0.01708575,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "SprintDribble"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tick": 12752,
+        "scoringTeam": "Home",
+        "PlayerId": 7,
+        "defendingLastTouch": false,
+        "scorer": 7,
+        "ownGoal": null,
+        "details": "Goal! Score 3-0 (scorer #7)",
+        "lastKeeperContact": null,
+        "trace": [
+          {
+            "tick": 12738,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.171253,
+              "y": 2.029888,
+              "z": 0.057350077
+            },
+            "vel": {
+              "x": 16.275795,
+              "y": -2.4886065,
+              "z": -15.12415
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297634,
+                  "y": 0,
+                  "z": 0.17943421
+                },
+                "facing": 0.9999958,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.835274,
+                  "y": 0,
+                  "z": 0.83127475
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.5m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12739,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.44176,
+              "y": 1.9867479,
+              "z": -0.19401376
+            },
+            "vel": {
+              "x": 16.194908,
+              "y": -2.6658616,
+              "z": -15.048988
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.297844,
+                  "y": 0,
+                  "z": 0.16640265
+                },
+                "facing": 0.99999994,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.868046,
+                  "y": 0,
+                  "z": 0.7339
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.5m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12740,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.710926,
+              "y": 1.9406633,
+              "z": -0.44412968
+            },
+            "vel": {
+              "x": 16.114569,
+              "y": -2.8421028,
+              "z": -14.974334
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.298077,
+                  "y": 0,
+                  "z": 0.151199
+                },
+                "facing": 0.99999785,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.90135,
+                  "y": 0,
+                  "z": 0.6344187
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.5m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12741,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 49.978752,
+              "y": 1.8916507,
+              "z": -0.69300604
+            },
+            "vel": {
+              "x": 16.034763,
+              "y": -3.0173423,
+              "z": -14.900176
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.298332,
+                  "y": 0,
+                  "z": 0.13382322
+                },
+                "facing": 0.99998987,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.935097,
+                  "y": 0,
+                  "z": 0.5328118
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.6m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12742,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.245255,
+              "y": 1.8397268,
+              "z": -0.940651
+            },
+            "vel": {
+              "x": 15.955482,
+              "y": -3.1915917,
+              "z": -14.826504
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.298603,
+                  "y": 0,
+                  "z": 0.11427528
+                },
+                "facing": 0.99997604,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 50.96919,
+                  "y": 0,
+                  "z": 0.42906007
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.6m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12743,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.51044,
+              "y": 1.7849077,
+              "z": -1.1870724
+            },
+            "vel": {
+              "x": 15.876709,
+              "y": -3.3648622,
+              "z": -14.753306
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29889,
+                  "y": 0,
+                  "z": 0.092555165
+                },
+                "facing": 0.99995667,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.003494,
+                  "y": 0,
+                  "z": 0.32314646
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.6m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12744,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 50.774315,
+              "y": 1.72721,
+              "z": -1.4322783
+            },
+            "vel": {
+              "x": 15.798438,
+              "y": -3.5371644,
+              "z": -14.680573
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29914,
+                  "y": 0,
+                  "z": 0.0735737
+                },
+                "facing": 0.9999318,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.037838,
+                  "y": 0,
+                  "z": 0.21506095
+                },
+                "facing": -1,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:DiveSave(z=-1.6m)",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12745,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.036892,
+              "y": 1.6666495,
+              "z": -1.6762762
+            },
+            "vel": {
+              "x": 15.720656,
+              "y": -3.7085092,
+              "z": -14.6082945
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299355,
+                  "y": 0,
+                  "z": 0.05733089
+                },
+                "facing": 0.9999017,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.0701,
+                  "y": 0,
+                  "z": 0.1063587
+                },
+                "facing": -0.98756987,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12746,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.298176,
+              "y": 1.6032422,
+              "z": -1.9190738
+            },
+            "vel": {
+              "x": 15.643353,
+              "y": -3.8789065,
+              "z": -14.536462
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299534,
+                  "y": 0,
+                  "z": 0.04382673
+                },
+                "facing": 0.99986655,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.100418,
+                  "y": 0,
+                  "z": -0.0033156797
+                },
+                "facing": -0.95058614,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12747,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.558178,
+              "y": 1.5370038,
+              "z": -2.1606781
+            },
+            "vel": {
+              "x": 15.566521,
+              "y": -4.0483656,
+              "z": -14.465064
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299675,
+                  "y": 0,
+                  "z": 0.03306122
+                },
+                "facing": 0.9998264,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.12917,
+                  "y": 0,
+                  "z": -0.11449364
+                },
+                "facing": -0.89003277,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12748,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 51.816906,
+              "y": 1.4679497,
+              "z": -2.4010968
+            },
+            "vel": {
+              "x": 15.490146,
+              "y": -4.216896,
+              "z": -14.394093
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29978,
+                  "y": 0,
+                  "z": 0.025034362
+                },
+                "facing": 0.9997815,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.157616,
+                  "y": 0,
+                  "z": -0.22782232
+                },
+                "facing": -0.80760854,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12749,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.07436,
+              "y": 1.3960955,
+              "z": -2.6403365
+            },
+            "vel": {
+              "x": 15.414221,
+              "y": -4.384506,
+              "z": -14.32354
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.29985,
+                  "y": 0,
+                  "z": 0.019746155
+                },
+                "facing": 0.9997319,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.187595,
+                  "y": 0,
+                  "z": -0.34268713
+                },
+                "facing": -0.7057379,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12750,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.330555,
+              "y": 1.3214564,
+              "z": -2.8784041
+            },
+            "vel": {
+              "x": 15.338737,
+              "y": -4.551207,
+              "z": -14.253396
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299885,
+                  "y": 0,
+                  "z": 0.017196598
+                },
+                "facing": 0.9996778,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.21962,
+                  "y": 0,
+                  "z": -0.45828986
+                },
+                "facing": -0.58712554,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12751,
+            "phase": "FirstHalf",
+            "ball": {
+              "x": 52.585495,
+              "y": 1.2440473,
+              "z": -3.1153066
+            },
+            "vel": {
+              "x": 15.263682,
+              "y": -4.7170053,
+              "z": -14.183652
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299885,
+                  "y": 0,
+                  "z": 0.017196598
+                },
+                "facing": 0.99961936,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.253788,
+                  "y": 0,
+                  "z": -0.5742471
+                },
+                "facing": -0.45465243,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          },
+          {
+            "tick": 12752,
+            "phase": "GoalScored",
+            "ball": {
+              "x": 52.83919,
+              "y": 1.1638831,
+              "z": -3.3510501
+            },
+            "vel": {
+              "x": 15.189051,
+              "y": -4.88191,
+              "z": -14.114301
+            },
+            "touch": 7,
+            "keepers": [
+              {
+                "Id": 1,
+                "pos": {
+                  "x": -48.299885,
+                  "y": 0,
+                  "z": 0.017196598
+                },
+                "facing": 0.9995567,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:AngleBisect",
+                "exec": "Kick:LoftedPass Pwr=72% Align=100%"
+              },
+              {
+                "Id": 12,
+                "pos": {
+                  "x": 51.290123,
+                  "y": 0,
+                  "z": -0.69035244
+                },
+                "facing": -0.31151712,
+                "KickRecoveryTimer": 0,
+                "cmd": "GK:Rush1v1Sweep",
+                "exec": "GK:ReflexParry"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
