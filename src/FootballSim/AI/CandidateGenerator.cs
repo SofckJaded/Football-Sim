@@ -131,7 +131,18 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// ball would put him, so the lead is bounded. A through ball gets a longer leash
     /// (<see cref="RunPassMaxLeadMeters"/>) because it is explicitly played into space.
     /// </summary>
-    internal const float FeetPassMaxLeadMeters = 12f;
+    /// <summary>
+    /// Longest lead a normal pass may give a moving receiver, in metres.
+    ///
+    /// A pass is played to where the runner will be when the ball arrives, and the planner refuses a
+    /// meeting beyond this bound instead of freezing the runner at it (A4.11). The value is deliberately
+    /// small: a "pass to feet" that led a runner twelve metres completed 79 % of the time and read, in a
+    /// rendered session, as a ball that had gone to nobody. At four metres the reference match completes
+    /// **88 %/89 %** on both sides, because the ball now arrives where the man is rather than where he
+    /// would be if he sprinted on. A ball into real space is the `ToRun` variant, which has its own,
+    /// longer leash and pays the lead charge in the pass model.
+    /// </summary>
+    internal const float FeetPassMaxLeadMeters = 6f;
 
     /// <summary>Longest lead a pass into a run region may give, in metres (A4.1's ToRun variant).</summary>
     internal const float RunPassMaxLeadMeters = 25f;
@@ -612,7 +623,10 @@ public sealed class CandidateGenerator : IAiStateResettable
             option.LeadMeters,
             option.LeadDirection,
             option.MaxLeadMeters,
-            option.MinPower01);
+            option.MinPower01,
+            // A human receiver may turn or stop at any moment, so his ball is aimed no further ahead than
+            // the bound; an AI receiver is solved honestly and refused beyond it (A4.11).
+            freezeReceiverAtLeadBound: option.HumanCaller);
 
         Vector2 targetXZ;
         Vector2 aimDirection;
@@ -809,7 +823,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 aheadXZ = new(
             mate.EstimatedPosition.X + obs.AttackingDirectionX * ThroughLeadMeters,
             mate.EstimatedPosition.Z);
-        return EvaluateSpaceFreedom(aheadXZ, obs.VisiblePlayers, obs.SelfTeam) > 0.55f;
+        // A4.11: the room ahead was 5 m before the feet-pass lead was tightened. Refusing a feet pass to
+        // a runner removed the AI's forward option in the final third, where the room ahead is rarely
+        // 5 m, and the side stopped shooting in short matches; 3.6 m of room is enough for a ball into
+        // the space ahead to be worth offering.
+        return EvaluateSpaceFreedom(aheadXZ, obs.VisiblePlayers, obs.SelfTeam) > 0.40f;
     }
 
     // ---------------------------------------------------------------------------------------------

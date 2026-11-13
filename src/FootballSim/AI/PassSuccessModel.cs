@@ -70,7 +70,11 @@ public sealed class PassSuccessModel
     /// <summary>
     /// How close to the pass line an opponent's body has to be for the ball to run into their reach.
     /// Execution lets a body within <c>ReachRadius × 1.10 ≈ 0.83 m</c> play the ball; this leaves a
-    /// margin for the predicted positions.
+    /// margin for the predicted positions. A *pressing* defender can reach further (~1.21 m) because he
+    /// asks for a tackle, and A4.8 records that mismatch: widening this to 1.25 m halved the source-block
+    /// interceptions on a thirty-minute segment (eight within two metres of the passer to one) but also
+    /// flagged stationary defenders 1.5 m off the lane, and the A/B did not improve completion, so the
+    /// number stays and A6's press policy owns it.
     /// </summary>
     public const float LaneContactReachMeters = 0.9f;
 

@@ -1002,6 +1002,44 @@ intended direction — the alternative was 200 passes a match that nobody receiv
 
 ---
 
+## 2026-11-13 — the lead is a bound, not a frozen runner (simulation version `ai20-rs1`)
+
+Files: `a4-lead-bound-tactical-gate.txt`, `a4-lead-bound-11v11.txt`, `a4-lead-bound-perf.txt`.
+
+A tick-by-tick trace of real passes found three things: the aim was a correct lead, the losses were
+tackles 1.8 m from the passer's boot, and the assisted **human** pass (plus the keeper's distribution and
+the recycle) was using `PlanGroundPass`'s 60 m default lead — the one path a player actually uses had no
+bound while the AI's was 12 m. The planner also froze the receiver at the bound, which reported an
+uncatchable sprinter as catchable and aimed the ball at a point the runner had left.
+
+Fixed: `PassPlanner.DefaultMaxLeadMeters` = 12 m; the solve models the real velocity and refuses a lead
+beyond the bound (the power search then tries a firmer ball); human paths freeze deliberately; the AI's
+feet pass is bounded at 6 m and the run-space gate is 3.6 m.
+
+### 11v11 headless match — `a4-lead-bound-11v11.txt`
+
+| Metric | ai18 | ai19 | ai20 |
+| :--- | ---: | ---: | ---: |
+| Ticks | 326 312 | 325 632 | 325 704 |
+| Score | 3 – 0 | 6 – 1 | 0 – 3 |
+| Possession | 51.2 / 48.8 | 52.8 / 47.2 | 50.8 / 49.2 |
+| Passes | 588 / 642 (71 / 74 %) | 407 / 440 (79 / 82 %) | **435 / 424 (82 / 83 %)** |
+| Shots | 41 / 8 | 34 / 18 | 33 / 27 |
+| Width (all-tick) | 44.3 / 41.6 | 44.8 / 40.8 | 44.4 / 40.9 |
+
+A 4 m feet lead reached 88/89 % but removed the final-third option and a four-minute seed stopped shooting;
+6 m plus the 3.6 m run-space gate is the shipped pair.
+
+### Tactical differentiation gate — `a4-lead-bound-tactical-gate.txt`
+
+5 seeds × 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.62 m**. **PASS.**
+
+### Performance — `a4-lead-bound-perf.txt`
+
+161.1 µs mean, p99 506.9 µs, 64 983 B/tick.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

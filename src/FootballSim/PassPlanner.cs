@@ -74,6 +74,16 @@ public sealed class PassPlanner
     public float MaxPassDistance => _calibration.RangeAtArrivalSpeed[PowerSamples - 1];
 
     /// <summary>
+    /// Longest lead a normal pass gives a moving receiver, in metres. A pass is played to where the
+    /// runner will be when the ball arrives, not to where a five-second ball would put him, so the lead
+    /// has to be bounded. The default is the same 12 m the AI's feet pass uses: callers that do not
+    /// think about the lead (the assisted human pass, the keeper's distribution, a recycle) used to get
+    /// a 60 m leash, which is how a "pass to feet" turned into a punt at a runner — measured as a 43 m
+    /// ball to a team-mate twelve metres away before A4.2 bounded the AI path.
+    /// </summary>
+    public const float DefaultMaxLeadMeters = 12f;
+
+    /// <summary>
     /// Plans a pass to a moving receiver. <paramref name="extraLeadMeters"/> pushes the target
     /// further into space along <paramref name="extraLeadDirection"/> (through balls / runs).
     /// </summary>
@@ -85,8 +95,9 @@ public sealed class PassPlanner
         float receiverMaxSpeed,
         float extraLeadMeters = 0f,
         Vector2 extraLeadDirection = default,
-        float maxLeadMeters = 60f,
-        float minPower01 = 0f)
+        float maxLeadMeters = DefaultMaxLeadMeters,
+        float minPower01 = 0f,
+        bool freezeReceiverAtLeadBound = false)
     {
         _ = receiverId; // kept so callers can tag plans with their receiver
 
@@ -109,7 +120,7 @@ public sealed class PassPlanner
             powerIndex = Math.Max(powerIndex, minPowerIndex);
         }
 
-        if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out float flightTime))
+        if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out float flightTime))
         {
             // A slow pass can be a metre short of a moving receiver, so the power steps up until one
             // connects. It steps one notch at a time rather than jumping to full power: the old code
@@ -119,7 +130,7 @@ public sealed class PassPlanner
             powerIndex = -1;
             for (int candidate = PowerIndexForDistance(straightLineDistance) + 1; candidate < PowerSamples; candidate++)
             {
-                if (!TrySolveArrivalTime(candidate, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out flightTime))
+                if (!TrySolveArrivalTime(candidate, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out flightTime))
                     continue;
 
                 powerIndex = candidate;
@@ -139,7 +150,7 @@ public sealed class PassPlanner
         if (distance > _calibration.RangeAtArrivalSpeed[powerIndex] + 0.5f)
         {
             powerIndex = Math.Max(PowerIndexForDistance(distance), PowerIndexForCrispDistance(distance));
-            if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, out flightTime))
+            if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out flightTime))
                 return Infeasible(distance);
 
             target = ClampToPitch(receiverPositionXZ
@@ -217,6 +228,13 @@ public sealed class PassPlanner
     /// and the distance to where the receiver will be. A perpendicular runner can never be met
     /// exactly (their radial speed approaches the decaying ball speed), so "closest approach" — the
     /// same quantity the acceptance criteria measure — is the right objective.
+    ///
+    /// The receiver is modelled at his real velocity for the whole flight, and the resulting lead is
+    /// then checked against <paramref name="maxLeadMeters"/>. It used to be the other way round — the
+    /// receiver was *frozen* at the bound — which made the planner claim it could meet a sprinter it had
+    /// actually left behind (the ball was aimed at the frozen point while the runner kept going), and
+    /// let a pass to an uncatchable runner be reported feasible. A lead beyond the bound is a punt, so it
+    /// is refused and the power search tries a firmer ball, which shortens the flight and the lead.
     /// </summary>
     private bool TrySolveArrivalTime(
         int powerIndex,
@@ -225,6 +243,7 @@ public sealed class PassPlanner
         Vector2 receiverVelocityXZ,
         Vector2 extraLead,
         float maxLeadMeters,
+        bool freezeReceiverAtLeadBound,
         out float flightTime)
     {
         flightTime = 0f;
@@ -240,12 +259,15 @@ public sealed class PassPlanner
                 break; // the ball has stopped; later times cannot help
             previousBallDistance = ballDistance;
 
-            // A human receiver may turn or stop at any moment, so the lead is bounded: without this a
-            // sprinting caller is "led" 15+ m upfield and the pass looks like it was aimed at nobody.
-            Vector2 receiverAtTime = receiverPositionXZ
-                + ClampVectorLength(receiverVelocityXZ * t, maxLeadMeters)
-                + extraLead;
-            float required = Vector2.Distance(originXZ, receiverAtTime);
+            // A human receiver may turn or stop at any moment, so his caller's pass is aimed no further
+            // ahead than the bound even though he would run past it — the hedge is the point. An AI
+            // receiver is solved honestly: a lead beyond the bound is a punt, and it is refused rather
+            // than frozen, because freezing the runner planned a ball he had already left behind.
+            Vector2 lead = freezeReceiverAtLeadBound
+                ? ClampVectorLength(receiverVelocityXZ * t, maxLeadMeters) + extraLead
+                : receiverVelocityXZ * t + extraLead;
+
+            float required = Vector2.Distance(originXZ, receiverPositionXZ + lead);
             float miss = MathF.Abs(required - ballDistance);
 
             if (miss < bestMiss)
@@ -255,8 +277,17 @@ public sealed class PassPlanner
             }
         }
 
+        if (bestMiss > MaxMeetingMiss) return false;
+
+        if (!freezeReceiverAtLeadBound)
+        {
+            float lead = Vector2.Distance(
+                receiverPositionXZ, receiverPositionXZ + receiverVelocityXZ * bestTime + extraLead);
+            if (lead > maxLeadMeters) return false;
+        }
+
         flightTime = bestTime;
-        return bestMiss <= MaxMeetingMiss;
+        return true;
     }
 
     private static Vector2 ClampVectorLength(Vector2 v, float maxLength)

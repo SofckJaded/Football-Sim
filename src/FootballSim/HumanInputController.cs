@@ -564,8 +564,9 @@ public sealed class HumanInputController : IFootballerController
         {
             if (mate.Team != obs.SelfTeam) continue;
 
-            // Aim at teammate's feet with a small velocity lead so a moving teammate traps it in stride
-            Vector3 targetPos = mate.EstimatedPosition + mate.EstimatedVelocity * 0.25f;
+            // The planner leads the receiver by the modelled flight time, so the selection point is his
+            // actual position: adding a second, fixed 0.25 s lead here double-counted the run (A4.11).
+            Vector3 targetPos = mate.EstimatedPosition;
             Vector2 mateXZ = new(targetPos.X, targetPos.Z);
             Vector2 toMate = mateXZ - selfXZ;
             float dist = toMate.Length();
@@ -604,13 +605,19 @@ public sealed class HumanInputController : IFootballerController
         if (!found) return false;
 
         // Audit F01: use the shared planner instead of a fixed 0.25 s lead and a distance-scaled power,
-        // so an assisted pass actually reaches the receiver at the moment the ball arrives.
+        // so an assisted pass actually reaches the receiver at the moment the ball arrives. A4.11: the
+        // lead is bounded by the planner's default (12 m) — this call used to rely on the old 60 m
+        // default, which turned an assisted ball to a runner into a punt he could never reach.
         var plan = _passPlanner.PlanGroundPass(
             new Vector2(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z),
             bestMateId,
             bestTargetXZ,
             bestMateVelocityXZ,
-            MaxReceivableSpeed);
+            MaxReceivableSpeed,
+            // The human is passing to a human-shaped receiver: aim no further ahead than the bound even
+            // if he would run past it, because a human may stop. A4.11 bounded the default lead; this
+            // flag keeps the friendly hedge that the old 60 m default accidentally provided.
+            freezeReceiverAtLeadBound: true);
 
         if (!plan.Feasible)
             return false;

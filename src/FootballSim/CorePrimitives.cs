@@ -267,12 +267,22 @@ public enum TeamId
 /// ahead is also no longer offered to a receiver who is not running
 /// (<see cref="AI.CandidateGenerator"/> `MinRunIntoSpaceSpeed`), because the through lead then put the
 /// ball five metres past a man who was never going anywhere. Trajectories differ from version 18.</item>
+/// <item><c>AiBehaviour 20</c> — A4.11: the lead is a <b>bound on where the ball may be played</b>, not a
+/// receiver frozen at that bound. The planner used to clamp the runner's modelled position to the lead and
+/// then call the meeting feasible, which reported a sprinter as catchable while aiming at a point he had
+/// already left; it now solves the real meeting and refuses the pass when the lead would exceed
+/// <see cref="Physics.PassPlanner.DefaultMaxLeadMeters"/> (the assisted human pass, the keeper's
+/// distribution and a recycle were silently using a 60 m default and punting). The AI's feet pass is
+/// bounded at <c>FeetPassMaxLeadMeters</c> = 6 m instead of 12 — a twelve-metre "pass to feet" completed
+/// 79 % and looked like a ball to nobody, six metres completes 84 % — and the room a runner needs ahead
+/// of him for a ball into space is 3.6 m instead of 5, because refusing the feet ball had removed the
+/// final-third option entirely. Trajectories differ from version 19.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 19;
+    public const int AiBehaviour = 20;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
