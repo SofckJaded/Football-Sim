@@ -119,7 +119,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
     /// <summary>
     /// This player's off-ball path set and adopted run (A5.1/A5.2). Diagnostics and tests read it; A5.3
-    /// will publish the intent to the carrier.
+    /// publishes the adopted intent to the team's board.
     /// </summary>
     public RunCandidateGenerator Runs => _generator.Runs;
 

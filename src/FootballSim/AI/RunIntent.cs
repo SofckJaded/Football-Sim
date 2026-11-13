@@ -111,8 +111,9 @@ public readonly record struct RunPath(
 /// Adoption is what makes a run a run: the meeting region is <b>frozen</b> for the life of the intent, so
 /// the target does not chase the ball and the player does not re-decide every tick which space he is
 /// attacking. The intent ends on its expiry, or when the duty changes, the ball leaves, the region is no
-/// longer legally receivable, or the player simply chooses something else. A5.3 advertises this object
-/// (with a communication delay) to the carrier; before that, it is local to the runner.
+/// longer legally receivable, or the player simply chooses something else. A5.3 announces this object to
+/// the team (with a communication delay) through <see cref="RunAdvertisementBoard"/>; a claim on it extends
+/// the window to the ball's arrival.
 /// </summary>
 public readonly record struct RunIntent(RunPath Path, TacticalJob Duty, int AdoptedTick)
 {

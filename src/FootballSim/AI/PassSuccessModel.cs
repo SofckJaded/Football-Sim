@@ -185,11 +185,16 @@ public sealed class PassSuccessModel
     /// Largest share of a pass's completion that is charged for leading a runner (A4.10).
     ///
     /// A pass is aimed at where the receiver will be when the ball arrives, which for a moving receiver is
-    /// metres ahead of him. That is a bet that the run continues, and nothing in the simulation makes it
-    /// continue: the runner's own controller is pursuing his duty, not the pass (A5.3 owns the commitment).
+    /// metres ahead of him. That is a bet that the run continues, and without a promise nothing in the
+    /// simulation makes it continue: the runner's own controller is pursuing his duty, not the pass.
     /// Measured on the reference segment, a ball led 10–12 m completed worse than the same ball played to a
     /// man who was already there, and the failures were the runs that stopped. The model used to assume the
     /// run for free and rated those balls at p ≈ 0.92.
+    ///
+    /// A5.3 made the bet unnecessary where it can be made explicit: a runner who has advertised his meeting
+    /// region is priced by that promise (confidence × timing) and this charge is not applied at all, because
+    /// the same doubt must not cost twice. This constant therefore governs the <b>unpromised</b> lead only —
+    /// a ball to feet, and a ball into space nobody has announced.
     /// </summary>
     public const float LeadRisk01 = 0.20f;
 
