@@ -147,6 +147,13 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Longest lead a pass into a run region may give, in metres (A4.1's ToRun variant).</summary>
     internal const float RunPassMaxLeadMeters = 25f;
 
+    /// <summary>
+    /// Candidate tag of a pass played into a run region (A4.1's <c>ToRun</c> variant, A5.3's promised
+    /// variant). Public because it is a candidate identity — commitment, the claim path and the inspector
+    /// all recognise the action by it — not a tuning number.
+    /// </summary>
+    public const string RunPassTag = "ToRun";
+
     // A4.4: every action's value is expressed in ActionValueScale's documented unit — one clean possession
     // retained in midfield. A pass composes `reach × receptionValue − (1 − reach) × loss`, with the loss
     // term as the single owner of transition risk; the carry, shield, clearance and take-on curves keep
@@ -219,7 +226,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         _passPlanner = new PassPlanner(pitch);
         _passSuccess = new PassSuccessModel(_passPlanner);
         _receptionValue = new ReceptionValueModel(pitch);
-        _runs = new RunCandidateGenerator(pitch);
+        // A5.3: the runs this player adopts are announced on the match's own communication board (null
+        // when there is no match communication: a probe or a unit test built without one).
+        _runs = new RunCandidateGenerator(pitch, communication?.Runs);
     }
 
     /// <summary>
@@ -282,11 +291,26 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// Tells the run generator what this decision actually chose (A5.2). A chosen run path is adopted with
-    /// its meeting region frozen for its window; any other choice ends the previous run.
+    /// Tells the run generator what this decision actually chose (A5.2), and raises the claim that keeps a
+    /// promised runner committed (A5.3).
     /// </summary>
-    public void NoteDecision(in CandidateKey key, TacticalJob duty, int tick) =>
-        _runs.NoteSelected(key, duty, tick);
+    public void NoteDecision(in FootballerObservation obs, in CandidateKey key)
+    {
+        _runs.NoteSelected(obs, key);
+
+        // A pass into an advertised region is a promise in the other direction: the runner has announced
+        // he will be there, the carrier has played the ball to that region, and the runner holds it until
+        // the ball has had time to arrive. Raised once per selection from the region's own meeting tick, so
+        // it is a statement about a ball rather than a per-tick re-issue.
+        if (key.Kind == CandidateKind.Pass && key.TargetPlayerId > 0 &&
+            string.Equals(key.TargetTag, RunPassTag, StringComparison.Ordinal) &&
+            _communication is not null &&
+            _communication.Runs.TryGetAdvertisement(obs.SelfTeam, key.TargetPlayerId, obs.Tick, out RunAdvertisement advert))
+        {
+            _communication.Runs.Claim(obs.SelfTeam, key.TargetPlayerId, obs.SelfId, advert.MeetTick, obs.Tick);
+        }
+    }
+
     /// <summary>
     /// Generates the carrier's candidate set for one decision (A4.1).
     ///
@@ -383,7 +407,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         float MinPower01,
         KickIntentType PassType,
         string Tag,
-        bool HumanCaller);
+        bool HumanCaller,
+        PassArrivalPromise Promise = default);
 
     /// <summary>
     /// Every feasible pass the carrier can play (A4.1), scored with A4.2's success model.
@@ -464,18 +489,8 @@ public sealed class CandidateGenerator : IAiStateResettable
                 Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false);
             anyGroundPass = TryAddGroundPass(obs, mate, feet, ballXZ, selfXZ, forwardMeters, out bool feetBlocked);
 
-            if (RunsIntoSpace(obs, mate, offsideLineProjX))
+            if (TryBuildRunPassOption(obs, mate, offsideLineProjX, out PassOption run))
             {
-                var run = new PassOption(
-                    LeadDirection: mateVelocityXZ.Length() > 0.5f
-                        ? Vector2.Normalize(mateVelocityXZ)
-                        : new Vector2(obs.AttackingDirectionX, 0f),
-                    LeadMeters: ThroughLeadMeters,
-                    MaxLeadMeters: RunPassMaxLeadMeters,
-                    MinPower01: 0f,
-                    PassType: KickIntentType.ThroughPass,
-                    Tag: "ToRun",
-                    HumanCaller: false);
                 anyGroundPass |= TryAddGroundPass(obs, mate, run, ballXZ, selfXZ, forwardMeters, out bool runBlocked);
                 feetBlocked |= runBlocked;
             }
@@ -489,6 +504,65 @@ public sealed class CandidateGenerator : IAiStateResettable
         {
             if (AddLoftedPass(obs, mate, ballXZ)) loftedBudget--;
         }
+    }
+
+    /// <summary>
+    /// Builds the pass into the runner (A4.1's <c>ToRun</c>), in two forms (A5.3).
+    ///
+    /// When the team has heard this receiver advertise a run, the option is that region and that arrival:
+    /// the ball is timed to where he said he will be, and the pass model prices the promise instead of
+    /// guessing a lead from his velocity. Nothing is added on top of the advertised region — a ten-metre
+    /// push past it would be exactly the blindness A5.3 removes.
+    ///
+    /// Without an advertisement the pre-A5.3 variant stands: a genuine run (a receiver moving at all, not
+    /// coming back, with room ahead) led by <see cref="ThroughLeadMeters"/> along his run. It is kept
+    /// because most off-ball players have no advertised region at any given instant — the run set is
+    /// bounded per duty — and a side that only ever passed to announced runs would stop playing into
+    /// space entirely.
+    /// </summary>
+    private bool TryBuildRunPassOption(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        float offsideLineProjX,
+        out PassOption option)
+    {
+        option = default;
+
+        if (_communication is not null &&
+            _communication.Runs.TryGetAdvertisement(obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert) &&
+            advert.MeetTick > obs.Tick)
+        {
+            float arriveInSeconds = advert.TicksUntilMeeting(obs.Tick) * SimConstants.FixedDeltaTime;
+            option = new PassOption(
+                LeadDirection: Vector2.Zero,
+                LeadMeters: 0f,
+                MaxLeadMeters: RunPassMaxLeadMeters,
+                MinPower01: 0f,
+                PassType: KickIntentType.ThroughPass,
+                Tag: RunPassTag,
+                HumanCaller: false,
+                Promise: new PassArrivalPromise(
+                    advert.MeetXZ,
+                    arriveInSeconds,
+                    advert.MeetRadiusMeters,
+                    advert.Promise01(obs.Tick)));
+            return true;
+        }
+
+        if (!RunsIntoSpace(obs, mate, offsideLineProjX)) return false;
+
+        Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
+        option = new PassOption(
+            LeadDirection: mateVelocityXZ.Length() > 0.5f
+                ? Vector2.Normalize(mateVelocityXZ)
+                : new Vector2(obs.AttackingDirectionX, 0f),
+            LeadMeters: ThroughLeadMeters,
+            MaxLeadMeters: RunPassMaxLeadMeters,
+            MinPower01: 0f,
+            PassType: KickIntentType.ThroughPass,
+            Tag: RunPassTag,
+            HumanCaller: false);
+        return true;
     }
 
     /// <summary>
@@ -631,19 +705,26 @@ public sealed class CandidateGenerator : IAiStateResettable
         // ball (not the player's centre) and leads the receiver by the modelled flight time — the old
         // code advanced the receiver by at most 0.35 s while the ball was in flight for well over a
         // second (measured 8.07 m miss on a 20 m pass).
-        PassPlan plan = _passPlanner.PlanGroundPass(
-            ballXZ,
-            mate.PlayerId,
-            mateXZ,
-            mateVelocityXZ,
-            MaxReceivableSpeed,
-            option.LeadMeters,
-            option.LeadDirection,
-            option.MaxLeadMeters,
-            option.MinPower01,
-            // A human receiver may turn or stop at any moment, so his ball is aimed no further ahead than
-            // the bound; an AI receiver is solved honestly and refused beyond it (A4.11).
-            freezeReceiverAtLeadBound: option.HumanCaller);
+        //
+        // A5.3: when the receiver has advertised a meeting region there is nothing to lead. The target is
+        // that region and the power is whatever gets the ball there when he does; a region no power can
+        // reach in time is not offered at all rather than played as a different ball.
+        PassPlan plan = option.Promise.IsPresent
+            ? _passPlanner.PlanGroundPassToRegion(
+                ballXZ, option.Promise.TargetXZ, option.Promise.ArrivalSeconds, option.MinPower01)
+            : _passPlanner.PlanGroundPass(
+                ballXZ,
+                mate.PlayerId,
+                mateXZ,
+                mateVelocityXZ,
+                MaxReceivableSpeed,
+                option.LeadMeters,
+                option.LeadDirection,
+                option.MaxLeadMeters,
+                option.MinPower01,
+                // A human receiver may turn or stop at any moment, so his ball is aimed no further ahead
+                // than the bound; an AI receiver is solved honestly and refused beyond it (A4.11).
+                freezeReceiverAtLeadBound: option.HumanCaller);
 
         Vector2 targetXZ;
         Vector2 aimDirection;
@@ -682,7 +763,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         // Lane clearance must be judged against the point the pass is actually aimed at.
         float laneOpenness = EvaluateLaneClearance(ballXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam);
-        PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, plan, laneOpenness);
+        PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, plan, laneOpenness, option.Promise);
         laneBlocked = terms.LaneBlocked;
 
         // Hard rejection for a clearly blocked ground pass survives (A4.2), and a pass the model prices

@@ -255,6 +255,9 @@ public static class Program
         Console.WriteLine($"Mean Team Width   : Home {a.HomeAverageTeamWidthMeters:F1}m | Away {a.AwayAverageTeamWidthMeters:F1}m");
         Console.WriteLine($"Kicks (execution) : {executedKicks} executed / {requestedKicks} requested | refused "
                           + (refusalReasons.Count == 0 ? "none" : string.Join(", ", refusalReasons)));
+        Console.WriteLine($"Run adverts (A5.3): {engine.Communication.Runs.PublishedCount} published | "
+                          + $"{engine.Communication.Runs.WithdrawnCount} withdrawn | "
+                          + $"{engine.Communication.Runs.ClaimedCount} claims by a carrier");
         Console.WriteLine($"Events Logged     : {engine.Rules.Events.Count}");
 
         return completed;

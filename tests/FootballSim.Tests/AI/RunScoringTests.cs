@@ -309,7 +309,7 @@ public sealed class RunScoringTests
         }
 
         Assert.True(found, "the depth world must offer an in-behind path");
-        generator.NoteSelected(RunTags.KeyOf(RunKind.InBehind), TacticalJob.DepthRun, obs.Tick);
+        generator.NoteSelected(obs, RunTags.KeyOf(RunKind.InBehind));
         return chosen;
     }
 
@@ -371,8 +371,7 @@ public sealed class RunScoringTests
         AdoptInBehind(generator, obs);
         Assert.NotNull(generator.Intent);
 
-        generator.NoteSelected(new CandidateKey(CandidateKind.Shape, TargetTag: "support"),
-            TacticalJob.DepthRun, obs.Tick);
+        generator.NoteSelected(obs, new CandidateKey(CandidateKind.Shape, TargetTag: "support"));
 
         Assert.Null(generator.Intent);
     }
@@ -414,7 +413,7 @@ public sealed class RunScoringTests
         AdoptInBehind(generator, obs);
         int adoptedAt = generator.Intent!.Value.AdoptedTick;
 
-        generator.NoteSelected(RunTags.KeyOf(RunKind.InBehind), TacticalJob.DepthRun, obs.Tick + 5);
+        generator.NoteSelected(DepthObservation(tick: obs.Tick + 5), RunTags.KeyOf(RunKind.InBehind));
 
         Assert.Equal(adoptedAt, generator.Intent!.Value.AdoptedTick);
     }

@@ -33,6 +33,45 @@ public readonly record struct PassSuccessTerms(
 
     /// <summary>Worst-case (nothing known) estimate: no line, no probability.</summary>
     public static PassSuccessTerms None => new(0f, false, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 1f, 0f);
+
+    /// <summary>
+    /// The share of completion this pass lost to the lead (A4.10), after A5.3's promise discount. Zero for
+    /// a promised ball, because the promise is priced in the completion itself; exposed so a trace can say
+    /// which of the two terms charged what.
+    /// </summary>
+    public float LeadCharge01 { get; init; }
+
+    /// <summary>True when the receiver's arrival was announced by an advertised run (A5.3).</summary>
+    public bool PromisedArrival { get; init; }
+
+    /// <summary>The runner's own confidence in the advertised meeting (0 when nothing was promised).</summary>
+    public float PromisedConfidence01 { get; init; }
+}
+
+/// <summary>
+/// A team-mate's promise (A5.3): the region he has committed to meet the ball in, when he plans to be
+/// there, how wide that region is, and how sure he is of it.
+///
+/// This is the carrier's side of a run advertisement, expressed in the pass model's own terms so nothing
+/// else in the model has to know what a run is. It is a statement by a team-mate — permitted
+/// communication — and carries no opponent position, no ball trajectory and no live attribute. Its
+/// absence (<see cref="None"/>) is the pre-A5.3 world: the model estimates the receiver's arrival itself.
+/// </summary>
+public readonly record struct PassArrivalPromise(
+    Vector2 TargetXZ,
+    float ArrivalSeconds,
+    float MeetRadiusMeters,
+    float Confidence01)
+{
+    /// <summary>No promise: the pass model falls back to estimating the receiver's arrival itself.</summary>
+    public static PassArrivalPromise None => default;
+
+    /// <summary>True when there is a promise worth pricing.</summary>
+    public bool IsPresent =>
+        Confidence01 > 0f &&
+        float.IsFinite(ArrivalSeconds) &&
+        float.IsFinite(MeetRadiusMeters) &&
+        SimMath.IsFinite(TargetXZ);
 }
 
 /// <summary>
@@ -49,7 +88,9 @@ public readonly record struct PassSuccessTerms(
 /// (A2.3), so a scouted faster defender lowers the estimate and an unscouted one is assumed neutral.</item>
 /// <item><b>One risk owner.</b> The completion probability is the only probability this model returns.
 /// The pass score multiplies it by a gain and charges <c>1−p</c> at the loss cost; the reception value
-/// (A4.3) adds value on top and must not subtract transition risk again.</item>
+/// (A4.3) adds value on top and must not subtract transition risk again. The lead is the same rule: an
+/// unpromised lead is charged here (<see cref="LeadRisk01"/>), and a promised one is priced through the
+/// promise's own confidence instead — never both (A5.3).</item>
 /// <item><b>No duplicate penalties.</b> The receiver's reaction time is not charged here: the reach
 /// model's acceleration ramp is exactly the cost of a player who has not started moving yet. Only an
 /// <i>opponent's</i> reaction is charged separately, because a defender who has not read the pass is not
@@ -155,6 +196,19 @@ public sealed class PassSuccessModel
     /// <summary>Lead at which half of <see cref="LeadRisk01"/> is charged, in metres.</summary>
     public const float LeadRiskScaleMeters = 8f;
 
+    /// <summary>
+    /// Pace at which a promised meeting region is crossed, in m/s. It turns the region's width into a
+    /// timing tolerance: a ball may arrive half a region early or late and still meet the runner inside the
+    /// space he promised, which is a fraction of a second at this pace.
+    /// </summary>
+    public const float PromisedRegionCrossSpeed = 6.5f;
+
+    /// <summary>Smallest timing tolerance a promised meeting gets, in seconds (a dot of a region).</summary>
+    public const float MinPromisedArrivalToleranceSeconds = 0.15f;
+
+    /// <summary>Largest timing tolerance a promised meeting gets, in seconds (a very wide region).</summary>
+    public const float MaxPromisedArrivalToleranceSeconds = 0.50f;
+
     /// <summary>Ground acceleration assumed for the raised alternative's kinematic flight (m/s²).</summary>
     public const float Gravity = 9.81f;
 
@@ -171,13 +225,15 @@ public sealed class PassSuccessModel
     /// <summary>
     /// Estimates a planned ground pass. <paramref name="laneClearance01"/> is the caller's lane metric
     /// (<see cref="CandidateGenerator.EvaluateLaneClearance"/>); it is passed in rather than recomputed so
-    /// a decision scores one lane once.
+    /// a decision scores one lane once. <paramref name="promise"/> is an advertised meeting region when
+    /// one exists (A5.3); without it the arrival is estimated from the receiver's own velocity.
     /// </summary>
     public PassSuccessTerms Estimate(
         in FootballerObservation obs,
         in PerceivedEntity receiver,
         in PassPlan plan,
-        float laneClearance01)
+        float laneClearance01,
+        PassArrivalPromise promise = default)
     {
         float lane = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
         if (!plan.Feasible)
@@ -190,7 +246,32 @@ public sealed class PassSuccessModel
         ReachKinematics receiverState = ReachKinematics.FromEntity(receiver);
         ReachEstimate receiverReach = TimeToReachModel.ToPoint(
             receiverState, target, MathF.Max(flight, 0.8f));
-        float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
+
+        bool promised = promise.IsPresent;
+        float receiverArrival;
+        float receiverTerm;
+
+        if (promised)
+        {
+            // A5.3: the runner has said where and when he will be, and that is a better answer than the
+            // earliest he could possibly arrive — a timed run deliberately holds back, which the reach
+            // model has no way to know. So the arrival is the promise; what is left to price is how well
+            // the ball's own flight matches it (inside the region's width) and how much the promise is
+            // worth. A mistimed ball is charged by the same per-second scale as any other margin.
+            receiverArrival = Math.Clamp(promise.ArrivalSeconds, 0f, 6f);
+            float tolerance = Math.Clamp(
+                MathF.Abs(promise.MeetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
+                MinPromisedArrivalToleranceSeconds, MaxPromisedArrivalToleranceSeconds);
+            float mistiming = MathF.Max(0f, MathF.Abs(flight - receiverArrival) - tolerance);
+            float timingTerm = Math.Clamp(1f - mistiming / ReceiverMarginScaleSeconds, 0f, 1f);
+            receiverTerm = Math.Clamp(promise.Confidence01, 0f, 1f) * timingTerm;
+        }
+        else
+        {
+            receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
+            receiverTerm = Math.Clamp(0.5f + (flight - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
+        }
+
         float receiverMargin = flight - receiverArrival;
 
         // 2. Can an opponent beat the ball to the same point? The earliest one decides.
@@ -226,8 +307,8 @@ public sealed class PassSuccessModel
             defenderMargin = defenderArrival - flight;
         }
 
-        // 3. The three sides of the estimate, each clamped to a probability.
-        float receiverTerm = Math.Clamp(0.5f + receiverMargin / ReceiverMarginScaleSeconds, 0f, 1f);
+        // 3. The three sides of the estimate, each clamped to a probability. The receiver side was already
+        // decided in step 1: either from the reach model, or from the promise that replaced it (A5.3).
         float defenderTerm = Math.Clamp(0.5f + defenderMargin / DefenderMarginScaleSeconds, 0f, 1f);
 
         Vector2 receiverXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
@@ -240,14 +321,24 @@ public sealed class PassSuccessModel
 
         float completion = receiverTerm * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane) * control;
 
-        // A4.10: the ball is aimed ahead of a moving receiver, and the run that would take him there is
-        // not committed by anything (A5.3). Charge the lead: the further ahead of him the ball is played,
-        // the more of the estimate is a bet on a run nobody has promised. A receiver standing on the
-        // target pays nothing.
-        Vector2 receiverNowXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
-        float leadMeters = Vector2.Distance(receiverNowXZ, target);
-        if (leadMeters > 0f && float.IsFinite(leadMeters))
-            completion *= 1f - LeadRisk01 * leadMeters / (leadMeters + LeadRiskScaleMeters);
+        // A4.10/A5.3: the lead is charged once, by whichever owner knows about it.
+        //
+        // Without a promise the ball is aimed ahead of a moving receiver and the run that would take him
+        // there is committed by nothing, so the completion is discounted by how far ahead the ball is.
+        // With a promise the lead is exactly the region he announced: the uncertainty is the promise's own
+        // confidence, already in `receiverTerm`, and charging the lead again would make the same doubt
+        // cost twice (rule 6 of the standing brief). A promised ball is therefore not discounted here.
+        float leadCharge = 0f;
+        if (!promised)
+        {
+            Vector2 receiverNowXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
+            float leadMeters = Vector2.Distance(receiverNowXZ, target);
+            if (leadMeters > 0f && float.IsFinite(leadMeters))
+            {
+                leadCharge = LeadRisk01 * leadMeters / (leadMeters + LeadRiskScaleMeters);
+                completion *= 1f - leadCharge;
+            }
+        }
 
         bool blocked = IsLaneBlocked(plan, obs);
         if (blocked) completion = MathF.Min(completion, 0.05f);
@@ -264,7 +355,12 @@ public sealed class PassSuccessModel
             DefenderArrivalSeconds: defenderArrival,
             DefenderMarginSeconds: defenderMargin,
             DefenderPressure01: Math.Clamp(1f - defenderTerm, 0f, 1f),
-            DefenderUncertaintySeconds: defenderUncertainty);
+            DefenderUncertaintySeconds: defenderUncertainty)
+        {
+            LeadCharge01 = leadCharge,
+            PromisedArrival = promised,
+            PromisedConfidence01 = promised ? Math.Clamp(promise.Confidence01, 0f, 1f) : 0f
+        };
     }
 
     /// <summary>

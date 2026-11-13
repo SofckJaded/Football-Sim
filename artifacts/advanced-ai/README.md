@@ -1077,6 +1077,48 @@ formatted a string per candidate.
 
 ---
 
+## 2026-11-13 — runs are advertised and the pass is matched to them (simulation version `ai23-rs1`)
+
+A5.3. An adopted run is announced to the team on the match's communication board after a 0.3 s delay, and a
+carrier that hears one plays to the announced region: the plan is aimed at the region and its power is
+chosen so the ball arrives when the runner does. The promise is priced by confidence and timing, and the
+lead charge now applies only to a ball nobody promised. A carrier that plays the pass raises a claim, which
+keeps the runner's window open (and releases a timed hold) until the ball should have arrived. Behaviour
+change, so the gate, the reference match and the perf sample were re-captured.
+
+### Reference 11v11 — `a5-run-adverts-match-11v11.txt`
+
+| Metric | `ai22-rs1` | `ai23-rs1` |
+| :--- | :--- | :--- |
+| Ticks | 325 636 | 325 362 |
+| Score | 9–4 | 3–3 |
+| Possession (share) | 49.2 / 50.8 | 49.7 / 50.3 |
+| Passes | 410 / 426 (87 / 90 %) | 488 / 392 (**86 / 83 %**) |
+| Shots | 49 / 41 | 29 / 47 |
+| Mean team width | 43.6 / 40.6 m | 44.0 / 41.3 m |
+| Kicks executed / requested | 945 / 1040 | 973 / 1157 |
+| Run adverts published / withdrawn / claimed | — | 15 078 / 7 764 / 137 |
+
+Pass completion is the number to read and it is unchanged within the single-match noise that A4 already
+recorded (25–10 to 0–3 across adjacent versions). The board numbers are the point: a run is announced about
+every 22 ticks somewhere on the pitch, a runner keeps his region through a claim about ten times a match,
+and the announced promise is therefore a real part of the decision path rather than a dormant feature.
+
+### Tactical differentiation gate — `a5-run-adverts-tactical-gate.txt`
+
+5 seeds x 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.77 m** (was 3.58 m
+at `ai22`). **PASS.**
+
+### Performance — `a5-run-adverts-perf.txt`
+
+206.8 us mean, p99 704.7 us, 62 838 B/tick (was 172.5 us / 597.8 us / 63 178 B at `ai22`). Two samples taken
+before the timed pass's power search was bisected gave 194.5 and 221.1 us, so the difference from `ai22` is
+inside the single-sample spread the A0.5 baseline already noted (+/- 40 % between runs); the allocation fell
+slightly. The new cost is one planned timed pass per advertised receiver per carrier decision. The 60 Hz
+budget holds at p99 with 24x headroom.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

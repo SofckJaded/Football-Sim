@@ -234,6 +234,13 @@ public sealed class MatchSimulationEngine
     public MatchRulesEngine Rules => _rulesEngine;
     public TeamTacticalCoordinator Tactics => _tacticalCoordinator;
 
+    /// <summary>
+    /// The match's shared communication state: the human's call for the pass and the team run advertisement
+    /// board (A5.3). Exposed read-only for diagnostics, the inspector and tests; decisions reach it through
+    /// the controllers, so nothing can write it from outside.
+    /// </summary>
+    public MatchCommunicationContext Communication => _communication;
+
     /// <summary>Authoritative ball-ownership snapshot for the current tick (audit F10).</summary>
     public BallPossessionSnapshot Possession => _possessionTracker.Current;
 

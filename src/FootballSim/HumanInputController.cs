@@ -17,6 +17,13 @@ public sealed class MatchCommunicationContext
     public float HumanCallForPassTimer { get; private set; }
     public bool HumanCalledThroughBall { get; private set; }
 
+    /// <summary>
+    /// The team's run advertisement board (A5.3). One channel, extended rather than duplicated: the same
+    /// match-owned object that carries the human's call for the pass now carries the AI's announcements of
+    /// where its runners have committed to meet the ball, with the communication delay the plan asks for.
+    /// </summary>
+    public AI.RunAdvertisementBoard Runs { get; } = new();
+
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
     public void RaiseCallForPass(int playerId, float durationSeconds, bool throughBall)

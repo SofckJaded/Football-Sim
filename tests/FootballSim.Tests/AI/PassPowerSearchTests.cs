@@ -142,4 +142,48 @@ public sealed class PassPowerSearchTests
         if (!plan.Feasible) return;
         Assert.True(plan.DistanceMeters <= planner.MaxPassDistance + 0.5f);
     }
+
+    /// <summary>
+    /// A5.3: a timed pass to a region arrives when the runner does. The planner bisects the power search
+    /// for that arrival (a 480-sample table lookup per power is too much to scan for every receiver on
+    /// every decision), so this test pins the bisection to the answer a full scan gives. The power grid is
+    /// the documented 0.20 … 1.00 in 0.05 steps.
+    /// </summary>
+    [Theory]
+    [InlineData(8f, 0.50f)]
+    [InlineData(12f, 1.20f)]
+    [InlineData(20f, 1.00f)]
+    [InlineData(26f, 2.40f)]
+    [InlineData(35f, 1.40f)]
+    public void ATimedRegionPass_ChoosesTheArrivalACloseAsAFullScanDoes(float distance, float arriveIn)
+    {
+        var planner = new PassPlanner(Pitch);
+        Vector2 target = new(distance, 0f);
+
+        PassPlan plan = planner.PlanGroundPassToRegion(Vector2.Zero, target, arriveIn);
+        if (!plan.Feasible) return;   // no power reaches the region inside the late bound: an honest refusal
+
+        Assert.Equal(target, plan.TargetXZ);
+
+        // The reference is a full scan for the arrival closest to the meeting. The bisection may prefer the
+        // gentler of two arrivals within the planner's tie band, so the contract is "within the tie band of
+        // the best the table can do" rather than an exact index — what must never happen is a materially
+        // worse arrival.
+        float bestError = float.MaxValue;
+        float scannedFlight = 0f;
+        for (int step = 0; step < 17; step++)
+        {
+            float power = 0.20f + step * 0.05f;
+            if (!planner.TryGetFlightTime(power, distance, out float flight)) continue;
+
+            bestError = MathF.Min(bestError, MathF.Abs(flight - arriveIn));
+            scannedFlight = flight;
+        }
+
+        Assert.True(scannedFlight > 0f, "the reference scan found no feasible power, so the plan should not be");
+        float error = MathF.Abs(plan.FlightTimeSeconds - arriveIn);
+        Assert.True(error <= bestError + PassPlanner.TimedArrivalTieSeconds + 1e-3f,
+            $"the bisection chose {plan.FlightTimeSeconds:F2}s of flight (error {error:F3}s); the table's " +
+            $"best arrival is {bestError:F3}s from the meeting {arriveIn:F2}s");
+    }
 }

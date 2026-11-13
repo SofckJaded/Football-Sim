@@ -29,6 +29,12 @@ namespace FootballSim.AI;
 /// collapsing space end it early — but it does not re-time itself, so committing to a run cannot be
 /// silently extended by a favourable tick.
 ///
+/// <b>Announcement.</b> An adopted run is published to the team's <see cref="RunAdvertisementBoard"/>
+/// (A5.3): where the runner means to meet the ball, when, and how sure he is, after the board's
+/// communication delay. That is what lets the carrier play to the region instead of guessing a lead, and
+/// what lets a claim extend this run's window to the ball's own arrival rather than expiring underneath
+/// the pass.
+///
 /// This object owns per-player state (the adopted intent) and is reset with the controller (A1.5): a run
 /// chosen before a restart is a run into a passage of play that ended.
 /// </summary>
@@ -117,12 +123,23 @@ public sealed class RunCandidateGenerator
     private const float MinLaneMeters = 4f;
 
     private readonly PitchDimensions _pitch;
+    private readonly RunAdvertisementBoard? _board;
     private readonly RunPath[] _paths = new RunPath[PathCapacity];
     private readonly RunScoreTerms[] _terms = new RunScoreTerms[PathCapacity];
     private int _count;
     private RunIntent? _intent;
+    private int _publishedPlayerId;
+    private TeamId _publishedTeam;
 
-    public RunCandidateGenerator(PitchDimensions pitch) => _pitch = pitch;
+    /// <param name="board">
+    /// The team's advertisement board (A5.3). Null when the caller has no match communication (a probe or a
+    /// unit test built without one): runs then stay local to the runner, exactly as they did before A5.3.
+    /// </param>
+    public RunCandidateGenerator(PitchDimensions pitch, RunAdvertisementBoard? board = null)
+    {
+        _pitch = pitch;
+        _board = board;
+    }
 
     /// <summary>Paths emitted by the last <see cref="Generate"/> call.</summary>
     public int Count => _count;
@@ -133,7 +150,7 @@ public sealed class RunCandidateGenerator
     /// <summary>One emitted path's score terms. <paramref name="index"/> must be below <see cref="Count"/>.</summary>
     public RunScoreTerms TermsAt(int index) => _terms[index];
 
-    /// <summary>The run this player has adopted, if any. Read by diagnostics and by A5.3's advertisement.</summary>
+    /// <summary>The run this player has adopted, if any. Published to the team board (A5.3).</summary>
     public RunIntent? Intent => _intent;
 
     /// <summary>
@@ -167,8 +184,19 @@ public sealed class RunCandidateGenerator
         float attackDirX = obsRef.AttackingDirectionX;
 
         // The adopted run survives only while it is still a legal, live intention under this duty.
+        if (_intent is RunIntent claimed) _intent = ApplyClaim(claimed, obsRef, tick);
+
         if (_intent is RunIntent live && !IsIntentValid(live, obsRef, offsideLineProjX, tick))
             _intent = null;
+
+        // A5.3: once a team-mate has played the ball into the region, the frozen path is the only run on
+        // offer. Re-selecting another kind is how a runner abandons a near-post run two ticks before the
+        // ball lands in it; the other duties still compete (shape, press, the pass interception).
+        if (_intent is RunIntent receiving && IsClaimLive(obsRef, tick))
+        {
+            Emit(receiving.Path, RunScoring.Score(receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity));
+            return _count;
+        }
 
         int budget = maxPaths < 1 ? 1 : maxPaths;
         for (int i = 0; i < kindCount && _count < budget; i++)
@@ -200,12 +228,16 @@ public sealed class RunCandidateGenerator
     /// Records what the controller actually chose. A chosen run path becomes the adopted intent with its
     /// geometry frozen; anything else ends the previous run, because a player cannot both hold a run and do
     /// something else.
+    ///
+    /// The adopted run is published to the team board (A5.3) on the same call: the runner tells his team
+    /// where and when he will be, and the board applies the communication delay. A run that ends is
+    /// withdrawn, so a carrier never plays to a region the runner has already left.
     /// </summary>
-    public void NoteSelected(in CandidateKey key, TacticalJob duty, int tick)
+    public void NoteSelected(in FootballerObservation obs, in CandidateKey key)
     {
         if (key.Kind != CandidateKind.Run)
         {
-            _intent = null;
+            EndIntent();
             return;
         }
 
@@ -216,25 +248,47 @@ public sealed class RunCandidateGenerator
             RunPath path = _paths[i];
             if (_intent is RunIntent existing &&
                 existing.Kind == path.Kind &&
-                existing.Duty == duty &&
+                existing.Duty == obs.TacticalJob &&
                 Vector2.DistanceSquared(existing.Path.MeetXZ, path.MeetXZ) < 1e-4f)
             {
-                // Same run, re-chosen: keep the adoption tick so the window does not slide every tick.
+                // Same run, re-chosen: keep the adoption tick so the window does not slide every tick. It is
+                // still published, because a claim may have lengthened the window since it was last heard.
+                Publish(obs, existing);
                 return;
             }
 
-            _intent = new RunIntent(path, duty, tick);
+            var adopted = new RunIntent(path, obs.TacticalJob, obs.Tick);
+            _intent = adopted;
+            Publish(obs, adopted);
             return;
         }
 
-        _intent = null;
+        EndIntent();
     }
 
-    /// <summary>Drops the path set and the adopted run (A1.5).</summary>
+    /// <summary>Drops the path set and the adopted run, and withdraws its advertisement (A1.5/A5.3).</summary>
     public void Reset()
     {
         _count = 0;
+        EndIntent();
+    }
+
+    private void Publish(in FootballerObservation obs, in RunIntent intent)
+    {
+        if (_board is null) return;
+
+        _board.Publish(obs.SelfTeam, obs.SelfId, intent, obs.Tick);
+        _publishedPlayerId = obs.SelfId;
+        _publishedTeam = obs.SelfTeam;
+    }
+
+    private void EndIntent()
+    {
+        // Only a run that was actually announced needs withdrawing; a player whose run was never heard (or
+        // who is not the player this generator was publishing for) has nothing to retract.
+        if (_publishedPlayerId > 0) _board?.Withdraw(_publishedTeam, _publishedPlayerId);
         _intent = null;
+        _publishedPlayerId = 0;
     }
 
     /// <summary>
@@ -555,6 +609,33 @@ public sealed class RunCandidateGenerator
 
         float meetProj = intent.Path.MeetXZ.X * obs.AttackingDirectionX;
         return meetProj <= offsideLineProjX - OnsideMarginMeters + OnsideToleranceMeters;
+    }
+
+    /// <summary>
+    /// A5.3: a team-mate has played the ball into this region. The window is extended to the ball's arrival
+    /// (plus the claim's grace) and any timed hold is released, so the run is received rather than timed: a
+    /// late box arrival must not stay at the edge of the box while the pass is landing behind him.
+    /// </summary>
+    private RunIntent ApplyClaim(in RunIntent intent, in FootballerObservation obs, int tick)
+    {
+        if (!IsClaimLive(obs, tick, out RunClaim claim)) return intent;
+
+        int expires = Math.Max(intent.Path.ExpiresTick, claim.ArriveTick + RunAdvertisementBoard.ClaimGraceTicks);
+        int holdUntil = Math.Min(intent.Path.HoldUntilTick, tick);
+        if (expires == intent.Path.ExpiresTick && holdUntil == intent.Path.HoldUntilTick) return intent;
+
+        return intent with
+        {
+            Path = intent.Path with { ExpiresTick = expires, HoldUntilTick = holdUntil }
+        };
+    }
+
+    private bool IsClaimLive(in FootballerObservation obs, int tick) => IsClaimLive(obs, tick, out _);
+
+    private bool IsClaimLive(in FootballerObservation obs, int tick, out RunClaim claim)
+    {
+        claim = default;
+        return _board is not null && _board.TryGetClaim(obs.SelfTeam, obs.SelfId, tick, out claim);
     }
 
     /// <summary>Kinds whose meeting region must stay legally receivable before the ball is released.</summary>

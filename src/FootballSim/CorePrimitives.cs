@@ -296,12 +296,23 @@ public enum TeamId
 /// line fourteen metres inside its own half with a real gap behind it, and carries a midfield, because
 /// without one the allocator makes the striker the third-player option and he never gets to run in
 /// behind. Trajectories differ from version 21.</item>
+/// <item><c>AiBehaviour 23</c> — A5.3: an adopted run is <b>announced to the team</b>
+/// (<see cref="AI.RunAdvertisementBoard"/>, on the match's existing communication context) with the
+/// meeting region, the planned arrival tick and the runner's confidence, visible to team-mates only after
+/// a 0.3 s communication delay. The carrier plays into that region: the plan is aimed at it and the power
+/// is chosen so the ball arrives when the runner does
+/// (<see cref="Physics.PassPlanner.PlanGroundPassToRegion"/>), instead of guessing a lead from his current
+/// velocity. The promise is priced by confidence and timing, and the lead charge
+/// (<see cref="AI.PassSuccessModel.LeadRisk01"/>) applies only to a ball nobody promised — one risk owner,
+/// not two. A carrier that plays the pass raises a claim, which keeps the runner's run alive until the
+/// ball should have arrived and releases any timed hold, so a late box arrival is received rather than
+/// timed. Trajectories differ from version 22.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 22;
+    public const int AiBehaviour = 23;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

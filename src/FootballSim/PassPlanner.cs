@@ -175,22 +175,125 @@ public sealed class PassPlanner
     public static float GroundPassLaunchSpeed(float power01) =>
         Math.Clamp(8.0f + Math.Clamp(power01, 0.15f, 1.0f) * 11.5f, 8.0f, 19.5f);
 
-    /// <summary>Flight time for a power/distance pair; exposed for diagnostics and tests.</summary>
-    public bool TryGetFlightTime(float power01, float distanceMeters, out float flightTimeSeconds)
+    /// <summary>
+    /// The latest a timed pass may arrive after the meeting it is timed to, in seconds (A5.3). A ball that
+    /// arrives later than this is not a pass to the run — by then the runner has been and gone and the
+    /// defender has had all the time in the world. The mirror case (an early ball) is not refused here: the
+    /// success model prices it, because a ball arriving early into the region is a normal through ball.
+    /// </summary>
+    public const float MaxTimedArrivalLateSeconds = 1.6f;
+
+    /// <summary>
+    /// Margin within which two powers count as arriving together, in seconds. Below it the gentler ball
+    /// wins, so a timed pass is never struck harder than the meeting needs.
+    /// </summary>
+    public const float TimedArrivalTieSeconds = 0.02f;
+
+    /// <summary>
+    /// Plans a ground pass to a <b>fixed region</b> that arrives when the runner plans to be there (A5.3).
+    ///
+    /// This is the planner's half of "match the pass to the run": the target is not the receiver's future
+    /// position from his current velocity (the old <c>ThroughLeadMeters</c> placeholder), it is the region
+    /// he has announced, and the power is chosen so the ball gets there at the announced meeting rather than
+    /// as fast as it can. The search is over the calibrated distance/time table — a bisection of the power
+    /// whose flight time crosses the meeting, since flight time falls as power rises — so the answer is the
+    /// same physics every other pass uses.
+    ///
+    /// Returns an infeasible plan when the region is out of range or no power can get the ball there within
+    /// <see cref="MaxTimedArrivalLateSeconds"/> of the meeting. <paramref name="arriveInSeconds"/> is
+    /// clamped to the table's own window rather than trusted, so a nonsense tick cannot index past it.
+    /// </summary>
+    public PassPlan PlanGroundPassToRegion(
+        Vector2 originXZ,
+        Vector2 targetXZ,
+        float arriveInSeconds,
+        float minPower01 = 0f)
     {
-        int powerIndex = Math.Clamp((int)MathF.Round((power01 - MinPower) / PowerStep), 0, PowerSamples - 1);
+        if (!SimMath.IsFinite(originXZ) || !SimMath.IsFinite(targetXZ)) return Infeasible(0f);
+
+        Vector2 target = ClampToPitch(targetXZ);
+        float distance = Vector2.Distance(originXZ, target);
+        if (distance < 0.5f || distance > MaxCalibrationDistance) return Infeasible(distance);
+
+        float wanted = float.IsFinite(arriveInSeconds) ? Math.Clamp(arriveInSeconds, 0.05f, 8f) : 1f;
+        int minIndex = minPower01 > 0f
+            ? Math.Clamp((int)MathF.Round((minPower01 - MinPower) / PowerStep), 0, PowerSamples - 1)
+            : 0;
+
+        if (!TryFirstPowerThatReaches(distance, minIndex, out int gentlest)) return Infeasible(distance);
+
+        // Flight time for a fixed distance is strictly decreasing in power, so the arrival closest to the
+        // meeting is found by bisecting the crossing of `wanted` instead of scanning all seventeen powers.
+        // A carrier plans one timed pass per receiver per decision, and each scan is a 480-sample lookup.
+        int lo = gentlest;
+        int hi = PowerSamples - 1;
+        while (hi - lo > 1)
+        {
+            int mid = (lo + hi) / 2;
+            if (!TryGetFlightTimeAt(mid, distance, out float midTime)) { hi = mid; continue; }
+            if (midTime > wanted) lo = mid;
+            else hi = mid;
+        }
+
+        if (!TryGetFlightTimeAt(lo, distance, out float flightLo)) return Infeasible(distance);
+
+        int bestIndex = lo;
+        float bestFlight = flightLo;
+        if (hi != lo && TryGetFlightTimeAt(hi, distance, out float flightHi) &&
+            MathF.Abs(flightHi - wanted) < MathF.Abs(flightLo - wanted) - TimedArrivalTieSeconds)
+        {
+            bestIndex = hi;
+            bestFlight = flightHi;
+        }
+
+        if (bestFlight > wanted + MaxTimedArrivalLateSeconds) return Infeasible(distance);
+
+        return new PassPlan(
+            Feasible: true,
+            AimDirectionXZ: SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f)),
+            TargetXZ: target,
+            Power01: MinPower + bestIndex * PowerStep,
+            FlightTimeSeconds: bestFlight,
+            DistanceMeters: distance);
+    }
+
+    /// <summary>Lowest power index at which a ground pass covers <paramref name="distanceMeters"/>.</summary>
+    private bool TryFirstPowerThatReaches(float distanceMeters, int minIndex, out int powerIndex)
+    {
+        for (int i = Math.Max(0, minIndex); i < PowerSamples; i++)
+        {
+            if (!TryGetFlightTimeAt(i, distanceMeters, out _)) continue;
+            powerIndex = i;
+            return true;
+        }
+
+        powerIndex = -1;
+        return false;
+    }
+
+    private bool TryGetFlightTimeAt(int powerIndex, float distanceMeters, out float flightTimeSeconds)
+    {
         flightTimeSeconds = 0f;
         if (distanceMeters <= 0f) return false;
+        int index = Math.Clamp(powerIndex, 0, PowerSamples - 1);
 
         for (int k = 1; k < TimeSamples; k++)
         {
-            if (_calibration.DistanceAtTime[powerIndex, k] >= distanceMeters)
+            if (_calibration.DistanceAtTime[index, k] >= distanceMeters)
             {
                 flightTimeSeconds = k * TimeStep;
                 return true;
             }
         }
+
         return false;
+    }
+
+    /// <summary>Flight time for a power/distance pair; exposed for diagnostics and tests.</summary>
+    public bool TryGetFlightTime(float power01, float distanceMeters, out float flightTimeSeconds)
+    {
+        int powerIndex = Math.Clamp((int)MathF.Round((power01 - MinPower) / PowerStep), 0, PowerSamples - 1);
+        return TryGetFlightTimeAt(powerIndex, distanceMeters, out flightTimeSeconds);
     }
 
     /// <summary>

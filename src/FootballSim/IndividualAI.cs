@@ -181,7 +181,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             _lastCandidateCount = 0;
             StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false);
             // A restart is not the passage of play the run was chosen for: drop any adopted run.
-            _generator.NoteDecision(CandidateKey.None, obs.TacticalJob, obs.Tick);
+            _generator.NoteDecision(obs, CandidateKey.None);
             return restartCmd;
         }
 
@@ -301,8 +301,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         }
 
         // A5.2: tell the run generator what was chosen, so an adopted path is frozen for its window and
-        // any other choice ends it.
-        _generator.NoteDecision(best.Key, obs.TacticalJob, obs.Tick);
+        // any other choice ends it. A5.3: the adopted run is announced to the team on the same call.
+        _generator.NoteDecision(obs, best.Key);
 
         _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";
         StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job);
