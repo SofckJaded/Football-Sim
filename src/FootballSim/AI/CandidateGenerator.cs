@@ -784,16 +784,22 @@ public sealed class CandidateGenerator : IAiStateResettable
         return true;
     }
 
+    /// <summary>Slowest a receiver must be moving to be offered a ball into the space ahead of him.</summary>
+    internal const float MinRunIntoSpaceSpeed = 1.5f;
+
     /// <summary>
     /// True when a pass into the space ahead of this teammate is a genuinely different option from a
-    /// pass to his feet (A4.1). Two things make it real: he is not running back toward the passer, and
-    /// there is room in front of him to play into. A runner who is already sprinting forward usually ends
-    /// up with the same target as a feet pass (the planner leads him by the flight time anyway), and the
-    /// success model then rejects the doubled lead — which is the correct answer, not a gap.
+    /// pass to his feet (A4.1). Three things make it real: he is actually running (a stationary player has
+    /// no run to be played into, and the through lead then puts the ball five metres past a man who was
+    /// never going anywhere), he is not running back toward the passer, and there is room in front of him
+    /// to play into. A runner who is already sprinting forward usually ends up with the same target as a
+    /// feet pass (the planner leads him by the flight time anyway), and the success model then rejects the
+    /// doubled lead — which is the correct answer, not a gap.
     /// </summary>
     private bool RunsIntoSpace(in FootballerObservation obs, in PerceivedEntity mate, float offsideLineProjX)
     {
         Vector2 velocity = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
+        if (velocity.Length() < MinRunIntoSpaceSpeed) return false;
         if (velocity.X * obs.AttackingDirectionX < -0.5f) return false;
 
         // Eligibility is judged where the runner is when the ball is played, not where the lead lands.

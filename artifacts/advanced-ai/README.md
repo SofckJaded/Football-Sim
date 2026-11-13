@@ -957,6 +957,51 @@ the restart scan only runs while a restart is pending.
 
 ---
 
+## 2026-11-13 — a lead pass is a bet on a run (simulation version `ai19-rs1`)
+
+Files: `a4-lead-risk-tactical-gate.txt`, `a4-lead-risk-11v11.txt`, `a4-lead-risk-perf.txt`.
+
+A rendered-session report ("through passes are broken, a pass to feet works") was measured at the decision
+level with a carrier, one mate and no defenders:
+
+| Mate | Candidate | What the ball did | `p` before | `p` after |
+| :--- | :--- | :--- | ---: | ---: |
+| running away at 6 m/s | `ToFeet` | 26.6 m ball to a man 14.6 m away (12 m lead) | 0.92 | **0.81** |
+| standing still | `ToRun` | 5 m past a man who was not running | 0.92 | **not offered** |
+| standing still | `ToFeet` | at him | 0.97 | 0.97 |
+
+The model was crediting the runner with a sprint onto a run nothing had committed to (A5.3 does not exist
+yet). The completion is now discounted by the lead (`PassSuccessModel.LeadRisk01` = 0.20,
+`LeadRiskScaleMeters` = 8 m), and a ball into space requires a receiver who is actually running
+(`CandidateGenerator.MinRunIntoSpaceSpeed` = 1.5 m/s). `LeadRisk01 = 0.35` was tried first and made a
+four-minute multi-seed match go shotless, so 0.20 is the shipped value.
+
+### 11v11 headless match — `a4-lead-risk-11v11.txt`
+
+| Metric | ai18-rs1 | ai19-rs1 |
+| :--- | ---: | ---: |
+| Ticks | 326 312 | 325 632 |
+| Score | 3 – 0 | **6 – 1** |
+| Possession | 51.2 / 48.8 | 52.8 / 47.2 |
+| Passes | 588 / 642 (71 / 74 %) | **407 / 440 (79 / 82 %)** |
+| Shots | 41 / 8 | 34 / 18 |
+| Width (all-tick) | 44.3 / 41.6 m | 44.8 / 40.8 m |
+
+**The trade:** completion is up eight points on both sides, and pass volume is down about a third because
+the side keeps the ball when the only forward option is a ball into space it cannot trust. That is the
+intended direction — the alternative was 200 passes a match that nobody received.
+
+### Tactical differentiation gate — `a4-lead-risk-tactical-gate.txt`
+
+5 seeds × 240 s: full time, played, the possession side wider on **5/5** seeds, mean separation **4.26 m**.
+**GATE: PASS.**
+
+### Performance — `a4-lead-risk-perf.txt`
+
+160.9 µs mean, p99 663.3 µs, 65 069 B/tick (inside this machine's run-to-run variance).
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

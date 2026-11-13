@@ -204,6 +204,27 @@ public sealed class PassSuccessModelTests
         }
     }
 
+    /// <summary>
+    /// A ball aimed ahead of a moving receiver is a bet on a run nobody has committed to (A4.10), so it
+    /// must price below the same ball played to a receiver who is already on the target point. Before the
+    /// lead charge, a 12 m lead to a jogging receiver scored 0.92 — the model simply assumed he would
+    /// sprint onto it, which is the assumption the rendered session broke.
+    /// </summary>
+    [Fact]
+    public void APassLedAheadOfTheReceiver_IsPricedBelowOneAtHisFeet()
+    {
+        PassPlan plan = ManualPlan(new Vector2(20f, 0f), power01: 0.7f, flightSeconds: 1.4f);
+        PerceivedEntity atTheTarget = Mate(MateId, new Vector2(20f, 0f));
+        PerceivedEntity sixMetersBehind = Mate(MateId, new Vector2(14f, 0f));
+
+        PassSuccessTerms atFeet = Model.Estimate(Observation(atTheTarget), atTheTarget, plan, 1f);
+        PassSuccessTerms led = Model.Estimate(Observation(sixMetersBehind), sixMetersBehind, plan, 1f);
+
+        Assert.True(atFeet.CompletionProbability01 > led.CompletionProbability01 + 0.05f,
+            $"a ball at his feet ({atFeet.CompletionProbability01:F2}) must beat the same ball led six " +
+            $"metres ahead of him ({led.CompletionProbability01:F2})");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Bounds, determinism and the raised alternative
     // ---------------------------------------------------------------------------------------------

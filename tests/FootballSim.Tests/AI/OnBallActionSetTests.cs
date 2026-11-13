@@ -160,8 +160,10 @@ public sealed class OnBallActionSetTests
 
     /// <summary>
     /// A pass to feet and a pass into the space ahead are different actions against the same receiver, so
-    /// both must be offered when there is room to play into — and only the feet option when a defender is
-    /// standing in that space.
+    /// both must be offered when he is <b>running</b> and there is room to play into — and only the feet
+    /// option when a defender is standing in that space. A receiver standing still gets no run option at
+    /// all: the through lead would put the ball five metres past a man who was never going anywhere
+    /// (A4.10, measured — a stationary mate was rated p = 0.92 for a ball he had no reason to chase).
     /// </summary>
     [Fact]
     public void APassIntoARunRegion_IsASeparateOption()
@@ -170,18 +172,29 @@ public sealed class OnBallActionSetTests
         generator.GenerateOnBallCandidates(
             Observation(
                 new Vector2(0f, 8f),
-                Mate(MateId, new Vector2(12f, 12f))),
+                Mate(MateId, new Vector2(12f, 12f), new Vector2(4f, 0f))),
             new Vector3(Pitch.HalfLength, 0f, 0f),
             offsideLineProjX: 34f);
 
         Assert.Contains(generator.Candidates, c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "ToRun");
         Assert.Contains(generator.Candidates, c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "ToFeet");
 
+        var stationary = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
+        stationary.GenerateOnBallCandidates(
+            Observation(
+                new Vector2(0f, 8f),
+                Mate(MateId, new Vector2(12f, 12f))),
+            new Vector3(Pitch.HalfLength, 0f, 0f),
+            offsideLineProjX: 34f);
+
+        Assert.DoesNotContain(stationary.Candidates, c => c.Key.TargetTag == "ToRun");
+        Assert.Contains(stationary.Candidates, c => c.Key.TargetTag == "ToFeet");
+
         var blockedSpace = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
         blockedSpace.GenerateOnBallCandidates(
             Observation(
                 new Vector2(0f, 8f),
-                Mate(MateId, new Vector2(12f, 12f)),
+                Mate(MateId, new Vector2(12f, 12f), new Vector2(4f, 0f)),
                 Away(14, TacticalRole.CenterBack, new Vector2(17.5f, 12f))),
             new Vector3(Pitch.HalfLength, 0f, 0f),
             offsideLineProjX: 34f);

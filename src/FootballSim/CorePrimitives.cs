@@ -259,12 +259,20 @@ public enum TeamId
 /// instead of a linear ramp. He also prefers a receiver whose lane is open. Measured on a thirty-minute
 /// 11v11 segment, throw-in completion went from 29 % to 83 %, and the balls that flew 10–20 m past their
 /// receiver disappeared entirely. Trajectories differ from version 17.</item>
+/// <item><c>AiBehaviour 19</c> — A4.10: a pass that is aimed ahead of where the receiver is now is
+/// charged as a bet on a run nothing has committed to
+/// (<see cref="AI.PassSuccessModel.LeadRisk01"/>, <see cref="AI.PassSuccessModel.LeadRiskScaleMeters"/>),
+/// so a ball to a player who is already there beats the same ball led twelve metres into space — measured
+/// at p 0.97 against 0.81 where the lead used to be free and both scored 0.92. A ball into the space
+/// ahead is also no longer offered to a receiver who is not running
+/// (<see cref="AI.CandidateGenerator"/> `MinRunIntoSpaceSpeed`), because the through lead then put the
+/// ball five metres past a man who was never going anywhere. Trajectories differ from version 18.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 18;
+    public const int AiBehaviour = 19;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

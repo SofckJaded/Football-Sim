@@ -136,6 +136,21 @@ public sealed class PassSuccessModel
     /// <summary>Share of a raised pass's completion that survives unmodelled flight behaviour (A5.5).</summary>
     public const float LoftedExecutionPenalty = 0.55f;
 
+    /// <summary>
+    /// Largest share of a pass's completion that is charged for leading a runner (A4.10).
+    ///
+    /// A pass is aimed at where the receiver will be when the ball arrives, which for a moving receiver is
+    /// metres ahead of him. That is a bet that the run continues, and nothing in the simulation makes it
+    /// continue: the runner's own controller is pursuing his duty, not the pass (A5.3 owns the commitment).
+    /// Measured on the reference segment, a ball led 10–12 m completed worse than the same ball played to a
+    /// man who was already there, and the failures were the runs that stopped. The model used to assume the
+    /// run for free and rated those balls at p ≈ 0.92.
+    /// </summary>
+    public const float LeadRisk01 = 0.20f;
+
+    /// <summary>Lead at which half of <see cref="LeadRisk01"/> is charged, in metres.</summary>
+    public const float LeadRiskScaleMeters = 8f;
+
     /// <summary>Ground acceleration assumed for the raised alternative's kinematic flight (m/s²).</summary>
     public const float Gravity = 9.81f;
 
@@ -220,6 +235,16 @@ public sealed class PassSuccessModel
         float control = 1f - controlPenalty;
 
         float completion = receiverTerm * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane) * control;
+
+        // A4.10: the ball is aimed ahead of a moving receiver, and the run that would take him there is
+        // not committed by anything (A5.3). Charge the lead: the further ahead of him the ball is played,
+        // the more of the estimate is a bet on a run nobody has promised. A receiver standing on the
+        // target pays nothing.
+        Vector2 receiverNowXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
+        float leadMeters = Vector2.Distance(receiverNowXZ, target);
+        if (leadMeters > 0f && float.IsFinite(leadMeters))
+            completion *= 1f - LeadRisk01 * leadMeters / (leadMeters + LeadRiskScaleMeters);
+
         bool blocked = IsLaneBlocked(plan, obs);
         if (blocked) completion = MathF.Min(completion, 0.05f);
 
