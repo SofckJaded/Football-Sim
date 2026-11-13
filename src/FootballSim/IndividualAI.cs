@@ -466,6 +466,45 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             ? new Vector2(bestMate.Value.EstimatedPosition.X, bestMate.Value.EstimatedPosition.Z)
             : new Vector2(obs.SelfPosition.X + obs.AttackingDirectionX * 15f, 0f);
 
+        // A4.9: the taker is a passer, so he plans like one. Measured before this, throw-ins completed
+        // 29 % and every long one was a lofted ball that flew 10-20 m over its receiver's head.
+        //
+        // The choice is deliberately ordered: the most advanced receiver whose ground route is *open*
+        // first, then the most advanced one whose ground route is merely reachable (a flat contested ball
+        // is still better than a lofted one the receiver cannot head), and only then a raised delivery.
+        bool bestMatePlanned = false;
+        FootballerCommand bestMateDelivery = default;
+        FootballerCommand openDelivery = default;
+        float openScore = float.NegativeInfinity;
+
+        foreach (PerceivedEntity mate in obs.VisiblePlayers)
+        {
+            if (mate.Team != obs.SelfTeam) continue;
+            Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+            float mateDistance = Vector2.Distance(selfXZ, mateXZ);
+            if (mateDistance < 4.0f || mateDistance > 38.0f) continue;
+
+            bool planned = _generator.TryPlanSetPieceDelivery(
+                obs, mate, out FootballerCommand delivery, out bool laneOpen);
+
+            if (bestMate.HasValue && mate.PlayerId == bestMate.Value.PlayerId)
+            {
+                bestMatePlanned = planned;
+                bestMateDelivery = delivery;
+            }
+
+            if (!planned || !laneOpen) continue;
+            float score = mate.EstimatedPosition.X * obs.AttackingDirectionX - mateDistance * 0.35f;
+            if (score > openScore)
+            {
+                openScore = score;
+                openDelivery = delivery;
+            }
+        }
+
+        if (openScore > float.NegativeInfinity) return openDelivery;
+        if (bestMatePlanned) return bestMateDelivery;
+
         Vector2 dir = Vector2.Normalize(targetXZ - selfXZ);
         float dist = Vector2.Distance(selfXZ, targetXZ);
         KickIntentType kickType = obs.CurrentMatchPhase == MatchPhase.CornerKick || dist > 22.0f

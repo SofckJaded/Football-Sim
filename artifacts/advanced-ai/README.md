@@ -915,6 +915,48 @@ now samples the ball's travel rather than 0.1 s of flight.
 
 ---
 
+## 2026-11-13 — the restart taker becomes a passer (simulation version `ai18-rs1`)
+
+Files: `a4-restart-delivery-tactical-gate.txt`, `a4-restart-delivery-11v11.txt`,
+`a4-restart-delivery-perf.txt`.
+
+A rendered-session report ("passes miss, and a ball out of play is the reproducer") was measured with a
+temporary harness over a thirty-minute 11v11 segment, classifying passes by `RestartOrigin`:
+
+| Restart | Passes | reached the man | to the opposition | ball ran >3 m past him |
+| :--- | ---: | ---: | ---: | ---: |
+| Throw-in (`ai17`) | 35 | 10 (29 %) | 20 (57 %) | 16 |
+| Throw-in (`ai18`) | 29 | **24 (83 %)** | 3 | **0** |
+
+The cause was `EvaluateSetPieceRestart`: it aimed at the receiver's current feet and chose power from a
+linear `distance / 32` ramp, lofting everything past 22 m — a 22 m throw travelled 40 m and a 30 m throw
+50 m, over the receiver's head. The taker now plans through `CandidateGenerator.TryPlanSetPieceDelivery`
+with the carrier's planner and success model, prefers a lane that is open, and keeps the blind fallback
+only so a restart cannot be stranded.
+
+### 11v11 headless match — `a4-restart-delivery-11v11.txt`
+
+| Metric | ai16-rs1 | ai17-rs1 | ai18-rs1 |
+| :--- | ---: | ---: | ---: |
+| Ticks | 326 168 | 326 298 | 326 312 |
+| Score | 1 – 2 | 1 – 1 | **3 – 0** |
+| Possession | 50.5 / 49.5 | 50.0 / 50.0 | 51.2 / 48.8 |
+| Passes | 607 / 597 (72 / 70 %) | 647 / 584 (70 / 67 %) | **588 / 642 (71 / 74 %)** |
+| Shots | 29 / 22 | 30 / 28 | **41 / 8** |
+| Width (all-tick) | 43.9 / 40.7 m | 43.7 / 41.6 m | 44.3 / 41.6 m |
+
+### Tactical differentiation gate — `a4-restart-delivery-tactical-gate.txt`
+
+5 seeds × 240 s: full time, played, the possession side wider on **5/5** seeds, mean separation **4.52 m**.
+**GATE: PASS.**
+
+### Performance — `a4-restart-delivery-perf.txt`
+
+169.6 µs → **175.8 µs** mean, p99 591.2 µs, 64 614 B/tick. Inside this machine's ±40 % run-to-run variance;
+the restart scan only runs while a restart is pending.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

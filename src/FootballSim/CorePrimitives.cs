@@ -253,12 +253,18 @@ public enum TeamId
 /// the comparison was inverted, so a marked forward looked free — and a raised pass must clear the same
 /// completion floor as a ground one instead of being offered at any price. Trajectories differ from
 /// version 16.</item>
+/// <item><c>AiBehaviour 18</c> — A4.9: a restart taker plans his delivery with the carrier's own planner
+/// (<see cref="AI.CandidateGenerator.TryPlanSetPieceDelivery"/>) — led to where the receiver will be, on
+/// the ground whenever the ground route reaches him, and with the raised power matched to the distance
+/// instead of a linear ramp. He also prefers a receiver whose lane is open. Measured on a thirty-minute
+/// 11v11 segment, throw-in completion went from 29 % to 83 %, and the balls that flew 10–20 m past their
+/// receiver disappeared entirely. Trajectories differ from version 17.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 17;
+    public const int AiBehaviour = 18;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

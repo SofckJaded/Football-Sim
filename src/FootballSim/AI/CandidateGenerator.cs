@@ -1151,6 +1151,80 @@ public sealed class CandidateGenerator : IAiStateResettable
         });
     }
 
+    /// <summary>
+    /// Plans the delivery a restart taker plays to <paramref name="mate"/> (A4.9).
+    ///
+    /// A restart is a free touch, so it gets the same trajectory the carrier uses: the receiver is led to
+    /// where he will be when the ball arrives, and the ball stays on the deck whenever the ground route
+    /// can reach him. Before this the taker aimed at the receiver's *current feet* with a linear power
+    /// ramp (<c>distance / 32</c>): measured on a thirty-minute 11v11 segment, throw-ins completed 29 %
+    /// and turned over 57 %, and every long one was a lofted ball that flew 10–20 m past its receiver
+    /// (a 22 m throw travelled 40 m, a 30 m throw 50 m).
+    ///
+    /// Returns false when there is no honest delivery to this mate — the caller keeps its safe fallback,
+    /// so a restart is never stranded. The raised ball is only used when the ground route cannot reach
+    /// the receiver, and its power comes from <see cref="PassSuccessModel.EstimateLofted"/>, which picks
+    /// the lowest power that actually covers the distance.
+    /// </summary>
+    internal bool TryPlanSetPieceDelivery(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        out FootballerCommand command,
+        out bool laneOpen)
+    {
+        command = default;
+        laneOpen = false;
+
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+        Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
+        float distance = Vector2.Distance(ballXZ, mateXZ);
+
+        PassPlan ground = _passPlanner.PlanGroundPass(
+            ballXZ, mate.PlayerId, mateXZ, mateVelocityXZ, MaxReceivableSpeed,
+            extraLeadMeters: 0f, extraLeadDirection: Vector2.Zero,
+            maxLeadMeters: FeetPassMaxLeadMeters, minPower01: 0f);
+
+        if (ground.Feasible)
+        {
+            // The ground route is preferred even when the lane scores as crowded. A flat ball the
+            // receiver can actually play beats a lofted one he cannot reach: measured on the same
+            // segment, a raised ball into a contest was a turnover every time (0 of 13), while the
+            // ground ball at least stays playable. The lane verdict is still reported, so the taker can
+            // look for a receiver whose route is open before settling for a crowded one.
+            float lane = EvaluateLaneClearance(ballXZ, ground.TargetXZ, obs.VisiblePlayers, obs.SelfTeam);
+            PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, ground, lane);
+            laneOpen = !terms.LaneBlocked;
+            command = BuildPassCommand(ground.AimDirectionXZ, ground.Power01, KickIntentType.GroundPass, mate.PlayerId);
+            return true;
+        }
+
+        float raisedLane = EvaluateLaneClearance(ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
+        LoftedPassTerms raised = _passSuccess.EstimateLofted(obs, mate, distance, raisedLane);
+        if (!raised.Feasible) return false;
+
+        // Aim at where the receiver will be when the ball comes down, bounded like any other lead, and
+        // never outside the pitch.
+        float speed = mateVelocityXZ.Length();
+        float leadSeconds = raised.FlightTimeSeconds;
+        float leadLength = MathF.Min(speed * leadSeconds, FeetPassMaxLeadMeters);
+        Vector2 aimPoint = mateXZ + (speed > 1e-4f ? mateVelocityXZ * (leadLength / speed) : Vector2.Zero);
+        aimPoint.X = Math.Clamp(aimPoint.X, -_pitch.HalfLength + 1f, _pitch.HalfLength - 1f);
+        aimPoint.Y = Math.Clamp(aimPoint.Y, -_pitch.HalfWidth + 1f, _pitch.HalfWidth - 1f);
+
+        Vector2 aim = SimMath.SafeNormalize(aimPoint - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        command = BuildPassCommand(aim, raised.Power01, KickIntentType.LoftedPass, mate.PlayerId);
+        return true;
+    }
+
+    private static FootballerCommand BuildPassCommand(
+        Vector2 aimDirection, float power01, KickIntentType kickType, int receiverId) =>
+        new(aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
+            kickType, new Vector3(aimDirection.X, 0f, aimDirection.Y), power01, 0f)
+        {
+            IntendedReceiverId = receiverId
+        };
+
     /// <summary>Records one refused candidate and the reason, bounded by <see cref="MaxRejections"/>.</summary>
     private void Reject(int playerId, string reason)
     {
