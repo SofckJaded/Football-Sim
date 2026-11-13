@@ -184,9 +184,13 @@ public static class ScenarioLibrary
     public const int HighLineCarrier = 108;
 
     /// <summary>
-    /// The away line sits at X = −5, ten metres beyond the halfway line from their own goal: high by
-    /// any standard. The home striker is onside (level with the second-last defender and behind the
-    /// ball) and can attack the space in behind.
+    /// The away line sits fourteen metres inside its own half — high by any standard (38 m from its own
+    /// goal) — and the home striker starts twelve metres behind it with the ball behind him at his
+    /// carrier's feet. That gap is the fixture: there is real space to run into, and the run must be
+    /// timed so that the ball can be played when the striker reaches the line rather than after he has
+    /// crossed it (A5.2/A5.4). A fixture where the striker starts level with the line has no run in it,
+    /// which is why the earlier version of this fragment (line at −5, striker at −8) could only ever
+    /// produce a three-metre shuffle.
     /// </summary>
     public static MatchScenario HighLineRun()
     {
@@ -194,20 +198,22 @@ public static class ScenarioLibrary
         {
             Name = "high-line run",
             Seed = 8484UL,
-            BallPosition = new Vector3(-19.4f, 0f, 14f),
+            BallPosition = new Vector3(-5.4f, 0f, 14f),
             BallSetup = ScenarioBallSetup.Controlled,
             BallOwnerPlayerId = HighLineCarrier
         };
 
         scenario.Add(Player(101, TeamId.Home, TacticalRole.Goalkeeper, -48f, 0f, 1));
-        scenario.Add(Player(102, TeamId.Home, TacticalRole.CenterBack, -25f, -10f, 4));
-        scenario.Add(Player(111, TeamId.Home, TacticalRole.Winger, -15f, -24f, 11));
-        scenario.Add(Player(HighLineCarrier, TeamId.Home, TacticalRole.CentralMidfielder, -20f, 14f, 8));
-        scenario.Add(Player(HighLineStriker, TeamId.Home, TacticalRole.Striker, -8f, 0f, 9));
+        scenario.Add(Player(102, TeamId.Home, TacticalRole.CenterBack, -22f, 4f, 4));
+        scenario.Add(Player(106, TeamId.Home, TacticalRole.DefensiveMidfielder, -16f, 6f, 6));
+        scenario.Add(Player(112, TeamId.Home, TacticalRole.CentralMidfielder, 12f, -4f, 10));
+        scenario.Add(Player(111, TeamId.Home, TacticalRole.Winger, -14f, -24f, 11));
+        scenario.Add(Player(HighLineCarrier, TeamId.Home, TacticalRole.CentralMidfielder, -6f, 14f, 8));
+        scenario.Add(Player(HighLineStriker, TeamId.Home, TacticalRole.Striker, 2f, 0f, 9));
         scenario.Add(Player(201, TeamId.Away, TacticalRole.Goalkeeper, 46f, 0f, 1));
-        scenario.Add(Player(202, TeamId.Away, TacticalRole.CenterBack, -5f, -6f, 4));
-        scenario.Add(Player(203, TeamId.Away, TacticalRole.CenterBack, -5f, 6f, 5));
-        scenario.Add(Player(204, TeamId.Away, TacticalRole.FullBack, -8f, -22f, 2));
+        scenario.Add(Player(202, TeamId.Away, TacticalRole.CenterBack, 14f, -6f, 4));
+        scenario.Add(Player(203, TeamId.Away, TacticalRole.CenterBack, 14f, 6f, 5));
+        scenario.Add(Player(204, TeamId.Away, TacticalRole.FullBack, 10f, -22f, 2));
         return scenario;
     }
 

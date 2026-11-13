@@ -283,12 +283,25 @@ public enum TeamId
 /// pass was not plannable, fell back to the raw stick aim at the charge power — which a player experiences
 /// as "none of my passes land". The AI reference match is unchanged (it has no locked human), so the
 /// recorded gate/match/perf numbers are the `ai20` ones.</item>
+/// <item><c>AiBehaviour 22</c> — A5.1/A5.2: an off-ball receiving duty no longer walks to one anchor. The
+/// duty's meaning is now a bounded set of <b>run paths</b> (<see cref="AI.RunCandidateGenerator"/>): hold
+/// width, check short, in behind, overlap, underlap, recycle support, late and blind-side box arrival,
+/// and pin — each with a meeting region, a start window, an optional hold point and an expiry, scored on
+/// seven terms (<see cref="AI.RunScoring"/>): arrival advantage, pass availability, receiving
+/// orientation, line breaks, congestion at arrival, role usefulness and transition exposure. The path a
+/// player chooses is <b>adopted and frozen</b> for its window (<see cref="AI.RunIntent"/>), so a run
+/// arrives somewhere instead of chasing the ball, and it ends on expiry, a different choice, a duty
+/// change, or a meeting region the defensive line has walked past. Decoys are declared but not generated
+/// (their value is the defender's response, A5.6). The <c>high-line-run</c> fixture now puts the away
+/// line fourteen metres inside its own half with a real gap behind it, and carries a midfield, because
+/// without one the allocator makes the striker the third-player option and he never gets to run in
+/// behind. Trajectories differ from version 21.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 21;
+    public const int AiBehaviour = 22;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -730,6 +743,14 @@ public sealed class FootballerObservation
     /// should look like — a standalone controller never sees "attacking" it was not told about.
     /// </summary>
     public TeamContext TacticalContext { get; init; }
+
+    /// <summary>
+    /// The team's rest-defence picture from its last in-possession pass (A3.6), for scorers that must know
+    /// what a forward commitment costs if the ball is lost here. Default is "no picture"
+    /// (<see cref="AI.RestDefence.Security01"/> = 0), which a scorer must treat as unknown — not as
+    /// "fully exposed" — so a standalone controller is not punished for knowledge it was never given.
+    /// </summary>
+    public AI.RestDefence TeamSecurity { get; init; }
 }
 
 public interface IFootballerController

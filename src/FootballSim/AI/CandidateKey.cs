@@ -44,7 +44,14 @@ public enum CandidateKind
     Shield,
 
     /// <summary>Strike the ball long and high out of danger (A4.1).</summary>
-    Clearance
+    Clearance,
+
+    /// <summary>
+    /// Move along an off-ball run path (A5.1/A5.2), as opposed to occupying a job anchor. The distinction
+    /// matters: an anchor is a place a duty wants covered, a run has a meeting region and a time window,
+    /// and only the run can be adopted for its whole life (<see cref="RunIntent"/>).
+    /// </summary>
+    Run
 }
 
 /// <summary>

@@ -117,6 +117,12 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     /// </summary>
     public LocalPressureField PressureField => _generator.PressureField;
 
+    /// <summary>
+    /// This player's off-ball path set and adopted run (A5.1/A5.2). Diagnostics and tests read it; A5.3
+    /// will publish the intent to the carrier.
+    /// </summary>
+    public RunCandidateGenerator Runs => _generator.Runs;
+
     public string GetDebugSummary() => _debugSummary;
 
     /// <summary>
@@ -174,6 +180,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             _lastRunnerUp = null;
             _lastCandidateCount = 0;
             StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false);
+            // A restart is not the passage of play the run was chosen for: drop any adopted run.
+            _generator.NoteDecision(CandidateKey.None, obs.TacticalJob, obs.Tick);
             return restartCmd;
         }
 
@@ -285,11 +293,16 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         {
             _committedKey = best.Key;
             _committedActionName = best.ActionName;
-            // A job target is a commitment, not a reflex: hold it longer than a reactive press.
-            _commitmentTimer = best.Key.Kind == CandidateKind.Job
+            // A job target is a commitment, not a reflex: hold it longer than a reactive press. A run is
+            // the same kind of promise (A5.2): the player has adopted a meeting region and holds it.
+            _commitmentTimer = best.Key.Kind is CandidateKind.Job or CandidateKind.Run
                 ? _ai.JobCommitmentSeconds
                 : _ai.ReactionCommitmentSeconds;
         }
+
+        // A5.2: tell the run generator what was chosen, so an adopted path is frozen for its window and
+        // any other choice ends it.
+        _generator.NoteDecision(best.Key, obs.TacticalJob, obs.Tick);
 
         _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";
         StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job);

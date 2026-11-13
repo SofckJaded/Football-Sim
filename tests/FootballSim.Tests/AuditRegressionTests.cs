@@ -3104,8 +3104,14 @@ public sealed class AuditRegressionTests
     }
 
     /// <summary>
-    /// Audit F04: the controller must actually play the assigned job — offering the job target and a
-    /// cover-shadow alternative, not just the formation anchor.
+    /// Audit F04: the controller must actually play the assigned job — offering the job's own movement
+    /// options, not just the formation anchor.
+    ///
+    /// Restated in A5.1: a receiving duty's options are its run paths
+    /// (<see cref="RunCandidateGenerator"/>), so "the job is played" now means the duty's kinds are on
+    /// the table and the feet follow the target the chosen path published. For an outlet the played
+    /// expression is measurable: the meeting region has to be nearer the ball than the player is, which
+    /// is what "offer a short outlet" means and which the old anchor alignment could not check.
     /// </summary>
     [Fact]
     public void F04_ControllerOffersTheAssignedJobTargetAndAnAlternative()
@@ -3122,14 +3128,31 @@ public sealed class AuditRegressionTests
         var ai = new TacticalUtilityAiController(pitch);
         for (int i = 0; i < 12; i++) ai.Decide(observation, Dt);
 
-        UtilityCandidate main = ai.LastCandidates.Single(c => c.ActionName == "Job:NearOutlet");
-        Assert.Contains(ai.LastCandidates, c => c.ActionName == "Job:NearOutletAdj");
+        // The duty is played: its run paths are offered, and there is more than one of them (the audit's
+        // complaint was a single support/hold action with no situational alternative).
+        UtilityCandidate run = ai.LastCandidates.First(c => c.Key.Kind == CandidateKind.Run);
+        int runOptions = ai.LastCandidates.Count(c => c.Key.Kind == CandidateKind.Run);
+        Assert.True(runOptions >= 2,
+            $"the outlet offered {runOptions} run path(s); a checking run and a recycle support both exist here");
 
-        Vector2 toAnchor = new Vector2(job.Anchor.X - self.Position.X, job.Anchor.Z - self.Position.Z);
+        // The published target is the job's own intent, and the feet follow it.
+        Assert.NotNull(run.TargetXZ);
+        Vector3 target = run.TargetXZ!.Value;
+        Vector2 selfXZ = new(self.Position.X, self.Position.Z);
+        Vector2 targetXZ = new(target.X, target.Z);
+        Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
+
+        float targetToBall = Vector2.Distance(targetXZ, ballXZ);
+        float playerToBall = Vector2.Distance(selfXZ, ballXZ);
+        Assert.True(targetToBall < playerToBall - 1f,
+            $"the run target is {targetToBall:F1} m from the ball and the player is {playerToBall:F1} m: " +
+            "an outlet has to shorten the pass");
+
+        Vector2 toTarget = targetXZ - selfXZ;
         float alignment = Vector2.Dot(
-            Vector2.Normalize(main.Command.DesiredMoveDirectionXZ),
-            Vector2.Normalize(toAnchor));
-        Assert.True(alignment > 0.9f, $"Job movement points {alignment:F2} away from the job target");
+            Vector2.Normalize(run.Command.DesiredMoveDirectionXZ),
+            Vector2.Normalize(toTarget));
+        Assert.True(alignment > 0.9f, $"job movement points {alignment:F2} away from the job target");
     }
 
     // =============================================================================================

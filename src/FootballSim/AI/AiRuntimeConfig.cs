@@ -106,6 +106,14 @@ public sealed class AiRuntimeConfig
     public int MaxPassTargets { get; init; } = 8;
 
     /// <summary>
+    /// Upper bound on off-ball run paths offered to one player in one decision (A5.1). Each duty's kind
+    /// list is already short; this is the budget that keeps a wide duty (a depth runner has four kinds)
+    /// from costing four reach solves and four lane tests per tick. The kinds are offered in priority
+    /// order — support and depth before speculation — so a smaller budget drops the speculative end.
+    /// </summary>
+    public int MaxRunCandidates { get; init; } = 4;
+
+    /// <summary>
     /// When true, a player re-scores its candidates on its <see cref="PerceptionRefreshTicks"/>-style cadence
     /// (<see cref="CarrierDecisionTicks"/> / <see cref="OutfieldDecisionTicks"/>) instead of every live tick,
     /// re-emitting its live intent in between.
@@ -122,7 +130,8 @@ public sealed class AiRuntimeConfig
         $"cadence(p{PerceptionRefreshTicks} c{CarrierDecisionTicks} o{OutfieldDecisionTicks} " +
         $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
         $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
-        $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets})";
+        $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets}, " +
+        $"runs {MaxRunCandidates})";
 }
 
 /// <summary>
@@ -181,6 +190,7 @@ public static class AiRuntimeConfigValidation
         RequireCandidates(config.MaxOffBallCandidates, name, nameof(AiRuntimeConfig.MaxOffBallCandidates));
         RequireCandidates(config.MaxCarrierCandidates, name, nameof(AiRuntimeConfig.MaxCarrierCandidates));
         RequireCandidates(config.MaxPassTargets, name, nameof(AiRuntimeConfig.MaxPassTargets));
+        RequireCandidates(config.MaxRunCandidates, name, nameof(AiRuntimeConfig.MaxRunCandidates));
     }
 
     private static void RequireFinite(float value, string owner, string field)

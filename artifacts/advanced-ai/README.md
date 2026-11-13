@@ -1040,6 +1040,43 @@ A 4 m feet lead reached 88/89 % but removed the final-third option and a four-mi
 
 ---
 
+## 2026-11-13 — off-ball duties become run paths (simulation version `ai22-rs1`)
+
+A5.1 + A5.2. A receiving duty no longer walks to one anchor: the player is offered a bounded set of run
+paths, each with a meeting region, a hold point, a start window and an expiry, scored on seven terms, and
+the path he chooses is adopted and frozen for its window. The tactical gate, the reference match and the
+perf sample were re-captured because this is a behaviour change.
+
+### Reference 11v11 — `a5-run-paths-match-11v11.txt`
+
+| Metric | `ai20-rs1` | `ai22-rs1` |
+| :--- | :--- | :--- |
+| Ticks | 325 704 | 325 636 |
+| Score | 0–3 | 9–4 |
+| Possession (share) | 50.8 / 49.2 | 49.2 / 50.8 |
+| Passes | 435 / 424 (82 / 83 %) | **410 / 426 (87 / 90 %)** |
+| Shots | 33 / 27 | 49 / 41 |
+| Mean team width | 44.4 / 40.9 m | 43.6 / 40.6 m |
+| Kicks executed / requested | — | 945 / 1040 |
+
+Completion is the number to read: the runner now holds a meeting region, so the ball that is played to
+him arrives where he will be rather than where he was when the carrier looked. The goal count is not a
+signal (A4 already recorded 6–1 and 0–3 on adjacent versions).
+
+### Tactical differentiation gate — `a5-run-paths-tactical-gate.txt`
+
+5 seeds × 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.58 m** (was
+3.62 m at `ai20`). **PASS.**
+
+### Performance — `a5-run-paths-perf.txt`
+
+172.5 µs mean (second sample 188.1 µs), p99 597.8 µs, 63 178 B/tick. The run set costs a handful of reach
+solves per tick — only the team in possession generates paths, and each duty's kind list is at most four
+— and the allocation went *down* because run candidates use interned tags where the job candidates
+formatted a string per candidate.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
