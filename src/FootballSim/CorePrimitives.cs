@@ -277,12 +277,18 @@ public enum TeamId
 /// 79 % and looked like a ball to nobody, six metres completes 84 % — and the room a runner needs ahead
 /// of him for a ball into space is 3.6 m instead of 5, because refusing the feet ball had removed the
 /// final-third option entirely. Trajectories differ from version 19.</item>
+/// <item><c>AiBehaviour 21</c> — A4.12: the assisted human pass ranks the receivers in the aim cone by the
+/// ball that would actually be played and takes the best one that is <b>playable</b>, preferring a lane at
+/// or above <c>MinAssistedLaneClearance01</c>. Before this it picked one receiver from the cone and, if his
+/// pass was not plannable, fell back to the raw stick aim at the charge power — which a player experiences
+/// as "none of my passes land". The AI reference match is unchanged (it has no locked human), so the
+/// recorded gate/match/perf numbers are the `ai20` ones.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 20;
+    public const int AiBehaviour = 21;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

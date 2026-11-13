@@ -536,6 +536,12 @@ public sealed class HumanInputController : IFootballerController
         return SimMath.SafeNormalize(new Vector2(goalLineX, assistedZ) - selfXZ, aimDir);
     }
 
+    /// <summary>
+    /// Lane clearance at or above which an assisted pass counts as "open" (A4.12). The same 0.45 the
+    /// keeper's distribution uses: below it the ball is played into a body more often than not.
+    /// </summary>
+    private const float MinAssistedLaneClearance01 = 0.45f;
+
     private bool TryFindPassToFeetTarget(
         in FootballerObservation obs,
         Vector2 selfXZ,
@@ -553,12 +559,19 @@ public sealed class HumanInputController : IFootballerController
         // Quick tap targets closest teammate (~5m); holding targets progressively further teammates (up to 42m)
         float desiredDist = isQuickTap ? 5.0f : (8.0f + (userPower01 - 0.20f) * 42.0f);
 
-        float bestScore = -999f;
-        Vector2 bestTargetXZ = Vector2.Zero;
-        float bestDist = 0f;
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+
+        // A4.12: rank the team-mates in the aim cone by the *ball that would actually be played*, and take
+        // the best one that is physically playable — preferring a lane that is open. Before this the assist
+        // picked one receiver from the cone and gave up if his pass was not playable, leaving the raw stick
+        // aim and the charge power: an imprecise aim then produced a ball at nobody, which a player reports
+        // as "none of my passes land".
+        PassPlan bestOpenPlan = default;
+        PassPlan bestPlan = default;
+        float bestOpenScore = float.NegativeInfinity;
+        float bestScore = float.NegativeInfinity;
+        int bestOpenId = 0;
         int bestMateId = 0;
-        Vector2 bestMateVelocityXZ = Vector2.Zero;
-        bool found = false;
 
         foreach (var mate in obs.VisiblePlayers)
         {
@@ -591,39 +604,50 @@ public sealed class HumanInputController : IFootballerController
                 score = cosAngle * 2.0f - (distDiff / 18.0f) * 1.4f;
             }
 
+            PassPlan plan = _passPlanner.PlanGroundPass(
+                ballXZ,
+                mate.PlayerId,
+                mateXZ,
+                new Vector2(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z),
+                MaxReceivableSpeed,
+                // The human is passing to a human-shaped receiver: aim no further ahead than the bound even
+                // if he would run past it, because a human may stop. A4.11 bounded the default lead; this
+                // flag keeps the friendly hedge that the old 60 m default accidentally provided.
+                freezeReceiverAtLeadBound: true);
+
+            if (!plan.Feasible) continue;
+
             if (score > bestScore)
             {
                 bestScore = score;
-                bestTargetXZ = mateXZ;
-                bestDist = dist;
+                bestPlan = plan;
                 bestMateId = mate.PlayerId;
-                bestMateVelocityXZ = new Vector2(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
-                found = true;
+            }
+
+            float lane = FootballSim.AI.CandidateGenerator.EvaluateLaneClearance(
+                ballXZ, plan.TargetXZ, obs.VisiblePlayers, obs.SelfTeam);
+            if (lane >= MinAssistedLaneClearance01 && score > bestOpenScore)
+            {
+                bestOpenScore = score;
+                bestOpenPlan = plan;
+                bestOpenId = mate.PlayerId;
             }
         }
 
-        if (!found) return false;
+        if (bestOpenId != 0)
+        {
+            assistedDir = bestOpenPlan.AimDirectionXZ;
+            assistedPower = bestOpenPlan.Power01;
+            receiverId = bestOpenId;
+            return true;
+        }
 
-        // Audit F01: use the shared planner instead of a fixed 0.25 s lead and a distance-scaled power,
-        // so an assisted pass actually reaches the receiver at the moment the ball arrives. A4.11: the
-        // lead is bounded by the planner's default (12 m) — this call used to rely on the old 60 m
-        // default, which turned an assisted ball to a runner into a punt he could never reach.
-        var plan = _passPlanner.PlanGroundPass(
-            new Vector2(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z),
-            bestMateId,
-            bestTargetXZ,
-            bestMateVelocityXZ,
-            MaxReceivableSpeed,
-            // The human is passing to a human-shaped receiver: aim no further ahead than the bound even
-            // if he would run past it, because a human may stop. A4.11 bounded the default lead; this
-            // flag keeps the friendly hedge that the old 60 m default accidentally provided.
-            freezeReceiverAtLeadBound: true);
+        if (bestMateId == 0) return false;
 
-        if (!plan.Feasible)
-            return false;
-
-        assistedDir = plan.AimDirectionXZ;
-        assistedPower = plan.Power01;
+        // Nothing had a clean lane: still play the best playable ball rather than the raw aim and the
+        // charge power, which is what used to happen and what a player sees as a pass to nobody.
+        assistedDir = bestPlan.AimDirectionXZ;
+        assistedPower = bestPlan.Power01;
         receiverId = bestMateId;
         return true;
     }
