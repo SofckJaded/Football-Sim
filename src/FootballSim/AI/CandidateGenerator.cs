@@ -622,10 +622,20 @@ public sealed class CandidateGenerator : IAiStateResettable
         return true;
     }
 
+    /// <summary>Lower bound on the pre-rank of a receiver who has announced a run (A5.3).</summary>
+    /// <remarks>
+    /// The pre-rank is progression plus standing space, both in roughly [-1, 1]. The bonus is deliberately
+    /// smaller than either term: it rescues an announced runner from the <see cref="AiRuntimeConfig.MaxPassTargets"/>
+    /// cut, it does not promote him above a genuinely better placed team-mate. With a budget of two and three
+    /// eligible receivers it is the difference between the advertisement being read and the runner being
+    /// pruned before any trajectory exists, which a regression pins from both sides.
+    /// </remarks>
+    internal const float AnnouncedRunRankBonus = 0.35f;
+
     /// <summary>
     /// Fills the bounded pass-target buffer with the most promising eligible receivers. The rank is
-    /// deliberately cheap (progression plus the room the receiver stands in): it exists to bound the
-    /// expensive trajectory work, not to make the decision.
+    /// deliberately cheap (progression, the room the receiver stands in, and whether he has announced a
+    /// run): it exists to bound the expensive trajectory work, not to make the decision.
     /// </summary>
     private void RankPassTargets(
         in FootballerObservation obs,
@@ -650,6 +660,16 @@ public sealed class CandidateGenerator : IAiStateResettable
             Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
             float space = EvaluateSpaceFreedom(mateXZ, obs.VisiblePlayers, obs.SelfTeam);
             float rank = Math.Clamp(forwardMeters / 20f, -1f, 1f) + space;
+
+            // A5.3: a receiver who has announced a meeting region is not an anonymous target — the ball can
+            // be timed to him. A modest bonus keeps him inside the bounded set, so the advertisement is never
+            // pruned before it is read. It does not change who *should* get the ball: the pass model and the
+            // value scale still decide that, and a crowded or useless announced run is still priced as one.
+            if (_communication is not null &&
+                _communication.Runs.TryGetAdvertisement(obs.SelfTeam, mate.PlayerId, obs.Tick, out _))
+            {
+                rank += AnnouncedRunRankBonus;
+            }
 
             // The human's request is planned whatever its rank: a caller is never silently dropped.
             if (mate.PlayerId == callerId) rank = float.MaxValue;

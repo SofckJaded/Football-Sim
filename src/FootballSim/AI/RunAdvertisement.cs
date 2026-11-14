@@ -165,12 +165,16 @@ public sealed class RunAdvertisementBoard
         int slot = Find(team, playerId);
         if (slot >= 0 && IsSamePromise(_entries[slot].Advert, intent))
         {
+            // Same region, same run: renew in place. The window and the confidence are current — the
+            // runner re-measures how sure he is of the space every tick (A5.3) — but the publication tick
+            // stays, so re-deciding the run cannot restart the communication delay.
             Entry renewed = _entries[slot];
             renewed.Advert = renewed.Advert with
             {
                 ExpiresTick = intent.Path.ExpiresTick,
                 MeetTick = intent.Path.MeetTick,
-                MeetRadiusMeters = intent.Path.MeetRadiusMeters
+                MeetRadiusMeters = intent.Path.MeetRadiusMeters,
+                Confidence01 = intent.Confidence01
             };
             _entries[slot] = renewed;
             return;

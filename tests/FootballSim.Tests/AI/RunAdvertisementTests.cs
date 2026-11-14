@@ -327,9 +327,71 @@ public sealed class RunAdvertisementTests
         Assert.Equal(obs.Tick, generator.Intent!.Value.AdoptedTick);
     }
 
+    [Fact]
+    public void TheAdvertisedConfidence_FollowsTheLiveRun()
+    {
+        var board = new RunAdvertisementBoard();
+        var generator = new RunCandidateGenerator(Pitch, board);
+        FootballerObservation clear = DepthObservation(tick: 100);
+        AdoptInBehind(generator, clear);
+        float atAdoption = generator.Intent!.Value.Confidence01;
+
+        // The world changes under the frozen region: a centre-back arrives in it and a midfielder shuts the
+        // lane. The geometry, the window and the adoption tick are untouched — only the belief is re-measured.
+        var contested = new List<PerceivedEntity>(DepthWorld())
+        {
+            Entity(26, TeamId.Away, TacticalRole.CenterBack, 22f, 2f),
+            Entity(27, TeamId.Away, TacticalRole.DefensiveMidfielder, 12f, 12f)
+        };
+        FootballerObservation crowded = RunnerObservation(
+            TacticalRole.Striker, new Vector2(12f, 2f), new Vector2(14f, 2f), contested,
+            new Vector2(0f, 20f), TacticalJob.DepthRun, tick: 101);
+
+        generator.Generate(crowded, 30f, crowded.Tick, 4);
+
+        RunIntent live = generator.Intent ?? throw new Xunit.Sdk.XunitException("the run was dropped, not re-priced");
+        Assert.Equal(RunKind.InBehind, live.Kind);
+        Assert.Equal(clear.Tick, live.AdoptedTick);
+        Assert.True(live.Confidence01 < atAdoption,
+            $"a contested run must be worth less than the clear one ({live.Confidence01:F2} vs {atAdoption:F2})");
+
+        // And the team hears the new number: the renewal updates the promise in place.
+        generator.NoteSelected(crowded, RunTags.KeyOf(RunKind.InBehind));
+        Assert.True(board.TryGetAdvertisement(
+            TeamId.Home, crowded.SelfId, clear.Tick + RunAdvertisementBoard.CommunicationDelayTicks,
+            out RunAdvertisement advert));
+        Assert.Equal(live.Confidence01, advert.Confidence01, 3);
+        Assert.Equal(clear.Tick, advert.PublishedTick);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // The carrier: aim at the region, and price the promise rather than the lead
     // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void AnAnnouncedRun_SurvivesThePassTargetBudget()
+    {
+        // Three eligible receivers and a budget of two. On progression and standing space the runner is
+        // third, so without an advertisement he is pruned before any trajectory is planned and the promise
+        // is never read at all.
+        var cut = new AiRuntimeConfig { MaxPassTargets = 2 };
+
+        var withBoard = new CandidateGenerator(Pitch, AnnounceRunFor(MateId: RunnerId), cut) { TimeOnBall = 0.8f };
+        withBoard.GenerateOnBallCandidates(ThreeMateObservation(), new Vector3(Pitch.HalfLength, 0f, 0f), 34f);
+
+        Assert.True(HasPassTo(withBoard, RunnerId),
+            "the announced runner must reach the planner even when the budget is two");
+
+        // And it is the promised form that is planned, not the fallback: the region the runner named is
+        // what the carrier aims at.
+        RunPassCandidate(withBoard, RunnerId);
+
+        var withoutBoard = new CandidateGenerator(Pitch, communication: null, cut) { TimeOnBall = 0.8f };
+        withoutBoard.GenerateOnBallCandidates(ThreeMateObservation(), new Vector3(Pitch.HalfLength, 0f, 0f), 34f);
+
+        Assert.False(HasPassTo(withoutBoard, RunnerId),
+            "without a promise the same runner is third on progression and is pruned: that is the A/B");
+    }
 
     [Fact]
     public void ACarrier_PlaysToTheAnnouncedRegion()
@@ -544,9 +606,10 @@ public sealed class RunAdvertisementTests
             publishedTick);
 
     /// <summary>A carrier in possession at the halfway line with one team-mate running behind him.</summary>
-    private static FootballerObservation CarrierObservation()
+    private static FootballerObservation CarrierObservation(params PerceivedEntity[] extra)
     {
         var visible = new List<PerceivedEntity> { Runner() };
+        visible.AddRange(extra);
 
         return new FootballerObservation
         {
@@ -588,6 +651,28 @@ public sealed class RunAdvertisementTests
                 Regions.ExpiresTick),
             Regions.PublishedTick);
         return comms;
+    }
+
+    /// <summary>
+    /// The carrier with three eligible receivers. On progression alone #10 (18, 4) and #11 (16, -6) outrank
+    /// the runner at (12, 12), so a pass-target budget of two prunes him unless he is announced.
+    /// </summary>
+    private static FootballerObservation ThreeMateObservation() => CarrierObservation(
+        Entity(10, TeamId.Home, TacticalRole.Striker, 18f, 4f),
+        Entity(11, TeamId.Home, TacticalRole.Winger, 16f, -6f));
+
+    private static bool HasPassTo(CandidateGenerator generator, int receiverId)
+    {
+        for (int i = 0; i < generator.CandidateCount; i++)
+        {
+            if (generator.Candidates[i].Key.Kind == CandidateKind.Pass &&
+                generator.Candidates[i].Key.TargetPlayerId == receiverId)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static UtilityCandidate RunPassCandidate(CandidateGenerator generator, int receiverId)

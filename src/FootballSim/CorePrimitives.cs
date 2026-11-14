@@ -307,12 +307,19 @@ public enum TeamId
 /// not two. A carrier that plays the pass raises a claim, which keeps the runner's run alive until the
 /// ball should have arrived and releases any timed hold, so a late box arrival is received rather than
 /// timed. Trajectories differ from version 22.</item>
+/// <item><c>AiBehaviour 24</c> — A5.3 completes: an adopted run's <b>confidence is re-measured every tick</b>
+/// and the renewal carries it (the meeting region, its window and the adoption tick stay frozen, so the
+/// commitment is intact while the promise stops claiming certainty in a space that has closed), and the
+/// pass-target pre-rank adds a documented bonus for a receiver who has announced a run
+/// (<c>CandidateGenerator.AnnouncedRunRankBonus</c>) so
+/// <see cref="AI.AiRuntimeConfig.MaxPassTargets"/> cannot prune the one option the advertisement exists
+/// for. Trajectories differ from version 23.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 23;
+    public const int AiBehaviour = 24;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

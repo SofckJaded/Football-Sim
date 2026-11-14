@@ -194,7 +194,8 @@ public sealed class RunCandidateGenerator
         // ball lands in it; the other duties still compete (shape, press, the pass interception).
         if (_intent is RunIntent receiving && IsClaimLive(obsRef, tick))
         {
-            Emit(receiving.Path, RunScoring.Score(receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity));
+            RunScoreTerms receivingTerms = RunScoring.Score(receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity);
+            EmitAndRefreshConfidence(receiving, receivingTerms);
             return _count;
         }
 
@@ -205,8 +206,10 @@ public sealed class RunCandidateGenerator
 
             if (_intent is RunIntent adopted && adopted.Kind == kind)
             {
-                // Re-offer the frozen geometry: the score is live, the meeting region is not.
-                Emit(adopted.Path, RunScoring.Score(adopted.Path, obsRef, carrierXZ, obsRef.TeamSecurity));
+                // Re-offer the frozen geometry: the meeting region, its window and the adoption tick do not
+                // move, but the score — and with it the confidence the team hears — is measured again.
+                RunScoreTerms adoptedTerms = RunScoring.Score(adopted.Path, obsRef, carrierXZ, obsRef.TeamSecurity);
+                EmitAndRefreshConfidence(adopted, adoptedTerms);
                 continue;
             }
 
@@ -655,6 +658,22 @@ public sealed class RunCandidateGenerator
         _paths[_count] = path;
         _terms[_count] = terms;
         _count++;
+    }
+
+    /// <summary>
+    /// Re-offers an adopted path with its <b>live</b> confidence (A5.3). The geometry — meeting region,
+    /// window, hold point, adoption tick — is frozen, but the confidence the team hears is not: a promise
+    /// that keeps claiming 0.8 while the space closes is worse than no promise, because the carrier prices
+    /// the ball with it. Refreshing only the confidence keeps the commitment intact and the advertisement
+    /// honest.
+    /// </summary>
+    private void EmitAndRefreshConfidence(in RunIntent intent, in RunScoreTerms terms)
+    {
+        RunPath refreshed = intent.Path with { Confidence01 = ConfidenceFrom(terms) };
+        if (refreshed.Confidence01 != intent.Path.Confidence01)
+            _intent = intent with { Path = refreshed };
+
+        Emit(refreshed, terms);
     }
 
     private Vector2 ClampToPitch(Vector2 point) => new(

@@ -1119,6 +1119,47 @@ budget holds at p99 with 24x headroom.
 
 ---
 
+## 2026-11-14 — the promise keeps up with the run (simulation version `ai24-rs1`)
+
+A5.3 completed. Two gaps from `ai23` are closed: an adopted run's **confidence is re-measured every tick**
+(the meeting region, its window and the adoption tick stay frozen, so the commitment is intact while the
+advertisement stops claiming certainty about a space that has closed), and the pass-target pre-rank gives a
+receiver who has announced a run a documented bonus, so `MaxPassTargets` cannot prune the one option the
+advertisement exists for. Behaviour change, so the gate, the reference match and the perf sample were
+re-captured.
+
+### Reference 11v11 — `a5-advert-confidence-match-11v11.txt`
+
+| Metric | `ai22-rs1` | `ai23-rs1` | `ai24-rs1` |
+| :--- | :--- | :--- | :--- |
+| Ticks | 325 636 | 325 362 | 325 546 |
+| Score | 9–4 | 3–3 | 6–4 |
+| Possession (share) | 49.2 / 50.8 | 49.7 / 50.3 | 50.8 / 49.2 |
+| Passes | 410 / 426 (87 / 90 %) | 488 / 392 (86 / 83 %) | 478 / 489 (**86 / 84 %**) |
+| Shots | 49 / 41 | 29 / 47 | 37 / 40 |
+| Mean team width | 43.6 / 40.6 m | 44.0 / 41.3 m | 43.7 / 41.2 m |
+| Run adverts published / withdrawn / claimed | — | 15 078 / 7 764 / 137 | 14 976 / 7 733 / **189** |
+
+The two sides now pass the ball almost equally often (478 / 489), which the `ai23` sample did not, and the
+claim count rose by a third — the carrier reaches an announced run more often once the pre-rank stops
+pruning it. Completion is where it was at `ai22` within the single-match spread A4 documented.
+
+### Tactical differentiation gate — `a5-advert-confidence-tactical-gate.txt`
+
+5 seeds x 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.17 m** (3.77 m at
+`ai23`, 3.58 m at `ai22`; the gate is a majority-and-margin test, not a width target, and all three runs
+pass by a wide margin). **PASS.**
+
+### Performance — `a5-advert-confidence-perf.txt`
+
+155.7 us mean, p99 572.7 us, 62 661 B/tick — the lowest mean recorded since A2, and about 25 % *below* the
+`ai23` sample (206.8 us). Two `ai23` samples taken before the timed pass's power search was bisected were
+194.5 and 221.1 us, so the apparent +20 % in that section was single-sample machine noise rather than an
+A5.3 cost; the live-confidence refresh adds one run re-score per player per tick and the pre-rank adds one
+board lookup per eligible receiver, neither of which is measurable here.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
