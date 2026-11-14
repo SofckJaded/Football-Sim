@@ -302,14 +302,25 @@ public sealed class CandidateGenerator : IAiStateResettable
         // he will be there, the carrier has played the ball to that region, and the runner holds it until
         // the ball has had time to arrive. Raised once per selection from the region's own meeting tick, so
         // it is a statement about a ball rather than a per-tick re-issue.
+        //
+        // Every delivery aimed at an announced region claims it (A5.5b), not just the ground pass: a cross,
+        // a driven ball and a cutback are all promises to a runner, and a runner who dropped his run because
+        // only the ground variant could claim would not be there for the ball that was actually played.
         if (key.Kind == CandidateKind.Pass && key.TargetPlayerId > 0 &&
-            string.Equals(key.TargetTag, RunPassTag, StringComparison.Ordinal) &&
+            IsDeliveredToRun(key.TargetTag) &&
             _communication is not null &&
             _communication.Runs.TryGetAdvertisement(obs.SelfTeam, key.TargetPlayerId, obs.Tick, out RunAdvertisement advert))
         {
             _communication.Runs.Claim(obs.SelfTeam, key.TargetPlayerId, obs.SelfId, advert.MeetTick, obs.Tick);
         }
     }
+
+    /// <summary>True when this candidate tag names a ball played into a team-mate's announced region.</summary>
+    private static bool IsDeliveredToRun(string? tag) =>
+        string.Equals(tag, RunPassTag, StringComparison.Ordinal) ||
+        string.Equals(tag, CrossPassTag, StringComparison.Ordinal) ||
+        string.Equals(tag, DrivenPassTag, StringComparison.Ordinal) ||
+        string.Equals(tag, CutbackPassTag, StringComparison.Ordinal);
 
     /// <summary>
     /// Generates the carrier's candidate set for one decision (A4.1).
@@ -335,6 +346,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         AddShotCandidate(obs, distToGoal, oppGoalCenter);
         AddPassCandidates(obs, ballXZ, selfXZ, offsideLineProjX, underHeavyPressure);
         AddCrossCandidate(obs, ballXZ, selfXZ);
+        AddCutbackCandidate(obs, ballXZ, selfXZ);
+        AddDrivenCandidate(obs, selfXZ);
         AddRecycleCandidates(obs, ballXZ, myAttackProjX);
         CarryChoice carry = ChooseCarry(obs, selfXZ, ballXZ, goalXZ, oppGoalCenter, inFinalThird, nearestOppDist);
         AddCarryCandidate(carry, nearestOppDist);
@@ -848,31 +861,49 @@ public sealed class CandidateGenerator : IAiStateResettable
         in PassOption option,
         out ValueTerms valueTerms)
     {
-        PlayerTendencies tendencies = obs.SelfTendencies;
-        TeamTacticalProfile profile = obs.TeamProfile;
-
         // The one pressure estimate the pass model produced is what the reception is valued under.
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, receiverId, targetXZ, terms.DefenderPressure01);
 
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
 
-        // Risk tolerance (player + team): a tight lane is worth taking for a risk-taker and a reason to
-        // keep the ball for a safe passer.
-        float forwardRatio = Math.Clamp(forwardMeters / 20f, -1f, 1f);
-        float preference = ActionValueScale.ProgressBonus * forwardRatio;
-        float laneRisk = 1f - terms.LaneClearance01;
-        preference += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.40f * laneRisk;
-        preference += (profile.RiskTolerance01 - 0.50f) * 0.30f * laneRisk;
-
-        // Direct pass preference: how much a forward pass is worth to this player.
-        preference += (tendencies.DirectPassPreference01 - PlayerTendencyBaselines.DirectPassPreference) * 0.30f * forwardRatio;
-
+        float preference = PassPreference(obs, forwardMeters, terms.LaneClearance01);
         if (option.HumanCaller) preference += HumanCallPassBonus;
 
         valueTerms = new ValueTerms(
             terms.CompletionProbability01, reception.Value, loss, preference);
         return valueTerms.Value;
+    }
+
+    /// <summary>
+    /// The preference half of every pass score (A4.4/A5.5b): progress, risk tolerance and directness.
+    ///
+    /// It is one method because <b>every</b> pass has to pay it. A5.5 built the cross, the driven ball and the
+    /// raised alternative with <c>preference = 0</c> while the ground passes next to them collected up to
+    /// <see cref="ActionValueScale.ProgressBonus"/> (0.35) of forward-progress preference — so a delivery was
+    /// compared against a carry and a ground pass with a handicap nobody had stated, larger than the margin
+    /// the deliveries were losing by. A delivery into the box is a forward pass; it earns the same preference.
+    /// </summary>
+    private static float PassPreference(
+        in FootballerObservation obs,
+        float forwardMeters,
+        float laneClearance01)
+    {
+        PlayerTendencies tendencies = obs.SelfTendencies;
+        TeamTacticalProfile profile = obs.TeamProfile;
+
+        float forwardRatio = Math.Clamp(forwardMeters / 20f, -1f, 1f);
+        float preference = ActionValueScale.ProgressBonus * forwardRatio;
+
+        // Risk tolerance (player + team): a tight lane is worth taking for a risk-taker and a reason to
+        // keep the ball for a safe passer.
+        float laneRisk = 1f - laneClearance01;
+        preference += (tendencies.RiskTolerance01 - PlayerTendencyBaselines.RiskTolerance) * 0.40f * laneRisk;
+        preference += (profile.RiskTolerance01 - 0.50f) * 0.30f * laneRisk;
+
+        // Direct pass preference: how much a forward pass is worth to this player.
+        preference += (tendencies.DirectPassPreference01 - PlayerTendencyBaselines.DirectPassPreference) * 0.30f * forwardRatio;
+        return preference;
     }
 
     /// <summary>
@@ -913,7 +944,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, mate.PlayerId, terms.LandingXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
-        ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
+        float forwardMeters = (targetXZ.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+        ValueTerms valueTerms = new(
+            terms.CompletionProbability01, reception.Value, loss,
+            PassPreference(obs, forwardMeters, lane));
         float score = valueTerms.Value;
 
         // Aim at the meeting point; the power is what the model says puts the landing there.
@@ -927,7 +961,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate($"Pass(LoftedPass)To#{mate.PlayerId}", score, command)
         {
-            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, "Lofted"),
+            Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, LoftedPassTag),
             Terms = valueTerms
         });
         return true;
@@ -943,15 +977,41 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     internal const float CrossMinLateralMeters = 15f;
 
+    /// <summary>Candidate tag of the cross (A5.5). Interned: a candidate is built every tick.</summary>
+    internal const string CrossPassTag = "Cross";
+
+    /// <summary>Candidate tag of the driven delivery (A5.5b).</summary>
+    internal const string DrivenPassTag = "Driven";
+
+    /// <summary>Candidate tag of the cutback (A5.5b).</summary>
+    internal const string CutbackPassTag = "Cutback";
+
+    /// <summary>Candidate tag of the raised alternative to feet (A5.5).</summary>
+    internal const string LoftedPassTag = "Lofted";
+
     /// <summary>
     /// How far into the attacking half the carrier must be before a cross is offered, in metres
     /// (attack-relative projection). Crossing from the halfway line is a hopeful punt; the box must be
     /// within reach of a delivery the model can actually time.
+    ///
+    /// A5.5b: this used to be 8 m, and the measured offers were long diagonals played from the halfway line
+    /// towards a region 28 m from goal — a cross in name only, priced against a carry the carrier had every
+    /// reason to keep making. A cross is the delivery of a carrier who has run out of pitch, so the carrier
+    /// has to be in the final third.
     /// </summary>
-    internal const float CrossMinProjX = 8f;
+    internal const float CrossMinProjX = RunCandidateGenerator.FinalThirdProjX;
 
-    /// <summary>Attack-relative projection a box arrival must reach to be a cross target, in metres.</summary>
-    internal const float CrossBoxProjX = 24f;
+    /// <summary>
+    /// Attack-relative projection a box arrival must reach to be a cross target, in metres (A5.5b).
+    ///
+    /// 32 m is 20.5 m from the goal line: the penalty area and a stride beyond its edge. The bar the model
+    /// needs is the one where a reception's <b>shooting chance</b> is real
+    /// (<see cref="AI.ReceptionValueModel.ChanceShare"/> is only paid inside
+    /// <see cref="ActionValueScale.ShotFarMeters"/> of the goal). It was 24 m in A5.5, which admitted a "box
+    /// arrival" 28 m from goal where the chance term pays nothing — measured, every one of those crosses was
+    /// priced against a carry it had no way to beat.
+    /// </summary>
+    internal const float CrossBoxProjX = 32f;
 
     /// <summary>
     /// Offers one <b>cross</b> into the box, aimed at a team-mate's announced arrival (A5.5).
@@ -1013,7 +1073,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, bestMateId, terms.LandingXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
-        ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
+        float crossForward = (bestRegion.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+        ValueTerms valueTerms = new(
+            terms.CompletionProbability01, reception.Value, loss,
+            PassPreference(obs, crossForward, lane));
 
         Vector2 aim = SimMath.SafeNormalize(bestRegion - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
         var command = new FootballerCommand(
@@ -1025,9 +1088,239 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate($"CrossTo#{bestMateId}", valueTerms.Value, command)
         {
-            Key = new CandidateKey(CandidateKind.Pass, bestMateId, "Cross"),
+            Key = new CandidateKey(CandidateKind.Pass, bestMateId, CrossPassTag),
             Terms = valueTerms,
             TargetXZ = new Vector3(terms.LandingXZ.X, 0f, terms.LandingXZ.Y)
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The driven ball (A5.5b): a hard flat delivery to an announced arrival.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Shortest ball worth driving, in metres. Below this a rolled pass is already at the receiver almost as
+    /// quickly, so the driven ball's only advantage (it gets there before a defender can) buys nothing.
+    /// </summary>
+    internal const float DrivenMinDistanceMeters = 12f;
+
+    /// <summary>
+    /// Offers at most one <b>driven</b> delivery: a flat, hard ball struck to be at a team-mate's announced
+    /// meeting region <b>when he gets there</b> (A5.5b).
+    ///
+    /// This is the delivery the model could not see before. A driven ball first touches the ground inside ten
+    /// metres and reaches a man twenty metres away by skipping and rolling, so the landing-based raised
+    /// estimate could only ever offer it to somebody standing within reach of the first bounce. With arrival
+    /// semantics (<see cref="RaisedPassModel.TryPowerForArrival"/>) the ball is timed to the promise, and its
+    /// own profile prices the pace: it arrives sooner than a rolled ball, which is why it beats a defender,
+    /// and it is harder to kill, which is what it pays. Like the cross it is a delivery to an announced
+    /// arrival — the run board is the targeting, not a second channel.
+    /// </summary>
+    private void AddDrivenCandidate(in FootballerObservation obs, Vector2 selfXZ)
+    {
+        if (_communication is null) return;
+
+        int bestMateId = 0;
+        Vector2 bestRegion = default;
+        LoftedPassTerms bestTerms = default;
+        ValueTerms bestValueTerms = default;
+        float bestScore = float.NegativeInfinity;
+        float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
+
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity mate = obs.VisiblePlayers[i];
+            if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+            if (mate.Role == TacticalRole.Goalkeeper) continue;
+
+            if (!_communication.Runs.TryGetAdvertisement(
+                    obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert))
+            {
+                continue;
+            }
+
+            if (advert.MeetTick <= obs.Tick) continue;
+
+            float distance = Vector2.Distance(selfXZ, advert.MeetXZ);
+            if (distance < DrivenMinDistanceMeters || distance > MaxPassDistanceMeters) continue;
+
+            float lane = EvaluateLaneClearance(selfXZ, advert.MeetXZ, obs.VisiblePlayers, obs.SelfTeam);
+            var promise = new PassArrivalPromise(
+                advert.MeetXZ,
+                advert.TicksUntilMeeting(obs.Tick) * SimConstants.FixedDeltaTime,
+                advert.MeetRadiusMeters,
+                advert.Promise01(obs.Tick));
+
+            LoftedPassTerms terms = _passSuccess.EstimateRaised(
+                obs, mate, advert.MeetXZ, RaisedPassProfile.Driven, lane, promise);
+            if (!terms.Feasible) continue;
+            if (terms.CompletionProbability01 < MinViableCompletion01) continue;
+
+            ReceptionValueTerms reception = _receptionValue.Evaluate(
+                obs, mate.PlayerId, terms.LandingXZ, terms.LandingPressure01);
+            float forward = (advert.MeetXZ.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+            var valueTerms = new ValueTerms(
+                terms.CompletionProbability01, reception.Value, loss, PassPreference(obs, forward, lane));
+
+            if (valueTerms.Value <= bestScore) continue;
+            bestScore = valueTerms.Value;
+            bestValueTerms = valueTerms;
+            bestMateId = mate.PlayerId;
+            bestRegion = advert.MeetXZ;
+            bestTerms = terms;
+        }
+
+        if (bestMateId == 0) return;
+
+        Vector2 aim = SimMath.SafeNormalize(bestRegion - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        var command = new FootballerCommand(
+            aim, aim, false, false, false, false, false, Vector3.Zero,
+            KickIntentType.DrivenPass, new Vector3(aim.X, 0f, aim.Y), bestTerms.Power01, 0f)
+        {
+            IntendedReceiverId = bestMateId
+        };
+
+        _lastCandidates.Add(new UtilityCandidate($"DrivenTo#{bestMateId}", bestScore, command)
+        {
+            Key = new CandidateKey(CandidateKind.Pass, bestMateId, DrivenPassTag),
+            Terms = bestValueTerms,
+            TargetXZ = new Vector3(bestTerms.LandingXZ.X, 0f, bestTerms.LandingXZ.Y)
+        });
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The cutback (A5.5b): the ground delivery into the box from the byline.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Attack-relative projection the carrier must reach for a cutback, in metres (22.5 m out).
+    ///
+    /// The strict byline (46 m and beyond) was measured at zero offers in three matches: this side does not
+    /// carry the ball into the corner often enough for a rule that only fires there to be evidence of
+    /// anything. The wide final third is where the cutback's situation actually arises — a carrier who has
+    /// run out of room wide, and a runner arriving in the box in front of him but behind the ball.
+    /// </summary>
+    internal const float CutbackCarrierMinProjX = 30f;
+
+    /// <summary>How wide the carrier must be for a cutback, in metres from the centre.</summary>
+    internal const float CutbackCarrierMinLateralMeters = 12f;
+
+    /// <summary>
+    /// How far behind the ball the announced region must be for the ball to be a cutback, in metres.
+    ///
+    /// Three metres, not a token margin: the standard box arrival sits 11 m from the goal line, so a carrier
+    /// on the byline is only a few metres in front of it. The bar exists to tell a cutback from a ball played
+    /// sideways into the same region, not to demand a long backward pass.
+    /// </summary>
+    internal const float CutbackMinBehindMeters = 3f;
+
+    /// <summary>Attack-relative projection the announced region must still reach, in metres.</summary>
+    internal const float CutbackMinRegionProjX = 24f;
+
+    /// <summary>
+    /// Offers a <b>cutback</b>: a ground ball pulled back from the byline into a team-mate's announced arrival
+    /// (A5.5b).
+    ///
+    /// The cutback is the delivery that solves the situation the cross cannot: against a defence that sits
+    /// behind the ball, no forward run can arrive inside the box legally — the run generator clamps a box
+    /// arrival to the believed offside line (A5.4), so the announced region is at the edge of the box rather
+    /// than in it. A carrier who has taken the ball to the byline can still play backwards into that region,
+    /// because a ball played from beyond the receiver is onside by construction. Measured, that is exactly
+    /// where the box arrivals are sitting: the cross is only ever offered when the defensive line is deep
+    /// enough to leave the box itself onside, and the cutback covers the other case.
+    ///
+    /// It is a ground pass to a promised region and is planned and priced exactly like one
+    /// (<see cref="PassPlanner.PlanGroundPassToRegion"/> plus the promise); what makes it its own candidate is
+    /// that the generic run pass is pre-ranked by forward progress, and a region <b>behind</b> the carrier
+    /// ranks last by construction — it would be pruned before it was ever planned.
+    /// </summary>
+    private void AddCutbackCandidate(in FootballerObservation obs, Vector2 ballXZ, Vector2 selfXZ)
+    {
+        if (_communication is null) return;
+
+        float selfProj = selfXZ.X * obs.AttackingDirectionX;
+        if (selfProj < CutbackCarrierMinProjX) return;
+        if (MathF.Abs(selfXZ.Y) < CutbackCarrierMinLateralMeters) return;
+
+        int bestMateId = 0;
+        Vector2 bestRegion = default;
+        RunAdvertisement bestAdvert = default;
+        float bestRegionProj = float.NegativeInfinity;
+
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity mate = obs.VisiblePlayers[i];
+            if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+            if (mate.Role == TacticalRole.Goalkeeper) continue;
+
+            if (!_communication.Runs.TryGetAdvertisement(
+                    obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert))
+            {
+                continue;
+            }
+
+            if (advert.Kind is not (RunKind.LateBoxArrival or RunKind.BlindSideArrival)) continue;
+            if (advert.MeetTick <= obs.Tick) continue;
+
+            float regionProj = advert.MeetXZ.X * obs.AttackingDirectionX;
+            if (regionProj < CutbackMinRegionProjX) continue;
+            if (regionProj > selfProj - CutbackMinBehindMeters) continue;
+            if (regionProj <= bestRegionProj) continue;
+
+            bestRegionProj = regionProj;
+            bestMateId = mate.PlayerId;
+            bestRegion = advert.MeetXZ;
+            bestAdvert = advert;
+        }
+
+        if (bestMateId == 0) return;
+        if (!TryGetVisibleEntity(obs, bestMateId, out PerceivedEntity target)) return;
+
+        float arriveInSeconds = bestAdvert.TicksUntilMeeting(obs.Tick) * SimConstants.FixedDeltaTime;
+        PassPlan plan = _passPlanner.PlanGroundPassToRegion(ballXZ, bestRegion, arriveInSeconds);
+        if (!plan.Feasible)
+        {
+            Reject(bestMateId, RejectionUnplannable);
+            return;
+        }
+
+        float lane = EvaluateLaneClearance(ballXZ, plan.TargetXZ, obs.VisiblePlayers, obs.SelfTeam);
+        var promise = new PassArrivalPromise(
+            bestRegion, arriveInSeconds, bestAdvert.MeetRadiusMeters, bestAdvert.Promise01(obs.Tick));
+        PassSuccessTerms terms = _passSuccess.Estimate(obs, target, plan, lane, promise);
+
+        if (terms.LaneBlocked)
+        {
+            Reject(bestMateId, RejectionLaneBlocked);
+            return;
+        }
+
+        if (terms.CompletionProbability01 < MinViableCompletion01)
+        {
+            Reject(bestMateId, RejectionLowCompletion);
+            return;
+        }
+
+        ReceptionValueTerms reception = _receptionValue.Evaluate(
+            obs, bestMateId, plan.TargetXZ, terms.DefenderPressure01);
+        float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
+        float forward = (plan.TargetXZ.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+        var valueTerms = new ValueTerms(
+            terms.CompletionProbability01, reception.Value, loss, PassPreference(obs, forward, lane));
+
+        var command = new FootballerCommand(
+            plan.AimDirectionXZ, plan.AimDirectionXZ, false, false, false, false, false, Vector3.Zero,
+            KickIntentType.GroundPass,
+            new Vector3(plan.AimDirectionXZ.X, 0f, plan.AimDirectionXZ.Y), plan.Power01, 0f)
+        {
+            IntendedReceiverId = bestMateId
+        };
+
+        _lastCandidates.Add(new UtilityCandidate($"CutbackTo#{bestMateId}", valueTerms.Value, command)
+        {
+            Key = new CandidateKey(CandidateKind.Pass, bestMateId, CutbackPassTag),
+            Terms = valueTerms,
+            TargetXZ = new Vector3(plan.TargetXZ.X, 0f, plan.TargetXZ.Y)
         });
     }
 
@@ -1159,9 +1452,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         // A4.4: the carry's value lives in ActionValueScale with the unit documented. See the block
         // comment there for why this stays a heuristic curve rather than the probability-weighted shape a
         // pass uses — measured, not assumed.
-        float carryBonus = (_timeOnBall < ActionValueScale.CarryEarlySeconds || inFinalThird)
-            ? ActionValueScale.CarryEarlyBonus
-            : 0f;
+        //
+        // A5.5b: the bonus is the documented one — tempo, a player who drives before the side settles into
+        // passing — and being in the final third is no longer an alternative reason to award it. The
+        // OR-clause used to hand every final-third carry an unconditional quarter of a scale unit, which is
+        // larger than the whole value of a box delivery: measured, it was the difference between the cross
+        // scoring 1.09 against a carry of 1.24 and the delivery being the better ball.
+        float carryBonus = _timeOnBall < ActionValueScale.CarryEarlySeconds ? ActionValueScale.CarryEarlyBonus : 0f;
         float carryGain = ActionValueScale.CarryBaseValue
                           + ActionValueScale.CarrySpaceBonus * bestSpace
                           + carryBonus

@@ -1,0 +1,51 @@
+﻿=== A5.5b delivery evidence: offered vs chosen, 4 seeds x 600 s ===
+Simulation version : ai27-rs1
+Units              : offered/chosen are live carrier decision ticks (a held action counts every
+                     tick it is held); executed is from the execution layer's own contacts;
+                     margin = best non-delivery score - the delivery's best score (>0 = it lost).
+
+Seed 7101: FT in 36239 ticks | score 3-0 | passes 61/55 (80%/75%) | shots 10/1
+  cross      : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  lofted     : offered  19248 | chosen    0 | executed    0 | margin 0.54 (worst 2.05) | p 0.54 gain 0.95 loss 0.92
+  driven     : offered   5855 | chosen   12 | executed   12 | margin 0.39 (worst 1.68) | p 0.64 gain 0.95 loss 0.94
+  cutback    : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  ground-run : offered   7693 | chosen   16 | executed    0 | margin 0.38 (worst 1.49) | p 0.67 gain 0.96 loss 0.91
+  carry      : offered  28564 | chosen  304 | executed    0 | margin -0.35 (worst 1.02) | p 1.00 gain 0.88 loss 0.00
+  recycle    : offered   1526 | chosen    1 | executed    0 | margin 0.02 (worst 1.15) | p 0.80 gain 0.92 loss 1.00
+
+Seed 7102: FT in 36207 ticks | score 3-0 | passes 60/61 (82%/80%) | shots 14/6
+  cross      : offered     20 | chosen    0 | executed    0 | margin 0.46 (worst 0.58) | p 0.35 gain 1.64 loss 0.80
+  lofted     : offered  17405 | chosen    4 | executed    4 | margin 0.55 (worst 1.94) | p 0.53 gain 0.95 loss 0.93
+  driven     : offered   6009 | chosen   13 | executed   13 | margin 0.32 (worst 1.58) | p 0.64 gain 0.97 loss 0.96
+  cutback    : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  ground-run : offered   7552 | chosen   27 | executed    0 | margin 0.41 (worst 1.64) | p 0.66 gain 0.96 loss 0.92
+  carry      : offered  27466 | chosen  285 | executed    0 | margin -0.36 (worst 1.27) | p 1.00 gain 0.89 loss 0.00
+  recycle    : offered   1613 | chosen    0 | executed    0 | margin 0.04 (worst 1.15) | p 0.79 gain 0.93 loss 0.97
+
+Seed 7103: FT in 36209 ticks | score 0-2 | passes 74/56 (81%/70%) | shots 5/7
+  cross      : offered      4 | chosen    0 | executed    0 | margin 0.48 (worst 0.52) | p 0.38 gain 1.90 loss 0.80
+  lofted     : offered  17273 | chosen    2 | executed    2 | margin 0.54 (worst 1.79) | p 0.54 gain 0.95 loss 0.94
+  driven     : offered   5423 | chosen   16 | executed   16 | margin 0.33 (worst 1.52) | p 0.67 gain 0.96 loss 1.00
+  cutback    : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  ground-run : offered   6783 | chosen   37 | executed    0 | margin 0.34 (worst 1.62) | p 0.69 gain 0.96 loss 0.95
+  carry      : offered  25437 | chosen  298 | executed    0 | margin -0.35 (worst 0.59) | p 1.00 gain 0.89 loss 0.00
+  recycle    : offered   1249 | chosen    2 | executed    0 | margin 0.08 (worst 1.05) | p 0.78 gain 0.92 loss 1.00
+
+Seed 7104: FT in 36149 ticks | score 0-0 | passes 60/68 (83%/74%) | shots 6/4
+  cross      : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  lofted     : offered  16496 | chosen    3 | executed    3 | margin 0.59 (worst 1.76) | p 0.53 gain 0.94 loss 0.93
+  driven     : offered   5121 | chosen   14 | executed   14 | margin 0.34 (worst 1.31) | p 0.66 gain 0.96 loss 0.96
+  cutback    : offered      0 | chosen    0 | executed    0 | margin n/a | no terms
+  ground-run : offered   6484 | chosen   27 | executed    0 | margin 0.38 (worst 1.85) | p 0.68 gain 0.95 loss 0.94
+  carry      : offered  25791 | chosen  291 | executed    0 | margin -0.35 (worst 1.27) | p 1.00 gain 0.89 loss 0.00
+  recycle    : offered   1175 | chosen    2 | executed    0 | margin 0.10 (worst 1.14) | p 0.78 gain 0.92 loss 1.01
+
+=== Totals over 4 seeds (4 completed) ===
+  cross      : offered      24 | chosen     0 | executed     0 | margin 0.46 (worst 0.58) | p 0.36 gain 1.68 loss 0.80
+  lofted     : offered   70422 | chosen     9 | executed     9 | margin 0.55 (worst 2.05) | p 0.53 gain 0.95 loss 0.93
+  driven     : offered   22408 | chosen    55 | executed    55 | margin 0.35 (worst 1.68) | p 0.65 gain 0.96 loss 0.96
+  cutback    : offered       0 | chosen     0 | executed     0 | margin n/a | no terms
+  ground-run : offered   28512 | chosen   107 | executed     0 | margin 0.38 (worst 1.85) | p 0.67 gain 0.96 loss 0.93
+  carry      : offered  107258 | chosen  1178 | executed     0 | margin -0.35 (worst 1.27) | p 1.00 gain 0.89 loss 0.00
+  recycle    : offered    5563 | chosen     5 | executed     0 | margin 0.06 (worst 1.15) | p 0.79 gain 0.92 loss 0.99
+Rejections        : [out-of-range, 10], [lane-blocked, 6], [low-completion, 2], [own-goal-margin, 2]

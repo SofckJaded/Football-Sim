@@ -123,10 +123,75 @@ public sealed class ReceptionValueModelTests
         Assert.True(nearGoal.Value > halfway.Value);
     }
 
+    // ---- A5.5b: the reception in the box is worth the chance it creates ----------------------------
+
+    /// <summary>
+    /// The chance term is <b>the shot model's own number</b>, not a second curve (A5.5b). This is the
+    /// "do not add a second estimate" rule: a reception eight metres out with a clear lane quotes exactly the
+    /// conversion probability <see cref="ActionValueScale.ShotConversion"/> gives the shot from there.
+    /// </summary>
+    [Fact]
+    public void AReceptionsShootingChance_IsTheShotModelsOwnConversion()
+    {
+        FootballerObservation observation = Observation(new Vector2(30f, -10f), (9, new Vector2(44.5f, 0f), Vector2.Zero));
+        Vector2 point = new(44.5f, 0f);
+        float distance = Vector2.Distance(point, new Vector2(Pitch.HalfLength, 0f));
+
+        ReceptionValueTerms terms = Model.Evaluate(observation, 9, point, 0.2f);
+
+        Assert.Equal(ActionValueScale.ShotConversion(distance, 1f), terms.ShootingChance01, precision: 3);
+    }
+
+    /// <summary>
+    /// A body in the shooting lane takes the chance away — the term answers "is a shot on from here", not
+    /// "how close to the goal is here". Without this, every reception in a crowded box would be priced like
+    /// a clean one and the delivery would be aimed at the most crowded spot on the pitch.
+    /// </summary>
+    [Fact]
+    public void ABlockedShootingLane_TakesTheChanceAway()
+    {
+        Vector2 point = new(44.5f, 0f);
+        ReceptionValueTerms clear = Model.Evaluate(
+            Observation(new Vector2(30f, -10f), (9, point, Vector2.Zero)), 9, point, 0.2f);
+        ReceptionValueTerms blocked = Model.Evaluate(
+            Observation(new Vector2(30f, -10f), (9, point, Vector2.Zero), (16, new Vector2(48f, 0f), Vector2.Zero)),
+            9, point, 0.2f);
+
+        Assert.True(clear.ShootingChance01 > 0.35f, $"a clear lane at 8 m quoted {clear.ShootingChance01:F2}");
+        // The shot's own lane weighting keeps a floor under a blocked shot (a defender in the way reduces
+        // the conversion, it does not forbid the attempt), so the blocked number is the floor, not zero.
+        Assert.True(blocked.ShootingChance01 <= clear.ShootingChance01 * 0.65f,
+            $"a defender in the lane left {blocked.ShootingChance01:F2} of {clear.ShootingChance01:F2}");
+        Assert.True(clear.Value > blocked.Value + 0.5f, $"clear {clear.Value:F2} vs blocked {blocked.Value:F2}");
+    }
+
+    /// <summary>
+    /// A45 — the A4.4 invariant, restated against the term A5.5b added: a pass to a man in the box is worth
+    /// its completion probability times the <b>share</b> of the chance it creates, and a shot from the same
+    /// place pays all of it. So even a near-certain pass into the box must not outbid the shot, or the
+    /// carrier stops shooting (the measured A4.4 defect).
+    /// </summary>
+    [Theory]
+    [InlineData(6f)]
+    [InlineData(8f)]
+    public void AClearShotInTheBox_StillBeatsAPassToTheSamePlace(float metersFromGoal)
+    {
+        Vector2 point = new(Pitch.HalfLength - metersFromGoal, 0f);
+        FootballerObservation observation = Observation(
+            new Vector2(point.X - 6.5f, 0f), (9, point, Vector2.Zero));
+
+        ReceptionValueTerms reception = Model.Evaluate(observation, 9, point, 0.2f);
+        float pass = PassSuccessModel.MaxCompletion01 * reception.Value;
+        float shot = ActionValueScale.ShotValue(metersFromGoal, 1f);
+
+        Assert.True(pass < shot,
+            $"a {PassSuccessModel.MaxCompletion01:F2}-complete pass into {metersFromGoal:F0} m from goal is " +
+            $"worth {pass:F2} and the shot from there {shot:F2}; the shot has to stay in front");
+    }
+
     /// <summary>An isolated receiver has fewer options than one with a team-mate alongside.</summary>
     [Fact]
-    public void ASupportedReception_IsWorthMoreThanAnIsolatedOne()
-    {
+    public void ASupportedReception_IsWorthMoreThanAnIsolatedOne()    {
         Vector2 point = new(10f, 4f);
         ReceptionValueTerms supported = Model.Evaluate(
             Observation(Vector2.Zero, (9, point, Vector2.Zero), (10, new Vector2(16f, 8f), Vector2.Zero)),

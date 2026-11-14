@@ -1,0 +1,13 @@
+﻿=== Advanced-AI performance sample (11v11, 22 active players) ===
+Simulation version     : ai27-rs1
+Runtime                : 8.0.32 | Microsoft Windows NT 10.0.26200.0
+CPU                    : AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD
+Ticks                  : 2000 warm-up + 20000 measured
+Per-tick mean          : 177.5 us
+Per-tick p50 / p95     : 153.1 / 371.2 us
+Per-tick p99 / max     : 792.2 / 1087.2 us
+Fixed-step budget      : 16666.7 us (60 Hz)
+Total simulated        : 3550.8 ms for 20000 ticks
+Allocated per tick     : 62124.8 bytes
+GC collections (0/1/2) : 75/0/0
+BUDGET: 60 Hz step holds at p99

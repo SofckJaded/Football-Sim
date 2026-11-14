@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using FootballSim;
+using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
@@ -39,6 +40,9 @@ public static class Program
             case "--perf":
                 return RunPerformanceSample(args) ? 0 : 1;
 
+            case "--deliveries":
+                return RunDeliveryEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
@@ -48,6 +52,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario list");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario build-up-3v2 [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --perf [ticks]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --deliveries [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -192,6 +197,271 @@ public static class Program
         File.WriteAllText(outPath, csv);
         Console.WriteLine($"[Phase 1 Physics Lab] Wrote trajectory trace to {outPath}");
     }
+
+    /// <summary>
+    /// A5.5b evidence: <b>offered versus chosen</b> for every delivery the carrier can consider, over a seed set.
+    ///
+    /// A5.5 knew how many deliveries were *executed* (the match report prints that), and that number is why
+    /// the milestone was not ticked: zero crosses in a full match cannot distinguish "the cross is never
+    /// offered" from "the cross is offered and always loses". This probe exists to tell those two apart. It
+    /// reads the carrier's own candidate table after each decision — no simulation state, no extra behaviour —
+    /// and reports, per delivery family:
+    ///
+    /// <list type="bullet">
+    /// <item><b>offered</b> — live decision ticks where the family appeared in the carrier's action set;</item>
+    /// <item><b>chosen</b> — how many separate selections the family won (a new choice, not a held one);</item>
+    /// <item><b>executed</b> — balls the execution layer actually struck, from its own contacts;</item>
+    /// <item><b>margin</b> — how far the family's best score was from the best non-delivery action on the
+    ///   same tick (positive = the delivery lost by that much, negative = it was in front);</item>
+    /// <item><b>p / gain / loss</b> — the winning delivery's own value terms, so a lost offer says which of
+    ///   the three levers is off instead of being a bare number.</item>
+    /// </list>
+    ///
+    /// The counts are ticks, not events: a carrier who holds the same action for forty ticks counts forty
+    /// times. That is the right denominator for "was it on the table", and the chosen/executed columns are
+    /// what carry the decision evidence.
+    /// </summary>
+    private static bool RunDeliveryEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 900f;
+
+        // The families the plan asks to be compared (A5.5). Carry and recycle are the baseline the
+        // deliveries have to beat; the four delivery types are the ones A5.5b must make win when they should.
+        string[] familyNames = { "cross", "lofted", "driven", "cutback", "ground-run", "carry", "recycle" };
+        const int FamilyCount = 7;
+
+        Console.WriteLine($"=== A5.5b delivery evidence: offered vs chosen, {seedCount} seeds x {halfSeconds * 2f:F0} s ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Units              : offered/chosen are live carrier decision ticks (a held action counts every");
+        Console.WriteLine("                     tick it is held); executed is from the execution layer's own contacts;");
+        Console.WriteLine("                     margin = best non-delivery score - the delivery's best score (>0 = it lost).");
+
+        var offered = new int[FamilyCount];
+        var chosen = new int[FamilyCount];
+        var executed = new int[FamilyCount];
+        var marginSum = new float[FamilyCount];
+        var marginWorst = new float[FamilyCount];
+        var marginTicks = new int[FamilyCount];
+        var probabilitySum = new float[FamilyCount];
+        var gainSum = new float[FamilyCount];
+        var lossSum = new float[FamilyCount];
+        var termsTicks = new int[FamilyCount];
+        var rejections = new Dictionary<string, int>(StringComparer.Ordinal);
+        int matchesPlayed = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 7100UL + (ulong)(seedIndex + 1);
+            var engine = new MatchSimulationEngine(new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack
+            });
+
+            var seedOffered = new int[FamilyCount];
+            var seedChosen = new int[FamilyCount];
+            var seedExecuted = new int[FamilyCount];
+            var seedMarginSum = new float[FamilyCount];
+            var seedMarginWorst = new float[FamilyCount];
+            var seedMarginTicks = new int[FamilyCount];
+            var seedProbability = new float[FamilyCount];
+            var seedGain = new float[FamilyCount];
+            var seedLoss = new float[FamilyCount];
+            var seedTermsTicks = new int[FamilyCount];
+
+            IReadOnlyList<FootballerState> players = engine.Players;
+            var previousFamily = new int[players.Count];
+            Array.Fill(previousFamily, -2);   // -2 = nothing selected yet, so the first choice counts
+
+            var familyBest = new float[FamilyCount];
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+            int lastAttemptTick = -1;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+
+                for (int index = 0; index < players.Count; index++)
+                {
+                    FootballerState player = players[index];
+                    if (!player.IsActiveOnPitch) continue;
+                    if (engine.GetController(player.Id) is not TacticalUtilityAiController ai) continue;
+
+                    Array.Fill(familyBest, float.NegativeInfinity);
+                    float bestOther = float.NegativeInfinity;
+                    IReadOnlyList<UtilityCandidate> candidates = ai.LastCandidates;
+
+                    for (int c = 0; c < candidates.Count; c++)
+                    {
+                        UtilityCandidate candidate = candidates[c];
+                        int family = FamilyOf(candidate.Key);
+                        if (family < 0)
+                        {
+                            if (candidate.UtilityScore > bestOther) bestOther = candidate.UtilityScore;
+                            continue;
+                        }
+
+                        if (candidate.UtilityScore <= familyBest[family]) continue;
+                        familyBest[family] = candidate.UtilityScore;
+                        if (!candidate.Terms.IsPresent) continue;
+                        seedProbability[family] += candidate.Terms.Probability01;
+                        seedGain[family] += candidate.Terms.Gain;
+                        seedLoss[family] += candidate.Terms.Loss;
+                        seedTermsTicks[family]++;
+                    }
+
+                    for (int family = 0; family < FamilyCount; family++)
+                    {
+                        if (float.IsNegativeInfinity(familyBest[family])) continue;
+
+                        seedOffered[family]++;
+                        if (float.IsNegativeInfinity(bestOther)) continue;
+
+                        float margin = bestOther - familyBest[family];
+                        seedMarginSum[family] += margin;
+                        seedMarginTicks[family]++;
+                        if (margin > seedMarginWorst[family]) seedMarginWorst[family] = margin;
+                    }
+
+                    int selectedFamily = FamilyOf(ai.LastSelected.Key);
+                    if (selectedFamily == previousFamily[index]) continue;
+                    previousFamily[index] = selectedFamily;
+                    if (selectedFamily >= 0) seedChosen[selectedFamily]++;
+                }
+
+                IReadOnlyList<BallContactAttempt> attempts = engine.LastContactAttempts;
+                if (attempts.Count > 0 && attempts[0].Tick != lastAttemptTick)
+                {
+                    lastAttemptTick = attempts[0].Tick;
+                    for (int a = 0; a < attempts.Count; a++)
+                    {
+                        if (!attempts[a].WantedKick || !attempts[a].Executed) continue;
+                        int family = FamilyOfIntent(attempts[a].Intent);
+                        if (family >= 0) seedExecuted[family]++;
+                    }
+                }
+            }
+
+            // Why a delivery was refused (A4.6's rejection list), counted for the whole match. This is the
+            // other half of "never chosen": a cross refused for low completion never reached the table.
+            for (int index = 0; index < players.Count; index++)
+            {
+                if (engine.GetController(players[index].Id) is not TacticalUtilityAiController ai) continue;
+                for (int r = 0; r < ai.RejectionCount; r++)
+                {
+                    string reason = ai.GetRejection(r).Reason;
+                    rejections[reason] = rejections.GetValueOrDefault(reason) + 1;
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matchesPlayed++;
+            var analytics = engine.Analytics;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks | " +
+                              $"score {analytics.HomeGoals}-{analytics.AwayGoals} | " +
+                              $"passes {analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} " +
+                              $"({analytics.HomePassCompletionShare * 100f:F0}%/{analytics.AwayPassCompletionShare * 100f:F0}%) | " +
+                              $"shots {analytics.HomeShots}/{analytics.AwayShots}");
+
+            for (int family = 0; family < FamilyCount; family++)
+            {
+                Accumulate(offered, chosen, executed, marginSum, marginWorst, marginTicks,
+                    probabilitySum, gainSum, lossSum, termsTicks,
+                    family, seedOffered, seedChosen, seedExecuted, seedMarginSum, seedMarginWorst,
+                    seedMarginTicks, seedProbability, seedGain, seedLoss, seedTermsTicks);
+
+                string margin = seedMarginTicks[family] > 0
+                    ? $"{seedMarginSum[family] / seedMarginTicks[family]:F2} (worst {seedMarginWorst[family]:F2})"
+                    : "n/a";
+                string terms = seedTermsTicks[family] > 0
+                    ? $"p {seedProbability[family] / seedTermsTicks[family]:F2} " +
+                      $"gain {seedGain[family] / seedTermsTicks[family]:F2} " +
+                      $"loss {seedLoss[family] / seedTermsTicks[family]:F2}"
+                    : "no terms";
+                Console.WriteLine($"  {familyNames[family],-11}: offered {seedOffered[family],6} | chosen {seedChosen[family],4} | " +
+                                  $"executed {seedExecuted[family],4} | margin {margin} | {terms}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matchesPlayed} completed) ===");
+        for (int family = 0; family < FamilyCount; family++)
+        {
+            string margin = marginTicks[family] > 0
+                ? $"{marginSum[family] / marginTicks[family]:F2} (worst {marginWorst[family]:F2})"
+                : "n/a";
+            string terms = termsTicks[family] > 0
+                ? $"p {probabilitySum[family] / termsTicks[family]:F2} " +
+                  $"gain {gainSum[family] / termsTicks[family]:F2} " +
+                  $"loss {lossSum[family] / termsTicks[family]:F2}"
+                : "no terms";
+            Console.WriteLine($"  {familyNames[family],-11}: offered {offered[family],7} | chosen {chosen[family],5} | " +
+                              $"executed {executed[family],5} | margin {margin} | {terms}");
+        }
+
+        Console.WriteLine("Rejections        : " + (rejections.Count == 0
+            ? "none"
+            : string.Join(", ", rejections.Select(pair => $"[{pair.Key}, {pair.Value}]"))));
+
+        return matchesPlayed == seedCount;
+    }
+
+    private static void Accumulate(
+        int[] offered, int[] chosen, int[] executed, float[] marginSum, float[] marginWorst, int[] marginTicks,
+        float[] probabilitySum, float[] gainSum, float[] lossSum, int[] termsTicks,
+        int family,
+        int[] seedOffered, int[] seedChosen, int[] seedExecuted, float[] seedMarginSum, float[] seedMarginWorst,
+        int[] seedMarginTicks, float[] seedProbability, float[] seedGain, float[] seedLoss, int[] seedTermsTicks)
+    {
+        offered[family] += seedOffered[family];
+        chosen[family] += seedChosen[family];
+        executed[family] += seedExecuted[family];
+        marginSum[family] += seedMarginSum[family];
+        marginTicks[family] += seedMarginTicks[family];
+        if (seedMarginWorst[family] > marginWorst[family]) marginWorst[family] = seedMarginWorst[family];
+        probabilitySum[family] += seedProbability[family];
+        gainSum[family] += seedGain[family];
+        lossSum[family] += seedLoss[family];
+        termsTicks[family] += seedTermsTicks[family];
+    }
+
+    /// <summary>
+    /// Which delivery family a carrier candidate belongs to, or -1 when it is not a delivery. The tags are
+    /// the ones the generator puts in the candidate key, so this cannot drift from what was offered.
+    /// </summary>
+    private static int FamilyOf(in CandidateKey key)
+    {
+        if (key.Kind == CandidateKind.Carry) return 5;
+        if (key.Kind != CandidateKind.Pass) return -1;
+
+        if (string.Equals(key.TargetTag, "Cross", StringComparison.Ordinal)) return 0;
+        if (string.Equals(key.TargetTag, "Lofted", StringComparison.Ordinal)) return 1;
+        if (string.Equals(key.TargetTag, "Driven", StringComparison.Ordinal)) return 2;
+        if (string.Equals(key.TargetTag, "Cutback", StringComparison.Ordinal)) return 3;
+        if (string.Equals(key.TargetTag, CandidateGenerator.RunPassTag, StringComparison.Ordinal)) return 4;
+        if (string.Equals(key.TargetTag, "Recycle", StringComparison.Ordinal)) return 6;
+        return -1;
+    }
+
+    /// <summary>The family of an executed kick's own intent (the delivery half of the table).</summary>
+    private static int FamilyOfIntent(KickIntentType intent) => intent switch
+    {
+        KickIntentType.Cross => 0,
+        KickIntentType.LoftedPass => 1,
+        KickIntentType.LobbedThroughPass => 1,
+        KickIntentType.DrivenPass => 2,
+        _ => -1
+    };
 
     /// <summary>
     /// Runs one headless match and reports whether it genuinely completed.

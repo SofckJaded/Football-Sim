@@ -71,6 +71,17 @@ public sealed class RaisedPassModel
     /// </summary>
     public const float MaxLandingMissMeters = 4f;
 
+    /// <summary>
+    /// How far from the requested point the ball may be <b>at the requested moment</b>, in metres (A5.5b).
+    ///
+    /// This is a different question from <see cref="MaxLandingMissMeters"/>, and it is the one a driven ball
+    /// needs: a driven pass first touches the ground within about ten metres and reaches a man twenty metres
+    /// away by bouncing and rolling, so "where does it land" cannot describe where it is when he gets there.
+    /// A driven ball also skips on past the point, so the bound is tighter than a landing's: three metres
+    /// from the runner's feet at the moment he arrives is a control he can still take, five is not.
+    /// </summary>
+    public const float MaxArrivalMissMeters = 3f;
+
     private static readonly Lazy<RaisedPassModel> Shared = new(Calibrate);
 
     /// <summary>The shared calibration. Built once, never touches the live ball, the RNG or the match clock.</summary>
@@ -189,6 +200,61 @@ public sealed class RaisedPassModel
         for (int i = 0; i < PowerSamples; i++)
             best = MathF.Max(best, _landingRange[(int)profile][i]);
         return best;
+    }
+
+    /// <summary>
+    /// The power whose ball is closest to <paramref name="targetDistanceMeters"/> <b>when the receiver gets
+    /// there</b> — the driven ball's arrival semantics (A5.5b).
+    ///
+    /// A driven pass is struck flat and fast: its first ground contact is inside ten metres, and it covers
+    /// the rest of the way skipping and rolling. Pricing it by <see cref="TryPowerForLanding"/> would only
+    /// ever offer a driven ball to a man standing within ten metres of it, which is why the delivery had no
+    /// candidate. This asks the table the question that actually matters — how far along the aim is the ball
+    /// <paramref name="arrivalSeconds"/> after the strike — and returns false when no power puts it within
+    /// <see cref="MaxArrivalMissMeters"/> of the point then, which is the honest answer for a ball that has
+    /// already skipped past the man.
+    ///
+    /// <paramref name="seconds"/> is the sampled arrival time (the request rounded to the 60 Hz table). The
+    /// ball is within the miss bound of the point at that moment, not exactly over it.
+    /// </summary>
+    public bool TryPowerForArrival(
+        RaisedPassProfile profile,
+        float targetDistanceMeters,
+        float arrivalSeconds,
+        out float power01,
+        out float arrivalDistanceMeters,
+        out float seconds)
+    {
+        power01 = 0f;
+        arrivalDistanceMeters = 0f;
+        seconds = 0f;
+        if (!float.IsFinite(targetDistanceMeters) || targetDistanceMeters <= 1f) return false;
+        if (!float.IsFinite(arrivalSeconds) || arrivalSeconds <= 0f) return false;
+
+        int sample = Math.Clamp(
+            (int)MathF.Round(arrivalSeconds / SimConstants.FixedDeltaTime), 1, TimeSamples - 1);
+        int profileIndex = (int)profile;
+        int bestIndex = -1;
+        float bestMiss = float.MaxValue;
+
+        for (int i = 0; i < PowerSamples; i++)
+        {
+            float distance = _distanceAtTime[profileIndex][i, sample];
+            if (distance <= 0.1f) continue;
+
+            float miss = MathF.Abs(distance - targetDistanceMeters);
+            if (miss >= bestMiss) continue;
+
+            bestMiss = miss;
+            bestIndex = i;
+        }
+
+        if (bestIndex < 0 || bestMiss > MaxArrivalMissMeters) return false;
+
+        power01 = MinPower + bestIndex * PowerStep;
+        arrivalDistanceMeters = _distanceAtTime[profileIndex][bestIndex, sample];
+        seconds = sample * SimConstants.FixedDeltaTime;
+        return true;
     }
 
     private static int PowerIndexOf(float power01)

@@ -6,10 +6,13 @@ namespace FootballSim.AI;
 
 /// <summary>
 /// What one reception is worth (A4.3), term by term, on the documented action-value scale
-/// (<see cref="ActionValueScale"/>). Every term is 0..1 and higher is better.
+/// (<see cref="ActionValueScale"/>). Every term is 0..1 and higher is better — except
+/// <see cref="ShootingChance01"/>, which since A5.5b is the conversion probability of the shot the
+/// reception makes available (also 0..1, also higher-is-better, but a probability the shot model would
+/// agree with rather than a distance ramp).
 ///
 /// The terms are exposed because A4.6 has to explain a decision term by term and because the A4 exit gate
-/// is stated as comparisons ("a pressured backward-facing receiver < the open equivalent"), which are
+/// is stated as comparisons ("a pressured backward-facing receiver &lt; the open equivalent"), which are
 /// only checkable if the parts are visible rather than folded into one number.
 /// </summary>
 public readonly record struct ReceptionValueTerms(
@@ -21,7 +24,6 @@ public readonly record struct ReceptionValueTerms(
     float Structure01,
     float BallSafety01,
     float Value);
-
 /// <summary>
 /// A4.3: the value of the state a player is in once he has the ball at a point — used as the gain in the
 /// plan's value convention <c>p·gain − (1−p)·loss</c>.
@@ -35,7 +37,10 @@ public readonly record struct ReceptionValueTerms(
 ///   own goal, or with an opponent goal-side of him, has to turn first. This is the term that makes a
 ///   pressured backward-facing receiver worth less than the open equivalent.</item>
 /// <item><b>Next options</b> — is there somebody to combine with, or is he isolated?</item>
-/// <item><b>Shooting chance</b> — a reception in the box is worth more than one on the halfway line.</item>
+/// <item><b>Shooting chance</b> — a reception in the box is worth more than one on the halfway line, and
+///   since A5.5b it is worth <b>the chance it creates</b>, priced on the shot's own scale
+///   (<see cref="ChanceShare"/>), not a normalised "position is promising" ramp. This is the term that
+///   makes a met cross into the box worth more than a clean midfield possession.</item>
 /// <item><b>Pressure at reception</b> — supplied by the caller from the <i>one</i> pressure estimate it
 ///   already has (<see cref="PassSuccessTerms.DefenderPressure01"/> for a pass, the local pressure window
 ///   for a carry). This model never computes a second one.</item>
@@ -63,8 +68,28 @@ public sealed class ReceptionValueModel
     /// <summary>Weight of having somebody to combine with.</summary>
     public const float NextOptionsWeight = 0.12f;
 
-    /// <summary>Weight of the shooting chance the position offers.</summary>
-    public const float ShootingWeight = 0.18f;
+    /// <summary>
+    /// Share of the goal expectation a reception's shooting chance is worth (A5.5b), as a fraction of what
+    /// <see cref="ActionValueScale.ShotValue"/> would pay for the same shot.
+    ///
+    /// A5.5 left the cross permanently on the table and never chosen, and the value stack was the reason:
+    /// a reception six metres from goal was priced as "a clean possession in a good place" (at most
+    /// 0.18 of the old distance ramp), while the shot it makes available is worth about 2.3 on the same
+    /// scale. A met cross that leaves a striker with a sight of goal was therefore worth less than a
+    /// carry in midfield — not a calibration detail but the wrong quantity.
+    ///
+    /// The chance is deliberately <b>less than</b> the shot: receiving the ball is not shooting it. The
+    /// receiver has a touch to take, a defender recovering, and no guarantee he pulls the trigger at all,
+    /// while <c>conversion × GoalValue</c> is what the shot itself pays. That share is also what keeps the
+    /// A4.4 comparison intact: a pass into the box is worth <c>p × ChanceShare</c> of the chance while the
+    /// shot is worth all of it, so at any completion below 1 the shot from the same point still wins
+    /// (proven in <c>ReceptionValueModelTests.AClearShotInTheBox_StillBeatsAPassToTheSamePlace</c>).
+    ///
+    /// 0.50 is the midpoint of the window the two constraints leave: above ≈0.39 the cross starts beating
+    /// the carry it should beat, below ≈0.63 a shot from the same spot keeps winning. It is hand-set
+    /// calibration like every other constant here — A9.2's ablations and A10 own the real fit.
+    /// </summary>
+    public const float ChanceShare = 0.50f;
 
     /// <summary>Weight of the reception being uncontested.</summary>
     public const float PressureWeight = 0.15f;
@@ -100,12 +125,6 @@ public sealed class ReceptionValueModel
     /// <summary>Beyond this distance a team-mate is no support at all, in metres.</summary>
     public const float SupportFarMeters = 33f;
 
-    /// <summary>Distance from goal at which the shooting chance starts, in metres.</summary>
-    public const float ShootingNearMeters = 8f;
-
-    /// <summary>Distance from goal at which the shooting chance is gone, in metres.</summary>
-    public const float ShootingFarMeters = 43f;
-
     private readonly PitchDimensions _pitch;
 
     public ReceptionValueModel(PitchDimensions pitch)
@@ -115,7 +134,8 @@ public sealed class ReceptionValueModel
 
     /// <summary>Largest value the combination can produce; the scale's upper bound for a reception.</summary>
     public float MaxValue => BaseValue + ProgressionWeight + TurnabilityWeight + NextOptionsWeight
-                             + ShootingWeight + PressureWeight + StructureWeight + BallSafetyWeight;
+                             + PressureWeight + StructureWeight + BallSafetyWeight
+                             + ChanceShare * ActionValueScale.GoalValue * ActionValueScale.ShotConversionNear;
 
     /// <summary>
     /// Values the reception at <paramref name="arrivalPointXZ"/> for <paramref name="receiverId"/>.
@@ -152,7 +172,18 @@ public sealed class ReceptionValueModel
 
         Vector2 opponentGoalXZ = new(attackDir * _pitch.HalfLength, 0f);
         float toGoal = Vector2.Distance(arrivalPointXZ, opponentGoalXZ);
-        float shootingChance = Clamp01(1f - (toGoal - ShootingNearMeters) / (ShootingFarMeters - ShootingNearMeters));
+
+        // A5.5b: the chance the reception creates, on the shot's own scale. The lane is measured from the
+        // reception to the goal (the keeper is skipped by the lane test's own near/far cut-offs), and it is
+        // only measured when the position is inside shooting range at all — a reception on the halfway line
+        // has no chance to price and pays nothing for the query.
+        float shootingChance = 0f;
+        if (toGoal <= ActionValueScale.ShotFarMeters)
+        {
+            float shotLane = CandidateGenerator.EvaluateLaneClearance(
+                arrivalPointXZ, opponentGoalXZ, obs.VisiblePlayers, obs.SelfTeam);
+            shootingChance = ActionValueScale.ShotConversion(toGoal, shotLane);
+        }
 
         float pressure = Clamp01(1f - receptionPressure01);
 
@@ -166,7 +197,7 @@ public sealed class ReceptionValueModel
                       + ProgressionWeight * progression
                       + TurnabilityWeight * turnability
                       + NextOptionsWeight * nextOptions
-                      + ShootingWeight * shootingChance
+                      + ChanceShare * ActionValueScale.GoalValue * shootingChance
                       + PressureWeight * pressure
                       + StructureWeight * structure
                       + BallSafetyWeight * ballSafety;

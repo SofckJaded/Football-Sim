@@ -333,12 +333,25 @@ public enum TeamId
 /// priced for being <b>complementary</b>: a new run term lowers an arrival that duplicates a team-mate's
 /// announced region and time and rewards the player's own finishing/aerial capability. Trajectories differ
 /// from version 25.</item>
+/// <item><c>AiBehaviour 27</c> — A5.5b: the deliveries are priced on what they produce and offered where
+/// they are the right ball. A reception in the box is worth <b>the chance it creates</b>
+/// (<see cref="AI.ReceptionValueModel.ChanceShare"/> of the shot's own conversion) instead of a normalised
+/// "good place" ramp, so a met cross into the box is no longer priced as a clean midfield possession.
+/// Every raised delivery pays the same <b>forward preference</b> a ground pass does — the crosses and lofted
+/// balls used to score with <c>preference = 0</c> while the ground passes beside them collected up to 0.35,
+/// a stated handicap larger than the margin they were losing by. The cross is offered only into a box
+/// arrival that is <b>inside the penalty area</b>, and the final-third carry no longer receives the
+/// tempo bonus unconditionally (see <see cref="ActionValueScale.CarryEarlyBonus"/>), which is what let a
+/// carry in the corner outrank every delivery there. Two deliveries are new: the <b>driven</b> ball, timed
+/// to an announced arrival by <see cref="Physics.RaisedPassModel.TryPowerForArrival"/> rather than dropped at
+/// its first bounce, and the <b>cutback</b>, a ground ball pulled back into an announced box arrival that the
+/// forward pre-rank could never offer. Trajectories differ from version 26.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 26;
+    public const int AiBehaviour = 27;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

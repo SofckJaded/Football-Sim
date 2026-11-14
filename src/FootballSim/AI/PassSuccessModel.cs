@@ -189,6 +189,18 @@ public sealed class PassSuccessModel
     public const float AirborneControl01 = 0.68f;
 
     /// <summary>
+    /// Share of a <b>driven</b> delivery's completion that survives its pace (A5.5b).
+    ///
+    /// A driven ball is not an airborne ball and must not be charged as one: it is struck flat and fast
+    /// (14–23 m/s against a rolled pass's 8–19.5) so that it arrives on the deck, and a receiver kills it
+    /// with his foot. What it costs him is the pace — a bouncing ball at 20 m/s is harder to take than a
+    /// rolled one — not the awkward body part <see cref="AirborneControl01"/> charges for. The driven
+    /// delivery's real trade-off is already in the model: it gets there sooner, so the defender margin is
+    /// better; it pays for that here.
+    /// </summary>
+    public const float DrivenControl01 = 0.86f;
+
+    /// <summary>
     /// How much wider an airborne defender's arrival margin is, as a multiple of
     /// <see cref="DefenderMarginScaleSeconds"/> (A5.5).
     ///
@@ -432,16 +444,25 @@ public sealed class PassSuccessModel
     /// when the ball is, can an opponent beat him there, is the lane there — with the flight and the landing
     /// taken from <see cref="RaisedPassModel"/>, which is calibrated from the execution layer's own launch
     /// through the real solver. Two differences from the ground estimate are deliberate: the landing is the
-    /// point the physics produces, not the point that was aimed at, and the completion carries
-    /// <see cref="AirborneControl01"/>, because a ball arriving out of the air is harder to control than one
-    /// arriving on the deck. The flight time is never a ground time: that was the A4 defect.
+    /// point the physics produces, not the point that was aimed at, and the completion carries the control
+    /// charge of the profile, because a ball arriving out of the air is harder to control than one arriving
+    /// on the deck. The flight time is never a ground time: that was the A4 defect.
+    ///
+    /// <b>The power solve decides which doubt is priced (A5.5b).</b> A lofted or whipped ball is aimed at the
+    /// place the runner is going — the region is the aim, and the power is whatever drops the ball there —
+    /// so the remaining question is whether he can be at that landing in time, which is the reach estimate.
+    /// A <b>driven</b> ball is scheduled instead: it is struck to be at the point when he gets there, so the
+    /// promise is honoured by the power itself and what remains is the runner's own confidence in the
+    /// announcement — exactly the substitution A5.3 made for the ground ball. A driven delivery without an
+    /// announced arrival is not offered at all: there is nothing to time it to.
     /// </summary>
     public LoftedPassTerms EstimateRaised(
         in FootballerObservation obs,
         in PerceivedEntity receiver,
         Vector2 targetXZ,
         RaisedPassProfile profile,
-        float laneClearance01)
+        float laneClearance01,
+        PassArrivalPromise promise = default)
     {
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         if (!SimMath.IsFinite(selfXZ) || !SimMath.IsFinite(targetXZ)) return LoftedPassTerms.None;
@@ -450,18 +471,48 @@ public sealed class PassSuccessModel
         if (!float.IsFinite(distance) || distance <= 1f) return LoftedPassTerms.None;
 
         RaisedPassModel flights = RaisedPassModel.Default;
-        if (!flights.TryPowerForLanding(profile, distance, out float power, out float range, out float flight))
+        bool promised = promise.IsPresent;
+        float power;
+        float range;
+        float flight;
+
+        if (profile == RaisedPassProfile.Driven)
+        {
+            if (!promised) return LoftedPassTerms.None;
+            if (!flights.TryPowerForArrival(
+                    profile, distance, promise.ArrivalSeconds, out power, out range, out flight))
+            {
+                return LoftedPassTerms.None;
+            }
+        }
+        else if (!flights.TryPowerForLanding(profile, distance, out power, out range, out flight))
+        {
             return LoftedPassTerms.None;
+        }
 
         // The real landing, not the aimed point.
         Vector2 aim = SimMath.SafeNormalize(targetXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
         Vector2 landing = selfXZ + aim * range;
 
-        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
-            ReachKinematics.FromEntity(receiver), landing, MathF.Max(flight, 1f));
-        float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
-        float receiverTerm = Math.Clamp(
-            0.5f + (flight - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
+        float receiverTerm;
+        if (profile == RaisedPassProfile.Driven)
+        {
+            // Solved from the promised arrival: what is left to price is the runner's own confidence and
+            // how well the ball's flight matched the moment he said he would be there.
+            float tolerance = Math.Clamp(
+                MathF.Abs(promise.MeetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
+                MinPromisedArrivalToleranceSeconds, MaxPromisedArrivalToleranceSeconds);
+            float mistiming = MathF.Max(0f, MathF.Abs(flight - Math.Clamp(promise.ArrivalSeconds, 0f, 6f)) - tolerance);
+            float timingTerm = Math.Clamp(1f - mistiming / ReceiverMarginScaleSeconds, 0f, 1f);
+            receiverTerm = Math.Clamp(promise.Confidence01, 0f, 1f) * timingTerm;
+        }
+        else
+        {
+            ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+                ReachKinematics.FromEntity(receiver), landing, MathF.Max(flight, 1f));
+            float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
+            receiverTerm = Math.Clamp(0.5f + (flight - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
+        }
 
         float defenderTerm = 1f;
         float horizon = MathF.Max(flight + DefenderHorizonSlackSeconds, 1f);
@@ -480,21 +531,19 @@ public sealed class PassSuccessModel
 
         float lane = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
 
-        // A5.5: the ground lane clearance is the wrong question for a ball two to four metres up. For the
-        // airborne profiles the lane is judged from the calibrated height profile — a defender only blocks
-        // if the ball is low enough to be played where he stands — and the driven ball keeps the ground
-        // clearance it would need, because a driven ball does travel through the legs.
-        if (profile != RaisedPassProfile.Driven)
-        {
-            lane = IsAirborneLaneBlocked(
-                selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam)
-                ? 0f
-                : 1f;
-        }
+        // A5.5: the ground lane clearance is the wrong question for a ball two to four metres up. Every
+        // raised profile is judged from the calibrated height profile instead — a defender only blocks if
+        // the ball is low enough to be played where he stands. A driven ball is low at the point it passes
+        // most defenders, which is exactly why it needs a lane, and the test says so.
+        lane = IsAirborneLaneBlocked(
+            selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam)
+            ? 0f
+            : 1f;
 
+        float control = profile == RaisedPassProfile.Driven ? DrivenControl01 : AirborneControl01;
         float completion = receiverTerm
                            * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane)
-                           * AirborneControl01;
+                           * control;
 
         return new LoftedPassTerms(
             Feasible: true,
@@ -710,9 +759,10 @@ public sealed class PassSuccessModel
 /// <summary>
 /// Separate answer for an airborne delivery (A4.2/A5.5): the flight is a different physical problem from a
 /// rolling one, so it has its own estimate rather than a ground flight time dressed up as an aerial ball.
-/// <see cref="LandingXZ"/> is where the ball actually comes down — read from the calibrated real trajectory,
-/// not from a drag-free approximation — and <see cref="TargetXZ"/> is the meeting point it was aimed at, so
-/// a caller can see the difference between the aim and the landing.
+/// <see cref="LandingXZ"/> is the point the ball is over when it has covered the delivery distance — where it
+/// comes down for a lofted or whipped ball, and where it is at the promised moment for a driven one — read
+/// from the calibrated real trajectory, not from a drag-free approximation. <see cref="TargetXZ"/> is the
+/// meeting point it was aimed at, so a caller can see the difference between the aim and the delivery.
 /// </summary>
 public readonly record struct LoftedPassTerms(
     bool Feasible,
