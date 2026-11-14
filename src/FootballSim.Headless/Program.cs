@@ -588,6 +588,9 @@ public static class Program
     private static bool RunTacticalComparisonBatch()
     {
         Console.WriteLine("=== Phase 6 & 9 Multi-Seed Tactical Differentiation Batch (Possession vs Direct Counter) ===");
+        // AGENTS §2.2: every recorded artifact states the simulation version, and only same-version numbers
+        // are comparable. The match and perf modes already do; the gate artifact did not until A6.1.
+        Console.WriteLine($"Simulation version: {SimulationVersion.Tag}");
         const float halfSeconds = 120f;
         bool allPassed = true;
         float widthDifferenceSum = 0f;
