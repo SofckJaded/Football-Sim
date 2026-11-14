@@ -172,8 +172,7 @@ public sealed class PassPlanner
     }
 
     /// <summary>Ball speed leaving the foot for a ground pass at the given power (mirrors the kick model).</summary>
-    public static float GroundPassLaunchSpeed(float power01) =>
-        Math.Clamp(8.0f + Math.Clamp(power01, 0.15f, 1.0f) * 11.5f, 8.0f, 19.5f);
+    public static float GroundPassLaunchSpeed(float power01) => KickLaunchModel.GroundPassSpeed(power01);
 
     /// <summary>
     /// The latest a timed pass may arrive after the meeting it is timed to, in seconds (A5.3). A ball that

@@ -269,9 +269,10 @@ public sealed class PassSuccessModelTests
     }
 
     /// <summary>
-    /// The raised alternative is its own physical problem: it is not offered where the execution layer's
-    /// raised band cannot reach, it is offered inside it, its flight is the raised trajectory's rather than
-    /// the rolling ball's for the same distance, and it is priced below the ground route.
+    /// The raised alternative is its own physical problem: it is not offered where the airborne model
+    /// cannot drop the ball near the target, it is offered inside that band, its flight and landing are the
+    /// <b>calibrated real trajectory</b> rather than a drag-free estimate (A5.5), and it is priced below the
+    /// ground route because the arrival still has to be controlled out of the air.
     /// </summary>
     [Fact]
     public void TheRaisedAlternative_HasItsOwnFlight()
@@ -285,17 +286,26 @@ public sealed class PassSuccessModelTests
         Assert.False(outOfRange.Feasible);
         Assert.True(airborne.Feasible);
         Assert.InRange(airborne.CompletionProbability01, 0f, 0.97f);
-        Assert.True(airborne.FlightRangeMeters >= 32f);
 
+        // The landing is the real trajectory's, so it may be short of the request by up to the model's own
+        // stated miss (the power grid is coarse); it must never be the drag-free fiction.
+        Assert.True(MathF.Abs(airborne.FlightRangeMeters - 32f) <= RaisedPassModel.MaxLandingMissMeters,
+            $"the raised ball lands {airborne.FlightRangeMeters:F1} m from a 32 m request");
+
+        RaisedPassModel flights = RaisedPassModel.Default;
+        Assert.True(flights.TryLanding(RaisedPassProfile.Lofted, airborne.Power01, out float tableRange, out float tableFlight));
+        Assert.Equal(tableRange, airborne.FlightRangeMeters, 3);
+        Assert.Equal(tableFlight, airborne.FlightTimeSeconds, 3);
+
+        // The two flights are different physical problems: the estimate must not reuse the rolling time.
         PassPlan ground = Planner.PlanGroundPass(BallXZ, MateId, new Vector2(32f, 0f), Vector2.Zero, 8f);
         Assert.True(ground.Feasible);
-        Assert.True(ground.FlightTimeSeconds - airborne.FlightTimeSeconds > 0.3f,
+        Assert.True(MathF.Abs(ground.FlightTimeSeconds - airborne.FlightTimeSeconds) > 0.05f,
             $"the raised flight ({airborne.FlightTimeSeconds:F2}s) must not be the ground flight " +
             $"({ground.FlightTimeSeconds:F2}s) for the same distance");
 
-        // Same distance, same open lane: the raised route is charged the execution penalty, because the
-        // airborne trajectory is not modelled yet (A5.5 extends it before raised passes are scored as
-        // equals).
+        // Same distance, same open lane: the airborne ball is charged for the harder control, so the
+        // ground route is still preferred when both are open.
         PassSuccessTerms groundTerms = Model.Estimate(observation, receiver, ground, 1f);
         Assert.True(airborne.CompletionProbability01 < groundTerms.CompletionProbability01);
     }

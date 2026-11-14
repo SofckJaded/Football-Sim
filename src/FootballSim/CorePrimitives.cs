@@ -323,12 +323,22 @@ public enum TeamId
 /// by a line that stepped up after the pass, only the frozen run is offered while the ball is coming, and
 /// his job and shape targets are no longer clamped back behind the line. Trajectories differ from
 /// version 24.</item>
+/// <item><c>AiBehaviour 26</c> — A5.5 (delivery and arrival half): airborne deliveries are predicted by the
+/// <b>real trajectory</b>. <see cref="Physics.KickLaunchModel"/> is now the single source for the execution
+/// layer's pass-shaped launches, and <see cref="Physics.RaisedPassModel"/> calibrates the lofted, cross and
+/// driven flights from those launches through the real solver — landing point, flight time, first bounce —
+/// so the raised alternative is priced on where the ball actually comes down instead of a drag-free range
+/// shortened by a flat 15 %. A <b>cross</b> is offered when the carrier is wide in the attacking half and a
+/// team-mate has announced a box arrival, and it is aimed at that future meet point. Box arrivals are also
+/// priced for being <b>complementary</b>: a new run term lowers an arrival that duplicates a team-mate's
+/// announced region and time and rewards the player's own finishing/aerial capability. Trajectories differ
+/// from version 25.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 25;
+    public const int AiBehaviour = 26;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

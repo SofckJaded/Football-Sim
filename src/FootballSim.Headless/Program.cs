@@ -221,6 +221,13 @@ public static class Program
         int lastAttemptTick = -1;
         var refusalReasons = new Dictionary<string, int>();
 
+        // A5.5 evidence: how often the airline deliveries are actually chosen and struck. Counted from the
+        // execution layer's contacts (a lost arbitration is not a cross), so a jump here cannot be a
+        // decision that never reached the ball.
+        int crosses = 0;
+        int lofted = 0;
+        int driven = 0;
+
         while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
         {
             engine.StepTick();
@@ -232,7 +239,17 @@ public static class Program
             {
                 if (!attempt.WantedKick) continue;
                 requestedKicks++;
-                if (attempt.Executed) executedKicks++;
+                if (attempt.Executed)
+                {
+                    executedKicks++;
+                    switch (attempt.Intent)
+                    {
+                        case KickIntentType.Cross: crosses++; break;
+                        case KickIntentType.LoftedPass:
+                        case KickIntentType.LobbedThroughPass: lofted++; break;
+                        case KickIntentType.DrivenPass: driven++; break;
+                    }
+                }
                 else refusalReasons[attempt.Reason.ToString()] = refusalReasons.GetValueOrDefault(attempt.Reason.ToString()) + 1;
             }
         }
@@ -258,6 +275,7 @@ public static class Program
         Console.WriteLine($"Run adverts (A5.3): {engine.Communication.Runs.PublishedCount} published | "
                           + $"{engine.Communication.Runs.WithdrawnCount} withdrawn | "
                           + $"{engine.Communication.Runs.ClaimedCount} claims by a carrier");
+        Console.WriteLine($"Airborne (A5.5)   : {crosses} crosses | {lofted} lofted | {driven} driven executed");
         Console.WriteLine($"Events Logged     : {engine.Rules.Events.Count}");
 
         return completed;

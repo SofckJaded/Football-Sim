@@ -334,6 +334,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         AddShotCandidate(obs, distToGoal, oppGoalCenter);
         AddPassCandidates(obs, ballXZ, selfXZ, offsideLineProjX, underHeavyPressure);
+        AddCrossCandidate(obs, ballXZ, selfXZ);
         AddRecycleCandidates(obs, ballXZ, myAttackProjX);
         CarryChoice carry = ChooseCarry(obs, selfXZ, ballXZ, goalXZ, oppGoalCenter, inFinalThird, nearestOppDist);
         AddCarryCandidate(carry, nearestOppDist);
@@ -499,10 +500,20 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
 
         // The raised alternative is offered when the ground route is physically blocked and no ground
-        // pass to this receiver survived. It is priced on its own flight, never on a ground flight time.
+        // pass to this receiver survived. It is priced on its own flight, never on a ground flight time,
+        // and it is aimed at the meeting region the runner announced when the team has heard one (A5.3).
         if (anyLaneBlocked && !anyGroundPass && loftedBudget > 0 && !isHumanCaller)
         {
-            if (AddLoftedPass(obs, mate, ballXZ)) loftedBudget--;
+            Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+            Vector2 raisedTarget = mateXZ;
+            if (_communication is not null &&
+                _communication.Runs.TryGetAdvertisement(obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert) &&
+                advert.MeetTick > obs.Tick)
+            {
+                raisedTarget = advert.MeetXZ;
+            }
+
+            if (AddLoftedPass(obs, mate, ballXZ, raisedTarget)) loftedBudget--;
         }
     }
 
@@ -865,29 +876,32 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// The raised alternative for a blocked ground route (A4.2). Its flight, range and completion come
-    /// from <see cref="PassSuccessModel.EstimateLofted"/>, which is a separate and deliberately
-    /// conservative estimate until A5.5 gives raised deliveries a real airborne prediction.
+    /// The raised alternative for a blocked ground route (A4.2/A5.5). Its flight, landing and completion
+    /// come from <see cref="PassSuccessModel.EstimateRaised"/> — the real airborne trajectory — so a ball
+    /// the execution layer cannot actually drop near the target is not offered at all.
+    ///
+    /// <paramref name="targetXZ"/> is the meeting point the ball is aimed at: the receiver's announced
+    /// region when the team has heard one (A5.3/A5.5 "cross targets are future meet points"), his current
+    /// position otherwise.
     /// </summary>
     private bool AddLoftedPass(
         in FootballerObservation obs,
         in PerceivedEntity mate,
-        Vector2 ballXZ)
+        Vector2 ballXZ,
+        Vector2 targetXZ)
     {
         Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
-        float distance = Vector2.Distance(ballXZ, mateXZ);
+        float distance = Vector2.Distance(ballXZ, targetXZ);
         if (distance > MaxPassDistanceMeters + 8f) return false;
 
-        float lane = EvaluateLaneClearance(ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
-        LoftedPassTerms terms = _passSuccess.EstimateLofted(obs, mate, distance, lane);
+        float lane = EvaluateLaneClearance(ballXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam);
+        LoftedPassTerms terms = _passSuccess.EstimateRaised(
+            obs, mate, targetXZ, RaisedPassProfile.Lofted, lane);
         if (!terms.Feasible) return false;
 
-        // The same completion floor every ground option has to clear. A raised ball gets no exemption:
-        // measured on the reference match, the raised alternative used to be offered at any price and
-        // every one of the thirteen balls played under it was collected by the opposition, because the
-        // price was a drag-free range that ignores what the landing point is worth. Until A5.5 gives the
-        // raised delivery a real airborne prediction, "priced honestly" means refusing the ones the
-        // estimate itself calls hopeless.
+        // The same completion floor every ground option has to clear. A raised ball gets no exemption: a
+        // raised alternative used to be offered at any price, and every one of the thirteen balls played
+        // under it on the reference segment was collected by the opposition.
         if (terms.CompletionProbability01 < MinViableCompletion01)
         {
             Reject(mate.PlayerId, RejectionLowCompletion);
@@ -897,12 +911,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         // Same scale as a ground pass (A4.4): the reception at the landing point, the pass score's own
         // completion estimate, and the passer's loss cost.
         ReceptionValueTerms reception = _receptionValue.Evaluate(
-            obs, mate.PlayerId, mateXZ, terms.LandingPressure01);
+            obs, mate.PlayerId, terms.LandingXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
         ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
         float score = valueTerms.Value;
 
-        Vector2 aimDirection = SimMath.SafeNormalize(mateXZ - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        // Aim at the meeting point; the power is what the model says puts the landing there.
+        Vector2 aimDirection = SimMath.SafeNormalize(targetXZ - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
         var command = new FootballerCommand(
             aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
             KickIntentType.LoftedPass, new Vector3(aimDirection.X, 0f, aimDirection.Y), terms.Power01, 0f)
@@ -916,6 +931,104 @@ public sealed class CandidateGenerator : IAiStateResettable
             Terms = valueTerms
         });
         return true;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The cross (A5.5): an airborne delivery to an announced box arrival.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// How wide the carrier must be for a cross to be the natural delivery, in metres from the centre.
+    /// A cross from the middle of the pitch is a lofted pass; the wide lane is what makes it a cross.
+    /// </summary>
+    internal const float CrossMinLateralMeters = 15f;
+
+    /// <summary>
+    /// How far into the attacking half the carrier must be before a cross is offered, in metres
+    /// (attack-relative projection). Crossing from the halfway line is a hopeful punt; the box must be
+    /// within reach of a delivery the model can actually time.
+    /// </summary>
+    internal const float CrossMinProjX = 8f;
+
+    /// <summary>Attack-relative projection a box arrival must reach to be a cross target, in metres.</summary>
+    internal const float CrossBoxProjX = 24f;
+
+    /// <summary>
+    /// Offers one <b>cross</b> into the box, aimed at a team-mate's announced arrival (A5.5).
+    ///
+    /// This is the delivery half of "cross targets are future meet points": the ball is planned to the
+    /// region the runner has advertised — A5.3's meeting region — and its flight is the real airborne
+    /// trajectory, so the price is comparable with the carry, the recycle and the ground pass on one scale.
+    /// Without an announced box arrival there is no target: a cross into a crowd with nobody attacking it is
+    /// exactly the ball the A4 audit measured as a turnover every time, so it is not offered.
+    /// </summary>
+    private void AddCrossCandidate(in FootballerObservation obs, Vector2 ballXZ, Vector2 selfXZ)
+    {
+        if (_communication is null) return;
+        if (MathF.Abs(selfXZ.Y) < CrossMinLateralMeters) return;
+        if (selfXZ.X * obs.AttackingDirectionX < CrossMinProjX) return;
+
+        int bestMateId = 0;
+        Vector2 bestRegion = default;
+        float bestProj = float.NegativeInfinity;
+
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity mate = obs.VisiblePlayers[i];
+            if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+            if (mate.Role == TacticalRole.Goalkeeper) continue;
+
+            if (!_communication.Runs.TryGetAdvertisement(
+                    obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert))
+            {
+                continue;
+            }
+
+            if (advert.Kind is not (RunKind.LateBoxArrival or RunKind.BlindSideArrival)) continue;
+            if (advert.MeetTick <= obs.Tick) continue;
+
+            float proj = advert.MeetXZ.X * obs.AttackingDirectionX;
+            if (proj < CrossBoxProjX) continue;
+            if (proj <= bestProj) continue;
+
+            bestProj = proj;
+            bestMateId = mate.PlayerId;
+            bestRegion = advert.MeetXZ;
+        }
+
+        if (bestMateId == 0) return;
+        if (!TryGetVisibleEntity(obs, bestMateId, out PerceivedEntity target)) return;
+
+        float lane = EvaluateLaneClearance(ballXZ, bestRegion, obs.VisiblePlayers, obs.SelfTeam);
+        LoftedPassTerms terms = _passSuccess.EstimateRaised(
+            obs, target, bestRegion, RaisedPassProfile.Cross, lane);
+        if (!terms.Feasible) return;
+
+        if (terms.CompletionProbability01 < MinViableCompletion01)
+        {
+            Reject(bestMateId, RejectionLowCompletion);
+            return;
+        }
+
+        ReceptionValueTerms reception = _receptionValue.Evaluate(
+            obs, bestMateId, terms.LandingXZ, terms.LandingPressure01);
+        float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
+        ValueTerms valueTerms = new(terms.CompletionProbability01, reception.Value, loss, 0f);
+
+        Vector2 aim = SimMath.SafeNormalize(bestRegion - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        var command = new FootballerCommand(
+            aim, aim, false, false, false, false, false, Vector3.Zero,
+            KickIntentType.Cross, new Vector3(aim.X, 0f, aim.Y), terms.Power01, 0f)
+        {
+            IntendedReceiverId = bestMateId
+        };
+
+        _lastCandidates.Add(new UtilityCandidate($"CrossTo#{bestMateId}", valueTerms.Value, command)
+        {
+            Key = new CandidateKey(CandidateKind.Pass, bestMateId, "Cross"),
+            Terms = valueTerms,
+            TargetXZ = new Vector3(terms.LandingXZ.X, 0f, terms.LandingXZ.Y)
+        });
     }
 
     /// <summary>Slowest a receiver must be moving to be offered a ball into the space ahead of him.</summary>

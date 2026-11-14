@@ -962,37 +962,36 @@ public sealed class FootballerExecutionSystem
                 case KickIntentType.GroundPass:
                 case KickIntentType.ThroughPass:
                 {
-                    // Controlled, easy-to-receive pass speed (8.5 to 19.5 m/s)
-                    float speed = Math.Clamp(8.0f + power01 * 11.5f, 8.0f, 19.5f);
-                    launchVel = new Vector3(actualDirXZ.X * speed, 0.05f, actualDirXZ.Y * speed);
-                    launchSpin = new Vector3(0f, cmd.RequestedCurveSpin * 8.0f, 0f);
+                    // Launch geometry lives in KickLaunchModel (A5.5) so the AI's flight prediction and the
+                    // execution cannot drift apart.
+                    KickLaunch launch = KickLaunchModel.For(cmd.KickType, power01, actualDirXZ, cmd.RequestedCurveSpin);
+                    launchVel = launch.Velocity;
+                    launchSpin = launch.Spin;
                     player.KickRecoveryTimer = 0.26f;
                     break;
                 }
                 case KickIntentType.DrivenPass:
                 {
-                    float speed = Math.Clamp(14.0f + power01 * 9.0f, 13.5f, 23.0f);
-                    launchVel = new Vector3(actualDirXZ.X * speed, 0.9f + power01 * 0.9f, actualDirXZ.Y * speed);
-                    launchSpin = new Vector3(-actualDirXZ.Y * 18.0f, cmd.RequestedCurveSpin * 14.0f, actualDirXZ.X * 18.0f);
+                    KickLaunch launch = KickLaunchModel.For(cmd.KickType, power01, actualDirXZ, cmd.RequestedCurveSpin);
+                    launchVel = launch.Velocity;
+                    launchSpin = launch.Spin;
                     player.KickRecoveryTimer = 0.28f;
                     break;
                 }
                 case KickIntentType.LoftedPass:
                 case KickIntentType.LobbedThroughPass:
                 {
-                    float horizSpeed = Math.Clamp(9.5f + power01 * 11.5f, 9.0f, 21.0f);
-                    float vertSpeed = Math.Clamp(5.2f + power01 * 4.5f, 5.0f, 9.8f);
-                    launchVel = new Vector3(actualDirXZ.X * horizSpeed, vertSpeed, actualDirXZ.Y * horizSpeed);
-                    launchSpin = new Vector3(-actualDirXZ.Y * 16.0f, cmd.RequestedCurveSpin * 22.0f, actualDirXZ.X * 16.0f);
+                    KickLaunch launch = KickLaunchModel.For(cmd.KickType, power01, actualDirXZ, cmd.RequestedCurveSpin);
+                    launchVel = launch.Velocity;
+                    launchSpin = launch.Spin;
                     player.KickRecoveryTimer = 0.30f;
                     break;
                 }
                 case KickIntentType.Cross:
                 {
-                    float horizSpeed = Math.Clamp(12.5f + power01 * 11.5f, 12.0f, 24.0f);
-                    float vertSpeed = Math.Clamp(5.5f + power01 * 4.0f, 5.2f, 9.5f);
-                    launchVel = new Vector3(actualDirXZ.X * horizSpeed, vertSpeed, actualDirXZ.Y * horizSpeed);
-                    launchSpin = new Vector3(actualDirXZ.Y * 22.0f, cmd.RequestedCurveSpin * 40.0f, -actualDirXZ.X * 22.0f);
+                    KickLaunch launch = KickLaunchModel.For(cmd.KickType, power01, actualDirXZ, cmd.RequestedCurveSpin);
+                    launchVel = launch.Velocity;
+                    launchSpin = launch.Spin;
                     player.KickRecoveryTimer = 0.32f;
                     break;
                 }

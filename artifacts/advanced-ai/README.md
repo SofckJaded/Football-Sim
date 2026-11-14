@@ -1197,6 +1197,43 @@ one constant lookup replace existing comparisons).
 
 ---
 
+## 2026-11-14 — the airborne ball is predicted; the cross is a future meet point (simulation version `ai26-rs1`)
+
+A5.5, delivery half. The raised alternative was a drag-free range shortened by a flat 15 %; it is now a table
+calibrated from the execution layer's own launches through the real ball solver (landing point, flight time,
+height), and a cross is offered into a team-mate's announced box arrival. Box arrivals also got a
+complementarity term (A5.5's arrival fit). Behaviour change, so the gate, the match and the perf sample were
+re-captured.
+
+### Reference 11v11 — `a5-raised-delivery-match-11v11.txt`
+
+| Metric | `ai24-rs1` | `ai25-rs1` | `ai26-rs1` |
+| :--- | :--- | :--- | :--- |
+| Ticks | 325 546 | 325 358 | 325 680 |
+| Score | 6–4 | 1–7 | 4–3 |
+| Possession (share) | 50.8 / 49.2 | 49.4 / 50.6 | 49.7 / 50.3 |
+| Passes | 478 / 489 (86 / 84 %) | 478 / 461 (85 / 84 %) | 468 / 446 (**82 / 86 %**) |
+| Shots | 37 / 40 | 38 / 38 | 26 / 39 |
+| Mean team width | 43.7 / 41.2 m | 43.7 / 41.6 m | 44.1 / 41.1 m |
+| Airborne executed | — | — | **0 crosses, 2 lofted, 0 driven** |
+
+The last row is the finding: the cross is a real candidate (a probe over 18 000 ticks had one on offer in 53
+ticks, with an announced box arrival in 699) but it never wins on value in a full match. That gap is recorded
+in `docs/KNOWN_ISSUES.md` and tracked as A5.5b rather than tuned on one sample.
+
+### Tactical differentiation gate — `a5-raised-delivery-tactical-gate.txt`
+
+5 seeds x 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.73 m** (3.23 m at
+`ai25`). **PASS.**
+
+### Performance — `a5-raised-delivery-perf.txt`
+
+176.1 us mean, p99 426.6 us, 62 474 B/tick — the airborne table is calibrated once (a lazy static, three
+profiles x 17 powers x 8 s through a cloned solver) and is read as a table after that, so the per-tick cost is
+unchanged within the sample spread.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

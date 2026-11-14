@@ -178,8 +178,49 @@ public sealed class PassSuccessModel
     /// <summary>Approach alignment below which the receiver is charged for having to turn back to the ball.</summary>
     public const float ReceiverApproachThreshold = 0.20f;
 
-    /// <summary>Share of a raised pass's completion that survives unmodelled flight behaviour (A5.5).</summary>
-    public const float LoftedExecutionPenalty = 0.55f;
+    /// <summary>
+    /// Share of an airborne delivery's completion that survives the harder control it demands (A5.5).
+    ///
+    /// The flight is now the real trajectory (<see cref="RaisedPassModel"/>), so this is not an apology for
+    /// an unmodelled ball. It is the control charge: a cross or a lob arrives out of the air, and the
+    /// receiver plays it with a chest, a thigh or a head he never asked for — the execution layer has no
+    /// header request from an AI receiver.
+    /// </summary>
+    public const float AirborneControl01 = 0.68f;
+
+    /// <summary>
+    /// How much wider an airborne defender's arrival margin is, as a multiple of
+    /// <see cref="DefenderMarginScaleSeconds"/> (A5.5).
+    ///
+    /// The ground estimate asks "can a defender be at the point when the ball is", and for a rolling ball
+    /// that is the whole question. For a ball arriving two to four metres up it is not: a defender who can
+    /// run to the landing point still has to out-jump the man the ball was aimed at, and that contest is
+    /// priced on the reception side (the runner's finishing/aerial capability, A5.5). Without this the
+    /// defender term collapsed to zero for any cross into a box containing a defender, which is every cross,
+    /// and the delivery could never be offered at all — measured as zero crosses in a full reference match.
+    /// </summary>
+    public const float AirborneContestScale = 2.0f;
+
+    /// <summary>
+    /// Height below which an airborne ball can be stopped by a defender standing in its path, in metres. A
+    /// defender's head is about 1.9 m and a jump reaches roughly 2.4 m; 2.2 m is the stated line between "he
+    /// can get something on it" and "it has gone over him". The ground lane test is the wrong question for a
+    /// ball this high, which is why airborne deliveries are tested against the calibrated height profile
+    /// instead (A5.5).
+    /// </summary>
+    public const float AirborneBlockHeightMeters = 2.2f;
+
+    /// <summary>
+    /// How close to the landing an airborne defender is treated as contesting the ball rather than blocking
+    /// the flight, in metres (A5.5).
+    ///
+    /// The distinction matters because the two are already paid for by different terms: a defender under the
+    /// early flight can head the ball out (the lane), while a defender at the landing is in an aerial contest
+    /// with the receiver (the defender term). Counting the second man in both terms is exactly the duplicate
+    /// penalty the standing brief forbids, and it was enough to make every cross into a defended box
+    /// impossible.
+    /// </summary>
+    public const float AirborneLandingContestMeters = 6f;
 
     /// <summary>
     /// Largest share of a pass's completion that is charged for leading a runner (A4.10).
@@ -213,12 +254,6 @@ public sealed class PassSuccessModel
 
     /// <summary>Largest timing tolerance a promised meeting gets, in seconds (a very wide region).</summary>
     public const float MaxPromisedArrivalToleranceSeconds = 0.50f;
-
-    /// <summary>Ground acceleration assumed for the raised alternative's kinematic flight (m/s²).</summary>
-    public const float Gravity = 9.81f;
-
-    /// <summary>How much shorter a raised ball actually lands than a drag-free estimate.</summary>
-    public const float LoftedDragShortfall01 = 0.15f;
 
     private readonly PassPlanner _planner;
 
@@ -369,12 +404,8 @@ public sealed class PassSuccessModel
     }
 
     /// <summary>
-    /// Estimates a raised (lofted) pass to the same receiver (A4.2). Kept deliberately separate from the
-    /// ground estimate because the flight is a different physical problem, and deliberately
-    /// <b>conservative</b>: the horizontal range is a drag-free kinematic estimate from the execution
-    /// layer's own launch parameters, then shortened by <see cref="LoftedDragShortfall01"/>, and the
-    /// completion carries <see cref="LoftedExecutionPenalty"/>. A5.5 replaces this with the real airborne
-    /// trajectory before raised deliveries are scored against ground options as equals.
+    /// Estimates a raised (lofted) pass to a team-mate at a stated distance (A4.2/A5.5). The flight comes
+    /// from <see cref="RaisedPassModel"/> — the real airborne trajectory, not a drag-free approximation.
     /// </summary>
     public LoftedPassTerms EstimateLofted(
         in FootballerObservation obs,
@@ -385,85 +416,144 @@ public sealed class PassSuccessModel
         if (!float.IsFinite(distanceMeters) || distanceMeters <= 1f)
             return LoftedPassTerms.None;
 
-        float power = LoftedPowerForDistance(distanceMeters, out float flightSeconds, out float range);
-        if (power <= 0f)
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 receiverXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
+        Vector2 aim = SimMath.SafeNormalize(receiverXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        Vector2 target = selfXZ + aim * distanceMeters;
+
+        return EstimateRaised(obs, receiver, target, RaisedPassProfile.Lofted, laneClearance01);
+    }
+
+    /// <summary>
+    /// Estimates an airborne delivery to a <b>future meeting point</b> (A5.5): the ball's real landing where
+    /// the receiver is going, not where he is.
+    ///
+    /// The model is the same three-sided estimate the ground pass uses — can the receiver be at the landing
+    /// when the ball is, can an opponent beat him there, is the lane there — with the flight and the landing
+    /// taken from <see cref="RaisedPassModel"/>, which is calibrated from the execution layer's own launch
+    /// through the real solver. Two differences from the ground estimate are deliberate: the landing is the
+    /// point the physics produces, not the point that was aimed at, and the completion carries
+    /// <see cref="AirborneControl01"/>, because a ball arriving out of the air is harder to control than one
+    /// arriving on the deck. The flight time is never a ground time: that was the A4 defect.
+    /// </summary>
+    public LoftedPassTerms EstimateRaised(
+        in FootballerObservation obs,
+        in PerceivedEntity receiver,
+        Vector2 targetXZ,
+        RaisedPassProfile profile,
+        float laneClearance01)
+    {
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        if (!SimMath.IsFinite(selfXZ) || !SimMath.IsFinite(targetXZ)) return LoftedPassTerms.None;
+
+        float distance = Vector2.Distance(selfXZ, targetXZ);
+        if (!float.IsFinite(distance) || distance <= 1f) return LoftedPassTerms.None;
+
+        RaisedPassModel flights = RaisedPassModel.Default;
+        if (!flights.TryPowerForLanding(profile, distance, out float power, out float range, out float flight))
             return LoftedPassTerms.None;
 
-        // The landing point is where the ball comes down, not where it was aimed.
-        Vector2 receiverXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
-        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
-        Vector2 aim = SimMath.SafeNormalize(receiverXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
+        // The real landing, not the aimed point.
+        Vector2 aim = SimMath.SafeNormalize(targetXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
         Vector2 landing = selfXZ + aim * range;
 
         ReachEstimate receiverReach = TimeToReachModel.ToPoint(
-            ReachKinematics.FromEntity(receiver), landing, MathF.Max(flightSeconds, 1f));
-        float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flightSeconds + 1f;
+            ReachKinematics.FromEntity(receiver), landing, MathF.Max(flight, 1f));
+        float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
         float receiverTerm = Math.Clamp(
-            0.5f + (flightSeconds - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
+            0.5f + (flight - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
 
         float defenderTerm = 1f;
+        float horizon = MathF.Max(flight + DefenderHorizonSlackSeconds, 1f);
+        float defenderScale = profile == RaisedPassProfile.Driven
+            ? DefenderMarginScaleSeconds
+            : DefenderMarginScaleSeconds * AirborneContestScale;
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
         {
             if (entity.Team == obs.SelfTeam) continue;
             ReachEstimate reach = TimeToReachModel.ToPoint(
-                ReachKinematics.FromEntity(entity), landing, MathF.Max(flightSeconds, 1f));
-            float arrival = (reach.Reachable ? reach.Seconds : flightSeconds + 1f) + OpponentReactionSeconds;
-            float term = Math.Clamp(0.5f + (arrival - flightSeconds) / DefenderMarginScaleSeconds, 0f, 1f);
+                ReachKinematics.FromEntity(entity), landing, horizon);
+            float arrival = (reach.Reachable ? reach.Seconds : horizon) + OpponentReactionSeconds;
+            float term = Math.Clamp(0.5f + (arrival - flight) / defenderScale, 0f, 1f);
             if (term < defenderTerm) defenderTerm = term;
         }
 
         float lane = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
+
+        // A5.5: the ground lane clearance is the wrong question for a ball two to four metres up. For the
+        // airborne profiles the lane is judged from the calibrated height profile — a defender only blocks
+        // if the ball is low enough to be played where he stands — and the driven ball keeps the ground
+        // clearance it would need, because a driven ball does travel through the legs.
+        if (profile != RaisedPassProfile.Driven)
+        {
+            lane = IsAirborneLaneBlocked(
+                selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam)
+                ? 0f
+                : 1f;
+        }
+
         float completion = receiverTerm
                            * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane)
-                           * LoftedExecutionPenalty;
+                           * AirborneControl01;
 
         return new LoftedPassTerms(
             Feasible: true,
             Power01: power,
-            FlightTimeSeconds: flightSeconds,
+            FlightTimeSeconds: flight,
             FlightRangeMeters: range,
-            DistanceMeters: distanceMeters,
+            DistanceMeters: distance,
             CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01),
             LandingPressure01: Math.Clamp(1f - defenderTerm, 0f, 1f))
         {
-            LandingXZ = landing
+            LandingXZ = landing,
+            TargetXZ = targetXZ,
+            Profile = profile
         };
     }
 
     /// <summary>
-    /// Lowest power whose (drag-shortened) raised flight still reaches the receiver. Returns 0 when no
-    /// power in the execution layer's raised-pass band covers the distance.
+    /// True when a defender the airborne ball would pass low enough to touch is standing in its path (A5.5).
+    ///
+    /// The ground lane test samples a rolling ball against bodies; an aerial ball clears most of them. This
+    /// one reads the calibrated height at the point where the ball crosses each defender's line and only
+    /// counts him when that height is below <see cref="AirborneBlockHeightMeters"/> — so a centre-back
+    /// standing on the cross's line 4 m short of the landing, where the ball is still 2.5 m up, is not a
+    /// block, while the same man at the near post, where it is coming down, is.
     /// </summary>
-    private static float LoftedPowerForDistance(float distanceMeters, out float flightSeconds, out float rangeMeters)
+    public bool IsAirborneLaneBlocked(
+        Vector2 fromXZ,
+        Vector2 toXZ,
+        RaisedPassProfile profile,
+        float power01,
+        IReadOnlyList<PerceivedEntity> visiblePlayers,
+        TeamId selfTeam)
     {
-        flightSeconds = 0f;
-        rangeMeters = 0f;
+        Vector2 segment = toXZ - fromXZ;
+        float length = segment.Length();
+        if (length < 0.5f) return false;
 
-        for (int step = 0; step <= LoftedPowerSteps; step++)
+        Vector2 direction = segment / length;
+        Vector2 normal = new(-direction.Y, direction.X);
+        RaisedPassModel flights = RaisedPassModel.Default;
+
+        for (int i = 0; i < visiblePlayers.Count; i++)
         {
-            float power = LoftedMinPower + step * LoftedPowerStep;
-            float vertical = Math.Clamp(5.2f + power * 4.5f, 5.0f, 9.8f);
-            float horizontal = Math.Clamp(9.5f + power * 11.5f, 9.0f, 21.0f);
-            float flight = 2f * vertical / Gravity;
-            float range = horizontal * flight * (1f - LoftedDragShortfall01);
-            if (range < distanceMeters) continue;
+            PerceivedEntity opponent = visiblePlayers[i];
+            if (opponent.Team == selfTeam) continue;
 
-            flightSeconds = flight;
-            rangeMeters = range;
-            return power;
+            Vector2 relative = new Vector2(
+                opponent.EstimatedPosition.X, opponent.EstimatedPosition.Z) - fromXZ;
+            float along = Vector2.Dot(relative, direction);
+            if (along <= 0.5f || along >= length - AirborneLandingContestMeters) continue;
+            if (MathF.Abs(Vector2.Dot(relative, normal)) > LaneContactReachMeters + 0.35f) continue;
+
+            float height = flights.HeightAtDistance(profile, power01, along);
+            if (height > AirborneBlockHeightMeters) continue;
+            return true;
         }
 
-        return 0f;
+        return false;
     }
-
-    /// <summary>Raised-pass power band the execution layer can actually strike (0.15 … 1.00).</summary>
-    public const float LoftedMinPower = 0.15f;
-
-    /// <summary>Power step of the raised-pass search.</summary>
-    public const float LoftedPowerStep = 0.05f;
-
-    /// <summary>Number of raised-pass power samples.</summary>
-    public const int LoftedPowerSteps = 17;
 
     /// <summary>
     /// True when a defender the ball would physically run into blocks the planned line. This is the
@@ -618,11 +708,11 @@ public sealed class PassSuccessModel
 }
 
 /// <summary>
-/// Separate answer for a raised pass (A4.2): the flight is a different physical problem from a rolling
-/// one, so it has its own estimate rather than a ground flight time dressed up as an aerial ball.
-/// <see cref="LandingXZ"/> is where this estimate thinks the ball comes down (not where it was aimed),
-/// which is the point the A4 audit is about: until A5.5 replaces the drag-free range with the real
-/// airborne trajectory, a raised ball may land beyond the man it was played to.
+/// Separate answer for an airborne delivery (A4.2/A5.5): the flight is a different physical problem from a
+/// rolling one, so it has its own estimate rather than a ground flight time dressed up as an aerial ball.
+/// <see cref="LandingXZ"/> is where the ball actually comes down — read from the calibrated real trajectory,
+/// not from a drag-free approximation — and <see cref="TargetXZ"/> is the meeting point it was aimed at, so
+/// a caller can see the difference between the aim and the landing.
 /// </summary>
 public readonly record struct LoftedPassTerms(
     bool Feasible,
@@ -633,12 +723,15 @@ public readonly record struct LoftedPassTerms(
     float CompletionProbability01,
     float LandingPressure01)
 {
-    /// <summary>
-    /// Estimated point where the raised ball comes down, in pitch XZ. Published for the inspector and for
-    /// A5.5, and not part of the score until that milestone gives the flight a real prediction.
-    /// </summary>
+    /// <summary>Where the ball actually comes down, in pitch XZ (the point the receiver attacks).</summary>
     public Vector2 LandingXZ { get; init; }
 
-    /// <summary>No raised route to this receiver: out of the execution layer's band.</summary>
+    /// <summary>The meeting point the delivery was aimed at, in pitch XZ.</summary>
+    public Vector2 TargetXZ { get; init; }
+
+    /// <summary>Which airborne profile produced this estimate (A5.5).</summary>
+    public RaisedPassProfile Profile { get; init; }
+
+    /// <summary>No raised route to this receiver: out of the model's band, or landing too far away.</summary>
     public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);
 }

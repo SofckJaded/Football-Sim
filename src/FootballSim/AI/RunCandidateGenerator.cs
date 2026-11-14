@@ -190,6 +190,10 @@ public sealed class RunCandidateGenerator
         Vector2 carrierXZ = CarrierXZ(obsRef, ballXZ);
         float attackDirX = obsRef.AttackingDirectionX;
 
+        // A5.5: the box arrivals the team has already announced, so this player's arrival can complement
+        // them instead of crowding one of them. Built once per decision from the A5.3 board.
+        TeamBoxArrivals teamBoxArrivals = CollectTeamBoxArrivals(obsRef, tick);
+
         // The adopted run survives only while it is still a legal, live intention under this duty.
         if (_intent is RunIntent claimed) _intent = ApplyClaim(claimed, obsRef, tick);
 
@@ -206,7 +210,8 @@ public sealed class RunCandidateGenerator
         bool receivingBall = IsClaimLive(obsRef, tick) || OffsideTactics.IsReleased(obsRef);
         if (_intent is RunIntent receiving && receivingBall)
         {
-            RunScoreTerms receivingTerms = RunScoring.Score(receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity);
+            RunScoreTerms receivingTerms = RunScoring.Score(
+                receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
             EmitAndRefreshConfidence(receiving, receivingTerms);
             return _count;
         }
@@ -220,7 +225,8 @@ public sealed class RunCandidateGenerator
             {
                 // Re-offer the frozen geometry: the meeting region, its window and the adoption tick do not
                 // move, but the score — and with it the confidence the team hears — is measured again.
-                RunScoreTerms adoptedTerms = RunScoring.Score(adopted.Path, obsRef, carrierXZ, obsRef.TeamSecurity);
+                RunScoreTerms adoptedTerms = RunScoring.Score(
+                    adopted.Path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
                 EmitAndRefreshConfidence(adopted, adoptedTerms);
                 continue;
             }
@@ -231,7 +237,8 @@ public sealed class RunCandidateGenerator
                 continue;
             }
 
-            RunScoreTerms terms = RunScoring.Score(path, obsRef, carrierXZ, obsRef.TeamSecurity);
+            RunScoreTerms terms = RunScoring.Score(
+                path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
             path = path with { Confidence01 = ConfidenceFrom(terms) };
             Emit(path, terms);
         }
@@ -657,6 +664,44 @@ public sealed class RunCandidateGenerator
         claim = default;
         return _board is not null && _board.TryGetClaim(obs.SelfTeam, obs.SelfId, tick, out claim);
     }
+
+    /// <summary>
+    /// A5.5: reads the team's announced box arrivals off the A5.3 board — at most
+    /// <see cref="MaxTeamBoxArrivals"/> of them, so the per-path score stays bounded and allocation-free.
+    /// Only promises the player can actually hear (visible and live) and only box kinds count; a team-mate's
+    /// checking run is a complementary option, not a competing arrival.
+    /// </summary>
+    private TeamBoxArrivals CollectTeamBoxArrivals(in FootballerObservation obs, int tick)
+    {
+        if (_board is null) return TeamBoxArrivals.None;
+
+        Vector2 first = default, second = default, third = default;
+        int firstTick = 0, secondTick = 0, thirdTick = 0;
+        int count = 0;
+
+        int audible = _board.VisibleCount(obs.SelfTeam, tick);
+        for (int i = 0; i < audible && count < MaxTeamBoxArrivals; i++)
+        {
+            if (!_board.TryGetVisibleAt(obs.SelfTeam, i, tick, out RunAdvertisement advert)) continue;
+            if (advert.PlayerId == obs.SelfId) continue;
+            if (!RunScoring.IsBoxArrival(advert.Kind)) continue;
+            if (advert.MeetTick <= tick) continue;
+
+            switch (count)
+            {
+                case 0: first = advert.MeetXZ; firstTick = advert.MeetTick; break;
+                case 1: second = advert.MeetXZ; secondTick = advert.MeetTick; break;
+                default: third = advert.MeetXZ; thirdTick = advert.MeetTick; break;
+            }
+
+            count++;
+        }
+
+        return new TeamBoxArrivals(first, firstTick, second, secondTick, third, thirdTick, count);
+    }
+
+    /// <summary>Box arrivals one runner considers when deciding whether his own is complementary (A5.5).</summary>
+    public const int MaxTeamBoxArrivals = 3;
 
     /// <summary>Kinds whose meeting region must stay legally receivable before the ball is released.</summary>
     public static bool IsForwardRun(RunKind kind) => kind is RunKind.InBehind or RunKind.Overlap
