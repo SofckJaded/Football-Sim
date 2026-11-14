@@ -356,12 +356,24 @@ public enum TeamId
 /// running backwards, the touchline — moderated by cover and bypass risk. <see cref="FootballerObservation"/>
 /// gained the team's <c>BallResponderPlayerId</c> so a second defender knows who is already committing; that
 /// is a team fact, not an opponent read. Trajectories differ from version 28.</item>
+/// <item><c>AiBehaviour 30</c> — A6.3: the defensive line stands in <b>one shared depth band</b> instead of
+/// wherever each defender's own formation anchor happened to put him. <see cref="AI.DefensiveLineModel"/>
+/// derives it from four facts the team can observe — the ball's field position, how hard the carrier is being
+/// pressed (through the one reach model), the deepest <b>credible run in behind</b> (a believed opponent
+/// between the line and the ball, running at this goal, aged and confidence-weighted), and the keeper's own
+/// <b>sweep reach</b> over a three-second budget — with a hard ball cap so the line is never well upfield of
+/// the ball. <see cref="Tactics.TeamJobCoordinator"/> places every <c>DefensiveLine</c> target on the band,
+/// keeping each defender's own lateral lane and allowing only two bounded local exceptions (ball-side steps
+/// up, far-side tucks) that may never leave the band's range. Marking responsibility is a <b>style</b> choice
+/// (zone/man share of the profile: direct counterattack marks one, possession two, gegenpress three) and it
+/// moves by an <b>explicit handover</b> with a recorded reason when the threat crosses into another
+/// defender's zone; one threat can never be marked twice. Trajectories differ from version 29.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 29;
+    public const int AiBehaviour = 30;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -821,6 +833,14 @@ public sealed class FootballerObservation
     /// "fully exposed" — so a standalone controller is not punished for knowledge it was never given.
     /// </summary>
     public AI.RestDefence TeamSecurity { get; init; }
+
+    /// <summary>
+    /// The depth band this team's defensive line is standing in (A6.3), or an invalid band while the team is
+    /// in possession or has no line at all. It is the same object the allocator placed the <c>DefensiveLine</c>
+    /// job targets from, so a line player's movement target and his own picture of the line cannot disagree.
+    /// Default is "no band", which a controller must treat as unknown rather than as depth zero.
+    /// </summary>
+    public AI.DefensiveLineBand TeamLineBand { get; init; }
 }
 
 public interface IFootballerController

@@ -64,6 +64,25 @@ public readonly record struct TeamJobAssignment(
     public bool IsTemporary { get; init; }
 }
 
+/// <summary>
+/// A6.3: one explicit transfer of marking responsibility. The threat crossed into another defender's zone,
+/// so the job moved from one player to another on a stated tick, with both slots' distances recorded — a
+/// handover that can be explained, rather than a silent re-selection when the hold happened to expire.
+/// </summary>
+public readonly record struct MarkingHandover(
+    int Tick,
+    int ThreatPlayerId,
+    int FromPlayerId,
+    int ToPlayerId,
+    float FromSlotDistance,
+    float ToSlotDistance)
+{
+    /// <summary>Compact text form for a probe or a failure message.</summary>
+    public string Describe() =>
+        $"tick {Tick}: #{ThreatPlayerId} from #{FromPlayerId} ({FromSlotDistance:F1} m slot)" +
+        $" to #{ToPlayerId} ({ToSlotDistance:F1} m slot)";
+}
+
 
 /// <summary>
 /// Assigns persistent, team-level off-ball jobs relative to the actual ball/carrier and keeps them
@@ -102,11 +121,45 @@ public sealed class TeamJobCoordinator
     /// </summary>
     private const float RegionSwitchMargin = 0.05f;
 
+    /// <summary>
+    /// How much closer to the threat another defender's *slot* has to be before marking responsibility is
+    /// handed over (A6.3), in metres. A threat drifting between two centre-backs must not change hands on
+    /// every recompute, so the zone owner has to win by a real margin.
+    /// </summary>
+    private const float HandoverZoneMarginMeters = 3f;
+
+    /// <summary>
+    /// How close the new owner's slot must be to the threat for a handover to be worth making, in metres.
+    /// Beyond this nobody owns him and the current marker keeps the job.
+    /// </summary>
+    private const float MaxZoneHandoverMeters = 14f;
+
+    /// <summary>Handovers allowed per assignment pass. One, so the line can absorb it without cascading.</summary>
+    private const int MaxHandoversPerPass = 1;
+
+    /// <summary>How many handover events the log keeps, so a match cannot grow it without limit.</summary>
+    public const int MaxHandoverLogEntries = 128;
+
     private readonly PitchDimensions _pitch;
     private readonly Dictionary<int, TeamJobAssignment> _assignments = new();
     private readonly Dictionary<int, int> _assignedAtTick = new();
     /// <summary>One coverage request per team: reusing it is the cascade bound (A3.5).</summary>
     private readonly Dictionary<TeamId, CoverageRequest> _coverage = new();
+
+    /// <summary>The defensive line band each team is currently standing in (A6.3).</summary>
+    private readonly Dictionary<TeamId, DefensiveLineBand> _lineBands = new();
+
+    /// <summary>Bounded log of explicit marking handovers (A6.3), oldest first.</summary>
+    private readonly List<MarkingHandover> _handovers = new();
+
+    /// <summary>
+    /// Markers this profile allows in one pass (A6.3's zone/man mix). Set at the start of each team's pass
+    /// so the keep loop and the assignment loop cannot disagree about the cap.
+    /// </summary>
+    private int _markerCap = 2;
+
+    /// <summary>Handovers already made in this team's pass, against <see cref="MaxHandoversPerPass"/>.</summary>
+    private int _handoversThisPass;
 
     /// <summary>
     /// The regions already handed out in this team's assignment pass (A3.4). Reused, because the
@@ -148,6 +201,23 @@ public sealed class TeamJobCoordinator
     /// </summary>
     public RestDefence SecurityOf(TeamId team) =>
         _security.TryGetValue(team, out RestDefence security) ? security : default;
+
+    /// <summary>
+    /// The depth band <paramref name="team"/>'s defensive line is standing in (A6.3), or an invalid band
+    /// while that team has the ball or has no line. The line's own job targets are placed from it, so this
+    /// is the same fact the players' observations carry.
+    /// </summary>
+    public DefensiveLineBand LineBandOf(TeamId team) =>
+        _lineBands.TryGetValue(team, out DefensiveLineBand band) ? band : DefensiveLineBand.None;
+
+    /// <summary>
+    /// Explicit marking handovers this match has made, oldest first (A6.3), bounded to
+    /// <see cref="MaxHandoverLogEntries"/>. Diagnostics and tests read it; no decision does.
+    /// </summary>
+    public IReadOnlyList<MarkingHandover> Handovers => _handovers;
+
+    /// <summary>Lifetime count of marking handovers, including any dropped from the bounded log.</summary>
+    public int HandoverCount { get; private set; }
 
     /// <summary>Lifetime count of coverage requests raised. Diagnostics and tests.</summary>
     public int CoverageRequestsOpened { get; private set; }
@@ -229,6 +299,16 @@ public sealed class TeamJobCoordinator
         float wideZ = (_pitch.HalfWidth - 3f) * (0.55f + 0.55f * profile.AttackingWidth01);
         bool inPossession = possessingTeam == team;
 
+        // A6.3: one shared depth band for the line, from field position, passer pressure, credible runs and
+        // the keeper's sweep cover. It is evaluated once per pass, before the keep loop can re-anchor a line
+        // player, because a line that half-moved together is not a line.
+        _markerCap = DefensiveLineModel.MarkerCount(profile);
+        _handoversThisPass = 0;
+        DefensiveLineBand band = inPossession
+            ? DefensiveLineBand.None
+            : DefensiveLineModel.Evaluate(team, players, ball, possession, opponents, profile, attackDirX, _pitch);
+        _lineBands[team] = band;
+
         FootballerState? carrier = null;
         if (possession.IsControlledBy(team) && possession.ControllingPlayerId is int carrierId)
             carrier = Find(players, carrierId);
@@ -287,13 +367,26 @@ public sealed class TeamJobCoordinator
                 IsResponderJob(existing.Job) == false &&
                 tick - _assignedAtTick.GetValueOrDefault(player.Id, int.MinValue) < MinimumHoldTicks &&
                 JobMatchesPhase(existing.Job, inPossession) &&
-                counts.GetValueOrDefault(existing.Job) < MaxPerJob(existing.Job) &&
+                counts.GetValueOrDefault(existing.Job) < JobCapacity(existing.Job) &&
                 Vector2.Distance(
                     new Vector2(player.Position.X, player.Position.Z),
                     new Vector2(existing.Anchor.X, existing.Anchor.Z)) <= MaxAssignmentTravel(existing.Job) + 6f)
             {
                 counts[existing.Job] = counts.GetValueOrDefault(existing.Job) + 1;
                 taken.Add(player.Id);
+
+                // A6.3: a kept line duty still takes the band's depth. Keeping the old anchor would leave
+                // one defender holding last pass's line while the rest moved, which is exactly the failure
+                // the shared band exists to remove.
+                if (existing.Job == TacticalJob.DefensiveLine && band.IsValid)
+                {
+                    float lineProj = DefensiveLineModel.ProjForPlayer(band, player, ballXZ);
+                    Assign(player, existing.Job,
+                        new Vector3(attackDirX * lineProj, 0f, existing.Anchor.Z),
+                        existing.TargetPlayerId, existing.Reason, tick);
+                    continue;
+                }
+
                 // A3.4: a kept assignment is still a region the later jobs have to work around.
                 RecordRegion(player.Id, existing.Job, existing.Anchor);
                 continue;
@@ -419,13 +512,23 @@ public sealed class TeamJobCoordinator
             AssignUniqueJob(available, counts, taken, TacticalJob.CoverDefender, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ => coverAnchor, baseScore: 0.05f);
 
-            AssignMarkers(available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, 2);
+            // A6.3: how many opponents this profile marks man-for-man is a style decision, not a constant.
+            AssignMarkers(players, available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, formation);
 
-            // The remaining defenders hold the line; everyone else keeps team shape.
+            // A6.3: the remaining defenders hold one shared depth band — the whole line steps together,
+            // each man in his own lane, with the ball-side and far-side exceptions the band allows.
             foreach (FootballerState player in available.ToArray())
             {
                 if (player.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack)) continue;
-                Assign(player, TacticalJob.DefensiveLine, AnchorOf(player), null, "Hold the defensive line", tick);
+
+                Vector3 anchor = AnchorOf(player);
+                if (band.IsValid)
+                {
+                    float lineProj = DefensiveLineModel.ProjForPlayer(band, player, ballXZ);
+                    anchor = new Vector3(attackDirX * lineProj, 0f, anchor.Z);
+                }
+
+                Assign(player, TacticalJob.DefensiveLine, anchor, null, "Hold the defensive line", tick);
                 taken.Add(player.Id);
                 available.Remove(player);
                 counts[TacticalJob.DefensiveLine] = counts.GetValueOrDefault(TacticalJob.DefensiveLine) + 1;
@@ -672,6 +775,7 @@ public sealed class TeamJobCoordinator
     }
 
     private void AssignMarkers(
+        IReadOnlyList<FootballerState> players,
         List<FootballerState> available,
         Dictionary<TacticalJob, int> counts,
         HashSet<int> taken,
@@ -679,7 +783,7 @@ public sealed class TeamJobCoordinator
         Vector2 ownGoalXZ,
         float attackDirX,
         int tick,
-        int maxMarkers)
+        TeamFormation formation)
     {
         // A2.6: markers are picked from what the team believes, so an opponent nobody has seen cannot
         // pull a defender out of shape.
@@ -700,8 +804,19 @@ public sealed class TeamJobCoordinator
         int assigned = 0;
         foreach (TeamBelief.Opponent threat in threats)
         {
-            if (assigned >= maxMarkers) break;
-            if (counts.GetValueOrDefault(TacticalJob.Marker) >= maxMarkers) break;
+            if (assigned >= _markerCap) break;
+            if (counts.GetValueOrDefault(TacticalJob.Marker) >= _markerCap) break;
+
+            // One threat, one holder. A man who already has a marker is not assigned a second one; the only
+            // question is whether his responsibility should move to the defender whose zone now owns him
+            // (A6.3's explicit handover).
+            if (TryFindHeldMarker(threat.PlayerId, players, taken, out FootballerState? incumbent))
+            {
+                TryHandOverMarking(threat, incumbent!, players, available, counts, taken,
+                    formation, ownGoalXZ, attackDirX, tick);
+                assigned++;
+                continue;
+            }
 
             FootballerState? best = null;
             float bestScore = float.MinValue;
@@ -734,6 +849,150 @@ public sealed class TeamJobCoordinator
             counts[TacticalJob.Marker] = counts.GetValueOrDefault(TacticalJob.Marker) + 1;
             assigned++;
         }
+    }
+
+    /// <summary>
+    /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
+    ///
+    /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
+    /// move the job — but responsibility for a threat belongs to the defender whose place in the formation is
+    /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
+    /// another slot — by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
+    /// — the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
+    /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
+    /// distances so the handover can be explained after the fact. At most
+    /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
+    /// </summary>
+    /// <summary>
+    /// The held marker of one threat, found in player order so the scan cannot depend on hash order. Only a
+    /// player still in <paramref name="taken"/> holds a job in this pass; anyone else is being re-selected.
+    /// </summary>
+    private bool TryFindHeldMarker(
+        int threatPlayerId,
+        IReadOnlyList<FootballerState> players,
+        HashSet<int> taken,
+        out FootballerState? holder)
+    {
+        holder = null;
+        for (int i = 0; i < players.Count; i++)
+        {
+            FootballerState state = players[i];
+            if (!state.IsActiveOnPitch || !taken.Contains(state.Id)) continue;
+            if (!_assignments.TryGetValue(state.Id, out TeamJobAssignment duty)) continue;
+            if (duty.Job != TacticalJob.Marker || duty.TargetPlayerId != threatPlayerId) continue;
+
+            holder = state;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
+    ///
+    /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
+    /// move the job — but responsibility for a threat belongs to the defender whose place in the formation is
+    /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
+    /// another slot — by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
+    /// — the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
+    /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
+    /// distances so the handover can be explained after the fact. At most
+    /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
+    /// </summary>
+    private bool TryHandOverMarking(
+        TeamBelief.Opponent threat,
+        FootballerState incumbent,
+        IReadOnlyList<FootballerState> players,
+        List<FootballerState> available,
+        Dictionary<TacticalJob, int> counts,
+        HashSet<int> taken,
+        TeamFormation formation,
+        Vector2 ownGoalXZ,
+        float attackDirX,
+        int tick)
+    {
+        if (_handoversThisPass >= MaxHandoversPerPass) return false;
+        if (!formation.TryGetWorldAnchor(incumbent.Id, attackDirX, out Vector3 incumbentSlot)) return false;
+
+        float incumbentSlotDistance = Vector2.Distance(
+            new Vector2(incumbentSlot.X, incumbentSlot.Z), threat.PositionXZ);
+
+        // The zone owner is normally a defender *on the line* — held this pass, so not in `available`. The
+        // handover is allowed to take him off the line (the released marker takes his place on it), which is
+        // what "pick him up" means; anyone with a contextual duty of his own is not a candidate.
+        FootballerState? owner = null;
+        bool ownerOnTheLine = false;
+        float ownerSlotDistance = float.MaxValue;
+        for (int i = 0; i < players.Count; i++)
+        {
+            FootballerState candidate = players[i];
+            if (!candidate.IsActiveOnPitch || candidate.Id == incumbent.Id) continue;
+            if (candidate.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder))
+                continue;
+
+            bool free = available.Contains(candidate);
+            bool onTheLine = false;
+            if (!free)
+            {
+                if (!taken.Contains(candidate.Id)) continue;
+                if (!_assignments.TryGetValue(candidate.Id, out TeamJobAssignment duty)) continue;
+                if (duty.Job is not (TacticalJob.DefensiveLine or TacticalJob.Shape)) continue;
+                onTheLine = true;
+            }
+
+            if (!formation.TryGetWorldAnchor(candidate.Id, attackDirX, out Vector3 slot)) continue;
+
+            float distance = Vector2.Distance(new Vector2(slot.X, slot.Z), threat.PositionXZ);
+            if (distance > MaxZoneHandoverMeters) continue;
+            if (distance >= ownerSlotDistance - 0.05f) continue;
+
+            ownerSlotDistance = distance;
+            owner = candidate;
+            ownerOnTheLine = onTheLine;
+        }
+
+        if (owner is null) return false;
+        if (ownerSlotDistance + HandoverZoneMarginMeters >= incumbentSlotDistance) return false;
+
+        // The old marker goes back into the shape this pass; the new owner takes the man.
+        _assignments.Remove(incumbent.Id);
+        _assignedAtTick.Remove(incumbent.Id);
+        taken.Remove(incumbent.Id);
+        available.Add(incumbent);
+
+        if (ownerOnTheLine)
+        {
+            _assignments.Remove(owner.Id);
+            _assignedAtTick.Remove(owner.Id);
+            taken.Remove(owner.Id);
+        }
+        else
+        {
+            available.Remove(owner);
+        }
+
+        Vector2 threatXZ = threat.PositionXZ;
+        Vector2 goalSide = SimMath.SafeNormalize(ownGoalXZ - threatXZ, new Vector2(-attackDirX, 0f));
+        Vector3 anchor = new(threatXZ.X + goalSide.X * 1.9f, 0f, threatXZ.Y + goalSide.Y * 1.9f);
+
+        Assign(owner, TacticalJob.Marker, anchor, threat.PlayerId,
+            $"Mark #{threat.PlayerId} (handed over from #{incumbent.Id})", tick);
+        taken.Add(owner.Id);
+        counts[TacticalJob.Marker] = counts.GetValueOrDefault(TacticalJob.Marker) + 1;
+        _handoversThisPass++;
+
+        RecordHandover(new MarkingHandover(
+            tick, threat.PlayerId, incumbent.Id, owner.Id, incumbentSlotDistance, ownerSlotDistance));
+        return true;
+    }
+
+    /// <summary>Keeps the bounded handover log in order, dropping the oldest entry past its cap.</summary>
+    private void RecordHandover(MarkingHandover handover)
+    {
+        HandoverCount++;
+        if (_handovers.Count >= MaxHandoverLogEntries) _handovers.RemoveAt(0);
+        _handovers.Add(handover);
     }
 
     private bool AssignUniqueJob(
@@ -922,9 +1181,17 @@ public sealed class TeamJobCoordinator
     {
         TacticalJob.Shape => 64,
         TacticalJob.DefensiveLine => 4,
-        TacticalJob.Marker => 2,
+        TacticalJob.Marker => 3,
         _ => 1
     };
+
+    /// <summary>
+    /// How many players may hold a job in this pass. Markers are the one duty whose number is a style
+    /// choice (A6.3): the profile's zone/man mix sets it at the start of the pass, and the structural
+    /// maximum in <see cref="MaxPerJob"/> is only the ceiling that mix can reach.
+    /// </summary>
+    private int JobCapacity(TacticalJob job) =>
+        job == TacticalJob.Marker ? _markerCap : MaxPerJob(job);
 
     /// <summary>
     /// Largest distance a player may travel to take up a job. Contextual jobs are worth offering

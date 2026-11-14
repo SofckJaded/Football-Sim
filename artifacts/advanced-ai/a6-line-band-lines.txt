@@ -1,0 +1,31 @@
+﻿=== A6.3 defensive line evidence: 4 seeds x 1800 s ===
+Simulation version : ai30-rs1
+Profiles           : home Possession / Positional Play (marks 2, man-share 0.65) | away Direct Counterattack (marks 1, man-share 0.39)
+Units              : metres, attack-relative (own goal line = -52, opponent's = +52).
+                     spread = |actual line depth - band depth| over the players on the line;
+                     shift  = band depth - the line's mean formation-anchor depth.
+
+Seed 20260818: FT in 108466 ticks | score 4-1 | handovers 49
+
+Seed 20268737: FT in 108306 ticks | score 2-3 | handovers 57
+
+Seed 20276656: FT in 108292 ticks | score 4-0 | handovers 67
+
+Seed 20284575: FT in 108322 ticks | score 3-2 | handovers 63
+
+=== Totals over 4 seeds (4 completed, 72216 defending samples) ===
+Band depth         : mean -20.3 m | mean ball -2.0 m | mean anchors -16.6 m
+Shift from anchors : mean -3.7 m | mean absolute 5.1 m (the depth the same players would have held before A6.3)
+Line target spread : mean 1.06 m | worst tick mean 3.00 m @ tick 12 | 72115 samples with a line
+Local exceptions   : 112348 at the band | 23850 ball-side (+3 m) | 72510 far-side (-2 m) | 11683 clamped by the band's range
+Body-vs-band gap   : mean 4.09 m | worst 70.94 m (physical lag: the target moves before the player can arrive)
+Keeper context     : mean reach 17.6 m from mean depth -49.1 m
+Field position     : mean shift -0.3 m | moved >0.5 m in 94.4% of samples
+Passer pressure    : mean 0.47 | mean shift -0.2 m | moved >0.5 m in 70.1%
+Ball cap           : pulled the line back in 17.3% of samples | mean shift -1.34 m
+Credible runs      : capped the line in 20.3% of samples | mean shift -1.15 m
+Keeper coverage    : capped the line in 13.9% of samples | mean shift -0.73 m
+Markers            : mean 0.66 per defending sample (style caps 2/1)
+Handovers          : 236 total | mean slots 17.1 m -> 7.8 m
+Observation match  : every line player saw the placed band
+RESULT: bands placed, shared and observed

@@ -10,6 +10,7 @@ using FootballSim.Locomotion;
 using FootballSim.Physics;
 using FootballSim.Rules;
 using FootballSim.Scenarios;
+using FootballSim.Tactics;
 
 namespace FootballSim.Headless;
 
@@ -43,6 +44,9 @@ public static class Program
             case "--deliveries":
                 return RunDeliveryEvidence(args) ? 0 : 1;
 
+            case "--lines":
+                return RunLineEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
@@ -53,6 +57,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario build-up-3v2 [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --perf [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --deliveries [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --lines [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -438,6 +443,244 @@ public static class Program
 
         return matchesPlayed == seedCount;
     }
+
+    /// <summary>
+    /// A6.3 evidence: the defensive line's shared depth band, measured against the shape it replaced.
+    ///
+    /// The milestone's claim is not "the line is a number" but "the line is one number the whole line holds,
+    /// and four picture facts move it". This probe measures each half of that on live matches:
+    /// <list type="bullet">
+    /// <item><b>spread</b> — mean and maximum distance of a line player's actual depth from the band's, per
+    ///   defending sample. A shared band is only shared if this is small.</item>
+    /// <item><b>shift from the anchors</b> — band depth minus the line's mean formation-anchor depth, which is
+    ///   the depth the same players would have held before this milestone. It quantifies the behaviour change
+    ///   instead of leaving it to the scoreline.</item>
+    /// <item><b>terms</b> — how often each input (field position, passer pressure, a credible run, keeper
+    ///   coverage) moved the band and by how much, so a lever that is inert in real play is visible here.</item>
+    /// <item><b>style</b> — the markers each profile's zone/man mix asks for, and the handovers it made.</item>
+    /// </list>
+    ///
+    /// Denominators: a sample is one live tick of one team defending with a valid band, taken every
+    /// <see cref="LineSampleInterval"/>. Usual speed, sprints and restarts are all included; the band itself is
+    /// only recomputed on the allocator's cadence, so a sample repeats the last band.
+    /// </summary>
+    private static bool RunLineEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 900f;
+
+        var homeProfile = TeamTacticalProfile.PossessionControl;
+        var awayProfile = TeamTacticalProfile.DirectCounterattack;
+
+        Console.WriteLine($"=== A6.3 defensive line evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Profiles           : home {homeProfile.Name} (marks {DefensiveLineModel.MarkerCount(homeProfile)}," +
+                          $" man-share {DefensiveLineModel.ManShare01(homeProfile):F2})" +
+                          $" | away {awayProfile.Name} (marks {DefensiveLineModel.MarkerCount(awayProfile)}," +
+                          $" man-share {DefensiveLineModel.ManShare01(awayProfile):F2})");
+        Console.WriteLine("Units              : metres, attack-relative (own goal line = -52, opponent's = +52).");
+        Console.WriteLine("                     spread = |actual line depth - band depth| over the players on the line;");
+        Console.WriteLine("                     shift  = band depth - the line's mean formation-anchor depth.");
+
+        int samples = 0;
+        int matchesPlayed = 0;
+        double spreadSum = 0d, spreadCount = 0d;
+        double lagSum = 0d, lagCount = 0d, maxLineGap = 0d;
+        double keeperReachSum = 0d, keeperProjSum = 0d;
+        int lineAtBand = 0, lineAhead = 0, lineTucked = 0, lineClamped = 0;
+        double shiftSum = 0d, shiftAbsSum = 0d;
+        double bandSum = 0d, ballSum = 0d, anchorSum = 0d;
+        double fieldSum = 0d, pressureSum = 0d, ballCapSum = 0d, runSum = 0d, keeperSum = 0d;
+        double pressure01Sum = 0d;
+        int fieldMoved = 0, pressureMoved = 0, ballCapped = 0, runCapped = 0, keeperCapped = 0;
+        int observationMismatches = 0;
+        int handovers = 0;
+        double handoverFromSlot = 0d, handoverToSlot = 0d;
+        double markersSum = 0d;
+        int linePlayerSamples = 0;
+        int widestSpreadTick = 0;
+        double widestSpread = 0d;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = homeProfile,
+                AwayProfile = awayProfile
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+            MatchPeriod period = engine.Rules.Period;
+            int periodChangedAt = 0;
+
+            for (int tick = 0; tick < maxTicks; tick++)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+
+                // The interval reverses the attacking frame: anchors written before it are in the old frame,
+                // so the two are not comparable for the tick or two it takes the shape to be rewritten. Not a
+                // behaviour, a measurement artifact — skip those samples rather than report them as a spread.
+                if (engine.Rules.Period != period)
+                {
+                    period = engine.Rules.Period;
+                    periodChangedAt = tick;
+                }
+
+                if (tick - periodChangedAt < 2 * LineSampleInterval) continue;
+                if (tick % LineSampleInterval != 0) continue;
+
+                foreach (TeamId team in new[] { TeamId.Home, TeamId.Away })
+                {
+                    DefensiveLineBand band = engine.TeamJobs.LineBandOf(team);
+                    if (!band.IsValid) continue;
+
+                    float attackDirX = team == TeamId.Home ? engine.Rules.GetHomeAttackDirectionX() : -engine.Rules.GetHomeAttackDirectionX();
+                    float ballProj = engine.Ball.Position.X * attackDirX;
+
+                    samples++;
+                    bandSum += band.ProjX;
+                    ballSum += ballProj;
+                    anchorSum += band.AnchorMeanProjX;
+                    fieldSum += band.FieldShiftMeters;
+                    pressureSum += band.PressureShiftMeters;
+                    ballCapSum += band.BallCapShiftMeters;
+                    runSum += band.RunShiftMeters;
+                    keeperSum += band.KeeperShiftMeters;
+                    pressure01Sum += band.PasserPressure01;
+                    if (MathF.Abs(band.FieldShiftMeters) > 0.5f) fieldMoved++;
+                    if (MathF.Abs(band.PressureShiftMeters) > 0.5f) pressureMoved++;
+                    if (band.BallCapShiftMeters < -0.5f) ballCapped++;
+                    if (band.RunShiftMeters < -0.5f) runCapped++;
+                    if (band.KeeperShiftMeters < -0.5f) keeperCapped++;
+
+                    float shift = band.ProjX - band.AnchorMeanProjX;
+                    shiftSum += shift;
+                    shiftAbsSum += MathF.Abs(shift);
+
+                    int markers = 0;
+                    int linePlayers = 0;
+                    float spreadThisSample = 0f;
+                    foreach (var player in engine.Players)
+                    {
+                        if (player.Team != team || !player.IsActiveOnPitch) continue;
+                        TeamJobAssignment? duty = engine.TeamJobs.Get(player.Id);
+                        if (duty is null) continue;
+
+                        if (duty.Value.Job == TacticalJob.Marker) markers++;
+                        if (duty.Value.Job != TacticalJob.DefensiveLine) continue;
+
+                        linePlayers++;
+                        float actual = player.Position.X * attackDirX;
+
+                        // What the band actually placed: every line duty's own target. This is the shared-band
+                        // claim. Where the body is lags the target by however long the run takes, so it is
+                        // reported separately rather than folded in.
+                        float target = duty.Value.Anchor.X * attackDirX;
+                        float targetDistance = MathF.Abs(target - band.ProjX);
+                        spreadSum += targetDistance;
+                        spreadCount += 1d;
+                        if (targetDistance > spreadThisSample) spreadThisSample = targetDistance;
+
+                        if (targetDistance <= 1e-3f) lineAtBand++;
+                        else if (MathF.Abs(target - (band.ProjX + DefensiveLineModel.BallSideAdvanceMeters)) <= 1e-3f) lineAhead++;
+                        else if (MathF.Abs(target - (band.ProjX - DefensiveLineModel.FarSideTuckMeters)) <= 1e-3f) lineTucked++;
+                        else lineClamped++;
+
+                        lagSum += MathF.Abs(actual - target);
+                        lagCount += 1d;
+                        maxLineGap = Math.Max(maxLineGap, Math.Abs(actual - band.ProjX));
+
+                        // The band must be the one the player was told about, not a second estimate.
+                        DefensiveLineBand seen = engine.GetLastObservation(player.Id)?.TeamLineBand ?? default;
+                        if (!seen.IsValid || MathF.Abs(seen.ProjX - band.ProjX) > 1e-3f) observationMismatches++;
+                    }
+
+                    keeperReachSum += band.KeeperReachMeters;
+                    keeperProjSum += band.KeeperId > 0
+                        ? engine.Players.First(p => p.Id == band.KeeperId).Position.X * attackDirX
+                        : 0f;
+
+                    if (linePlayers > 0) linePlayerSamples++;
+                    markersSum += markers;
+                    if (spreadThisSample > widestSpread)
+                    {
+                        widestSpread = spreadThisSample;
+                        widestSpreadTick = tick;
+                    }
+                }
+            }
+
+            handovers += engine.TeamJobs.HandoverCount;
+            foreach (MarkingHandover handover in engine.TeamJobs.Handovers)
+            {
+                handoverFromSlot += handover.FromSlotDistance;
+                handoverToSlot += handover.ToSlotDistance;
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matchesPlayed++;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks | " +
+                              $"score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} | " +
+                              $"handovers {engine.TeamJobs.HandoverCount}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matchesPlayed} completed, {samples} defending samples) ===");
+        if (samples == 0)
+        {
+            Console.WriteLine("No defending sample produced a band — nothing to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"Band depth         : mean {bandSum / samples:F1} m | mean ball {ballSum / samples:F1} m" +
+                          $" | mean anchors {anchorSum / samples:F1} m");
+        Console.WriteLine($"Shift from anchors : mean {shiftSum / samples:+0.0;-0.0} m | mean absolute {shiftAbsSum / samples:F1} m" +
+                          $" (the depth the same players would have held before A6.3)");
+        Console.WriteLine($"Line target spread : mean {spreadSum / Math.Max(1d, spreadCount):F2} m" +
+                          $" | worst tick mean {widestSpread:F2} m @ tick {widestSpreadTick}" +
+                          $" | {linePlayerSamples} samples with a line");
+        Console.WriteLine($"Local exceptions   : {lineAtBand} at the band | {lineAhead} ball-side (+" +
+                          $"{DefensiveLineModel.BallSideAdvanceMeters:F0} m) | {lineTucked} far-side (-" +
+                          $"{DefensiveLineModel.FarSideTuckMeters:F0} m) | {lineClamped} clamped by the band's range");
+        Console.WriteLine($"Body-vs-band gap   : mean {lagSum / Math.Max(1d, lagCount):F2} m | worst {maxLineGap:F2} m" +
+                          " (physical lag: the target moves before the player can arrive)");
+        Console.WriteLine($"Keeper context     : mean reach {keeperReachSum / samples:F1} m from mean depth {keeperProjSum / samples:F1} m");
+        Console.WriteLine($"Field position     : mean shift {fieldSum / samples:+0.0;-0.0} m | moved >0.5 m in {fieldMoved * 100.0 / samples:F1}% of samples");
+        Console.WriteLine($"Passer pressure    : mean {pressure01Sum / samples:F2} | mean shift {pressureSum / samples:+0.0;-0.0} m" +
+                          $" | moved >0.5 m in {pressureMoved * 100.0 / samples:F1}%");
+        Console.WriteLine($"Ball cap           : pulled the line back in {ballCapped * 100.0 / samples:F1}% of samples" +
+                          $" | mean shift {ballCapSum / samples:+0.00;-0.00} m");
+        Console.WriteLine($"Credible runs      : capped the line in {runCapped * 100.0 / samples:F1}% of samples" +
+                          $" | mean shift {runSum / samples:+0.00;-0.00} m");
+        Console.WriteLine($"Keeper coverage    : capped the line in {keeperCapped * 100.0 / samples:F1}% of samples" +
+                          $" | mean shift {keeperSum / samples:+0.00;-0.00} m");
+        Console.WriteLine($"Markers            : mean {markersSum / samples:F2} per defending sample" +
+                          $" (style caps {DefensiveLineModel.MarkerCount(homeProfile)}/{DefensiveLineModel.MarkerCount(awayProfile)})");
+        Console.WriteLine($"Handovers          : {handovers} total" +
+                          (handovers > 0
+                              ? $" | mean slots {handoverFromSlot / handovers:F1} m -> {handoverToSlot / handovers:F1} m"
+                              : string.Empty));
+        Console.WriteLine($"Observation match  : {(observationMismatches == 0 ? "every line player saw the placed band" : $"{observationMismatches} MISMATCHES")}");
+
+        bool ok = matchesPlayed == seedCount && observationMismatches == 0;
+        Console.WriteLine(ok ? "RESULT: bands placed, shared and observed" : "RESULT: incomplete or inconsistent");
+        return ok;
+    }
+
+    /// <summary>How often the line probe samples a defending team, in ticks (0.1 s).</summary>
+    private const int LineSampleInterval = 6;
 
     private static void Accumulate(
         int[] offered, int[] chosen, int[] executed, float[] marginSum, float[] marginWorst, int[] marginTicks,

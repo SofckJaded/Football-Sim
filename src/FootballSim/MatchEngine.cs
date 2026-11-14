@@ -595,7 +595,7 @@ public sealed class MatchSimulationEngine
                     attackDirX, isTaker, profile, _perceptionRng,
                     possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick,
                     _tacticalCoordinator.ContextFor(p.Team), _teamJobs.SecurityOf(p.Team),
-                    _ballResponderElection.GetResponder(p.Team));
+                    _ballResponderElection.GetResponder(p.Team), _teamJobs.LineBandOf(p.Team));
                 _latestObservations[p.Id] = obs;
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);

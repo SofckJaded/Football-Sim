@@ -296,6 +296,16 @@ public partial class MatchClientNode : Node3D
                                  : string.Empty) +
                              (context.IsUnderEmergencyDefence ? " | EMERGENCY DEFENCE" : string.Empty);
 
+        // A6.3: the line's shared depth band, with the terms that moved it. A team in possession (or one
+        // with no line at all) has no band and says so rather than showing a stale depth.
+        AI.DefensiveLineBand band = _engine.TeamJobs.LineBandOf(inspected.Team);
+        string bandLine = band.IsValid
+            ? $"\nLINE BAND: {band.ProjX:F1} m | range {band.MinProjX:F0}..{band.MaxProjX:F0}" +
+              $" | field {band.FieldShiftMeters:+0.0;-0.0} | pressure {band.PasserPressure01:F2}" +
+              $" | run {(band.HasCredibleRunner ? $"#{band.DeepestRunnerId}" : "none")}" +
+              $" | keeper reach {band.KeeperReachMeters:F0} m"
+            : "\nLINE BAND: none (in possession or no line)";
+
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
             return contextLine + beliefLine;
 
@@ -306,7 +316,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return contextLine + beliefLine + cellLine;
+        return contextLine + bandLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 
