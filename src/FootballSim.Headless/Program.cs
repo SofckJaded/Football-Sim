@@ -253,6 +253,8 @@ public static class Program
         var termsTicks = new int[FamilyCount];
         var rejections = new Dictionary<string, int>(StringComparer.Ordinal);
         int matchesPlayed = 0;
+        int decoyTicksTotal = 0;
+        int decoyAdoptionsTotal = 0;
 
         for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
         {
@@ -280,6 +282,9 @@ public static class Program
             IReadOnlyList<FootballerState> players = engine.Players;
             var previousFamily = new int[players.Count];
             Array.Fill(previousFamily, -2);   // -2 = nothing selected yet, so the first choice counts
+            int decoyTicks = 0;
+            int decoyAdoptions = 0;
+            var previousDecoy = new bool[players.Count];
 
             var familyBest = new float[FamilyCount];
             int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
@@ -332,9 +337,22 @@ public static class Program
                     }
 
                     int selectedFamily = FamilyOf(ai.LastSelected.Key);
-                    if (selectedFamily == previousFamily[index]) continue;
-                    previousFamily[index] = selectedFamily;
-                    if (selectedFamily >= 0) seedChosen[selectedFamily]++;
+                    if (selectedFamily != previousFamily[index])
+                    {
+                        previousFamily[index] = selectedFamily;
+                        if (selectedFamily >= 0) seedChosen[selectedFamily]++;
+                    }
+
+                    // A5.6: the decoy is a run, not a delivery, so it is counted separately: how many ticks
+                    // an AI player is holding a decoy intent, and how many separate adoptions that took.
+                    bool decoyHeld = ai.Runs.Intent?.Kind == RunKind.Decoy;
+                    if (decoyHeld)
+                    {
+                        decoyTicks++;
+                        if (!previousDecoy[index]) decoyAdoptions++;
+                    }
+
+                    previousDecoy[index] = decoyHeld;
                 }
 
                 IReadOnlyList<BallContactAttempt> attempts = engine.LastContactAttempts;
@@ -364,6 +382,8 @@ public static class Program
 
             bool completed = engine.Rules.Phase == MatchPhase.FullTime;
             if (completed) matchesPlayed++;
+            decoyTicksTotal += decoyTicks;
+            decoyAdoptionsTotal += decoyAdoptions;
             var analytics = engine.Analytics;
 
             Console.WriteLine();
@@ -391,6 +411,8 @@ public static class Program
                 Console.WriteLine($"  {familyNames[family],-11}: offered {seedOffered[family],6} | chosen {seedChosen[family],4} | " +
                                   $"executed {seedExecuted[family],4} | margin {margin} | {terms}");
             }
+
+            Console.WriteLine($"  decoy runs : held {decoyTicks,8} ticks | adopted {decoyAdoptions,5} times");
         }
 
         Console.WriteLine();
@@ -412,6 +434,7 @@ public static class Program
         Console.WriteLine("Rejections        : " + (rejections.Count == 0
             ? "none"
             : string.Join(", ", rejections.Select(pair => $"[{pair.Key}, {pair.Value}]"))));
+        Console.WriteLine($"Decoy runs (A5.6) : held {decoyTicksTotal} ticks | adopted {decoyAdoptionsTotal} times");
 
         return matchesPlayed == seedCount;
     }

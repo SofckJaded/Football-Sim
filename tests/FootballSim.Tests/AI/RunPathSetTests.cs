@@ -367,8 +367,14 @@ public sealed class RunPathSetTests
         Assert.False(ContainsKind(generator, RunKind.BlindSideArrival), Describe(generator));
     }
 
+    /// <summary>
+    /// A5.6 replaces A5.1's deferral: the decoy is now generated — but only from the duties that own one. The
+    /// depth run's four paths are all ways of receiving the ball in behind; a decoy is a different bet (it is
+    /// sold on the defender's response, not on arriving), so a striker's depth run still offers none, while a
+    /// wide or third-player duty does. <see cref="DecoyValueTests"/> prices it.
+    /// </summary>
     [Fact]
-    public void DecoyPaths_AreDeclaredButNotGeneratedYet()
+    public void ADepthRun_DoesNotOfferADecoy()
     {
         var generator = new RunCandidateGenerator(Pitch);
         List<PerceivedEntity> visible = new()
@@ -382,11 +388,11 @@ public sealed class RunPathSetTests
 
         Generate(generator, obs, lineProjX: 34f);
 
-        // A5.1 delivers support and depth before speculative decoys; the decoy's value is the defender's
-        // bounded follow-versus-hold response, which is A5.6. Declaring the kind keeps the vocabulary
-        // complete and this assertion keeps the deferral honest.
         Assert.False(ContainsKind(generator, RunKind.Decoy), Describe(generator));
-        Assert.Contains(RunKind.Decoy, Enum.GetValues<RunKind>());
+
+        Span<RunKind> kinds = stackalloc RunKind[RunCandidateGenerator.MaxKindsPerDuty];
+        int wide = RunCandidateGenerator.KindsFor(TacticalJob.FarSideWidth, kinds);
+        Assert.Contains(RunKind.Decoy, kinds[..wide].ToArray());
     }
 
     [Fact]

@@ -563,8 +563,7 @@ public sealed class MatchSimulationEngine
 
             if (CurrentTick % 4 == 1)
             {
-                _tacticalCoordinator.UpdateTeamAnchors(
-                    _players, Ball, homeDirX, dt * 4f);
+                _tacticalCoordinator.UpdateTeamAnchors(_players, Ball, homeDirX);
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.

@@ -56,6 +56,47 @@ public sealed class TeamShapeMetricsTests
         }
     }
 
+    /// <summary>
+    /// A5.6: the formation anchor is a structure, not a heartbeat.
+    ///
+    /// The role push in possession used to oscillate with an elapsed clock (`Sin(_elapsedTime * 1.4 + id)`) —
+    /// movement generated for its own sake, which the plan asks to remove "as intent-driven movement replaces
+    /// them". The oscillation and the clock behind it are gone, so the anchor is now a pure function of the
+    /// players, the ball, the context and the profile: the same picture written twice gives the same anchor.
+    /// Intent-driven movement comes from the run paths (A5.1/A5.2), not from a lane that breathes.
+    /// </summary>
+    [Fact]
+    public void TheAnchor_IsAPureFunctionOfThePicture()
+    {
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = 777UL,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = 60f
+        });
+
+        // A few ticks of real play so the contexts, the formations and the anchors all exist.
+        for (int i = 0; i < 40; i++) engine.StepTick();
+
+        // One write of the current picture, captured, then the same write again.
+        engine.Tactics.UpdateTeamAnchors(engine.Players, engine.Ball, homeAttackDirX: 1f);
+
+        var before = new Dictionary<int, Vector3>();
+        foreach (FootballerState player in engine.Players)
+        {
+            if (!player.IsActiveOnPitch) continue;
+            before[player.Id] = player.TacticalAnchor;
+        }
+
+        engine.Tactics.UpdateTeamAnchors(engine.Players, engine.Ball, homeAttackDirX: 1f);
+
+        foreach (FootballerState player in engine.Players)
+        {
+            if (!player.IsActiveOnPitch || !before.TryGetValue(player.Id, out Vector3 anchor)) continue;
+            Assert.Equal(anchor, player.TacticalAnchor);
+        }
+    }
+
     [Fact]
     public void HalfTime_KeepsTheShape_AndOnlyMirrorsTheFrame()
     {

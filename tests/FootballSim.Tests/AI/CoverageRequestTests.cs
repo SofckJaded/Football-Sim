@@ -85,7 +85,7 @@ public sealed class CoverageRequestTests
         // The anchors are what "out of the line" is measured against; write them the way the engine does.
         var possession = new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, awayCarrier, null);
         tactics.ObservePossession(possession, ball, 1f, Dt);
-        tactics.UpdateTeamAnchors(players, ball, 1f, Dt);
+        tactics.UpdateTeamAnchors(players, ball, 1f);
 
         // Now the centre-back presses: he is on the ball, well ahead of the shape point he was given.
         FootballerState stepper = players.First(p => p.Id == StepOutCentreBack);

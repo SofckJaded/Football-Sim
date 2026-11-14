@@ -29,11 +29,27 @@ public readonly record struct RunScoreTerms(
 {
     public static RunScoreTerms None => new(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, float.NegativeInfinity);
 
+    /// <summary>
+    /// A5.6: the room this path is expected to make for a team-mate by taking a defender off him. Only a
+    /// <see cref="RunKind.Decoy"/> prices this; every other kind scores zero, because a real run's value is
+    /// the space it reaches rather than the space it vacates.
+    /// </summary>
+    public float DecoySpace01 { get; init; }
+
+    /// <summary>The defender the decoy expects to pull (0 when none). Diagnostics only.</summary>
+    public int DecoyDefenderId { get; init; }
+
+    /// <summary>True when this score came from the decoy composition rather than the six receiving terms.</summary>
+    public bool IsDecoy => DecoyDefenderId > 0 || DecoySpace01 > 0f;
+
     /// <summary>Compact text form for a trace line or a failure message.</summary>
     public string Describe() =>
-        $"arrive {ArrivalAdvantage01:F2} · pass {PassAvailability01:F2} · orient {ReceivingOrientation01:F2} · " +
-        $"break {LineBreaks01:F2} · room {Congestion01:F2} · role {RoleUsefulness01:F2} · " +
-        $"fit {ArrivalFit01:F2} · exposed {TransitionExposure01:F2} · travel {TravelMeters:F0} m ⇒ {Score:F2}";
+        IsDecoy
+            ? $"decoy pulls #{DecoyDefenderId} frees {DecoySpace01:F2} · exposed {TransitionExposure01:F2} · " +
+              $"travel {TravelMeters:F0} m ⇒ {Score:F2}"
+            : $"arrive {ArrivalAdvantage01:F2} · pass {PassAvailability01:F2} · orient {ReceivingOrientation01:F2} · " +
+              $"break {LineBreaks01:F2} · room {Congestion01:F2} · role {RoleUsefulness01:F2} · " +
+              $"fit {ArrivalFit01:F2} · exposed {TransitionExposure01:F2} · travel {TravelMeters:F0} m ⇒ {Score:F2}";
 }
 
 /// <summary>
@@ -150,6 +166,20 @@ public static class RunScoring
     public const float ExposureWeight = 0.12f;
     public const float TravelWeight = 0.35f;
 
+    /// <summary>
+    /// Weight of the room a decoy is expected to make for a team-mate (A5.6). Sized so a decoy that pulls a
+    /// marker off a team-mate and stays near the play is worth roughly what the weaker receiving terms pay —
+    /// it has to be able to win a duty's own comparison, and it must not outbid a genuine run into space.
+    /// </summary>
+    public const float DecoyWeight = 0.45f;
+
+    /// <summary>
+    /// Weight of how far a decoy takes itself from the ball (A5.6). This replaces the travel cost a receiving
+    /// run pays: a decoy does not have to win a race, so the distance is not a timing cost — what it costs is
+    /// being somewhere the play is not, which is exactly the distance from the carrier.
+    /// </summary>
+    public const float DecoyDistanceWeight = 0.20f;
+
     /// <summary>Weight of the box-arrival fit term (A5.5); it is applied as ±this around a neutral 0.5.</summary>
     public const float ArrivalFitWeight = 0.10f;
 
@@ -223,6 +253,12 @@ public static class RunScoring
 
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
 
+        // A5.6: a decoy is not a bet on receiving the ball, and pricing it on "can I be there first" would
+        // answer the wrong question — a good decoy is often the run nobody wants to make. It is sold instead
+        // on the defender response it provokes, and it keeps only the two costs every run pays: the exposure
+        // it adds and the ground it covers.
+        if (path.Kind == RunKind.Decoy) return ScoreDecoy(path, obs, security, selfXZ, carrierXZ);
+
         // The player's own arrival is what the window is built from; a frozen intent is measured by the
         // time left in its own plan, so re-scoring it does not silently re-time the run.
         ReachEstimate own = TimeToReachModel.ToPoint(
@@ -256,6 +292,42 @@ public static class RunScoring
 
         return new RunScoreTerms(arrival, pass, orientation, lineBreaks, congestion, role, exposure,
             fit, float.IsFinite(travel) ? travel : 0f, score);
+    }
+
+    /// <summary>
+    /// A5.6: what a decoy is worth, on its own composition.
+    ///
+    /// The six receiving terms are all "can I get the ball here", and a decoy's region is chosen to be
+    /// attractive to a <i>defender</i>, so scoring it with them would systematically reject the best decoys.
+    /// Its value is the room it makes for somebody else — <see cref="DefenderResponseModel"/> — minus the two
+    /// costs it really pays: the transition exposure of another player committed upfield, and the ground he
+    /// covers to be somewhere he does not want the ball.
+    /// </summary>
+    private static RunScoreTerms ScoreDecoy(
+        in RunPath path,
+        in FootballerObservation obs,
+        in RestDefence security,
+        Vector2 selfXZ,
+        Vector2 carrierXZ)
+    {
+        DefenderResponse response = DefenderResponseModel.Evaluate(obs, path.MeetXZ);
+        float exposure = TransitionExposure(security);
+        float travel = Vector2.Distance(selfXZ, path.MeetXZ);
+        if (!float.IsFinite(travel)) travel = 0f;
+
+        float awayFromPlay = Vector2.Distance(carrierXZ, path.MeetXZ);
+        if (!float.IsFinite(awayFromPlay)) awayFromPlay = 0f;
+
+        float score = DecoyWeight * response.Value01
+                      - ExposureWeight * exposure
+                      - DecoyDistanceWeight * MathF.Min(awayFromPlay, 40f) / 40f;
+
+        return new RunScoreTerms(
+            0f, 0f, 0f, 0f, 0f, 0f, exposure, 0f, travel, score)
+        {
+            DecoySpace01 = response.FreedSpace01,
+            DecoyDefenderId = response.DefenderId
+        };
     }
 
     /// <summary>

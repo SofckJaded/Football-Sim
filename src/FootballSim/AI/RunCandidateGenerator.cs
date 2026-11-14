@@ -108,6 +108,22 @@ public sealed class RunCandidateGenerator
     /// <summary>How far behind the line a pin holds its man, in metres.</summary>
     public const float PinBehindLineMeters = 0.4f;
 
+    /// <summary>
+    /// How far goal-side of his marker a decoy runs, in metres (A5.6). Small on purpose: the run is not a
+    /// sprint into space, it is a step into the space the marker is responsible for, just far enough that he
+    /// has to decide whether to go with it.
+    /// </summary>
+    public const float DecoyDrawMeters = 4f;
+
+    /// <summary>Shortest decoy move that is a run at all, in metres. Standing still pulls nobody.</summary>
+    public const float DecoyMinRunMeters = 6f;
+
+    /// <summary>
+    /// How close a team-mate's nearest opponent must be for that team-mate to be worth decoying for, in
+    /// metres. He has to be marked for a decoy to free him.
+    /// </summary>
+    public const float DecoyMarkedMeters = 10f;
+
     /// <summary>Attack-relative projection from which a box arrival is worth offering, in metres.</summary>
     public const float FinalThirdProjX = 20f;
 
@@ -338,13 +354,15 @@ public sealed class RunCandidateGenerator
                 buffer[0] = RunKind.HoldWidth;
                 buffer[1] = RunKind.InBehind;
                 buffer[2] = RunKind.CheckShort;
-                return 3;
+                buffer[3] = RunKind.Decoy;
+                return 4;
 
             case TacticalJob.ThirdPlayerOption:
                 buffer[0] = RunKind.CheckShort;
                 buffer[1] = RunKind.Underlap;
                 buffer[2] = RunKind.InBehind;
-                return 3;
+                buffer[3] = RunKind.Decoy;
+                return 4;
 
             case TacticalJob.NearOutlet:
                 buffer[0] = RunKind.CheckShort;
@@ -469,6 +487,26 @@ public sealed class RunCandidateGenerator
                 break;
             }
 
+            case RunKind.Decoy:
+            {
+                // A5.6: run into the space the marker is responsible for, so that he has to decide between
+                // covering it and staying with the man he is marking. The man worth pulling is the marker of
+                // the most tightly marked team-mate; the space worth running into is the ground goal-side of
+                // that marker, which is where he must follow to. Both bodies are the runner's own belief; the
+                // run's value — whether the marker really follows and how much room that frees — is priced by
+                // RunScoring.ScoreDecoy, not here. The region is clamped to the last line like every forward
+                // run: a decoy standing offside is one a defender can ignore.
+                if (!TryFindMostMarkedMate(obs, selfXZ, out Vector2 mateXZ, out Vector2 markerXZ)) return false;
+
+                Vector2 draw = SimMath.SafeNormalize(markerXZ - mateXZ, new Vector2(attackDirX, 0f));
+                meet = markerXZ + draw * DecoyDrawMeters;
+                meet = new Vector2(
+                    attackDirX * MathF.Min(meet.X * attackDirX, maxAttackingProj), meet.Y);
+                meetRadius = 5f;
+                if (Vector2.Distance(meet, selfXZ) < DecoyMinRunMeters) return false;
+                break;
+            }
+
             case RunKind.LateBoxArrival:
             case RunKind.BlindSideArrival:
             {
@@ -504,7 +542,7 @@ public sealed class RunCandidateGenerator
             }
 
             default:
-                return false;   // Decoy is declared but priced by A5.6, not offered here.
+                return false;   // no other kind has a geometry; every run kind is built here
         }
 
         meet = ClampToPitch(meet);
@@ -562,6 +600,52 @@ public sealed class RunCandidateGenerator
             return MathF.Sign(obs.SelfPosition.Z >= 0f ? 1f : -1f);
 
         return side >= 0f ? -1f : 1f;
+    }
+
+    /// <summary>
+    /// The most tightly marked team-mate and the man marking him (A5.6). "Marked" means his nearest believed
+    /// opponent is inside <see cref="DecoyMarkedMeters"/>; a team-mate nobody is watching is not worth
+    /// decoying for, because pulling a defender off him frees nothing.
+    ///
+    /// Returns false when nobody is marked — including when the runner himself is the most marked man, since
+    /// the ball would then be the answer rather than a decoy run away from it.
+    /// </summary>
+    private bool TryFindMostMarkedMate(
+        in FootballerObservation obs,
+        Vector2 selfXZ,
+        out Vector2 mateXZ,
+        out Vector2 markerXZ)
+    {
+        float tightest = DecoyMarkedMeters;
+        mateXZ = default;
+        markerXZ = default;
+        bool found = false;
+
+        IReadOnlyList<PerceivedEntity> visible = obs.VisiblePlayers;
+        for (int i = 0; i < visible.Count; i++)
+        {
+            PerceivedEntity mate = visible[i];
+            if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+            if (mate.Role == TacticalRole.Goalkeeper) continue;
+
+            Vector2 matePosition = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+            if (!SimMath.IsFinite(matePosition)) continue;
+
+            // Room freed at a defender or at a team-mate in his own half is not an attacking opportunity.
+            if (mate.Role == TacticalRole.CenterBack) continue;
+            if (matePosition.X * obs.AttackingDirectionX < 0f) continue;
+
+            if (!TryNearestOpponent(obs, matePosition, tightest, out Vector2 marker)) continue;
+            float distance = Vector2.Distance(matePosition, marker);
+            if (distance >= tightest) continue;
+
+            tightest = distance;
+            mateXZ = matePosition;
+            markerXZ = marker;
+            found = true;
+        }
+
+        return found;
     }
 
     private static bool TryNearestOpponent(

@@ -65,7 +65,6 @@ public sealed class TeamTacticalCoordinator
     private float _homeZoneDwell;
     private float _awayZoneDwell;
     private RestartContext _restart;
-    private float _elapsedTime;
 
     public TeamTacticalCoordinator(
         PitchDimensions pitch,
@@ -228,15 +227,16 @@ public sealed class TeamTacticalCoordinator
     /// (A3.3). The anchors are the structural fallback and the constraint the job coordinator works
     /// around, not a second world model; the context reads above own every decision that used to be
     /// folded into the old state enum.
+    ///
+    /// A5.6: this used to take a <c>dt</c> and keep an elapsed-time clock, because the role push it writes
+    /// oscillated with it. The oscillation is gone (see the note at the role push), so the anchor is a pure
+    /// function of the players, the ball, the context and the profile — which also makes it checkable.
     /// </summary>
     public void UpdateTeamAnchors(
         IReadOnlyList<FootballerState> players,
         BallState ball,
-        float homeAttackDirX,
-        float dt)
+        float homeAttackDirX)
     {
-        _elapsedTime += dt;
-
         foreach (var p in players)
         {
             if (!p.IsActiveOnPitch) continue;
@@ -418,15 +418,23 @@ public sealed class TeamTacticalCoordinator
         float lineShift = (profile.DefensiveLineHeight01 - 0.5f) * 18.0f;
         float longitudinalCompression = attacking ? (1.0f - 0.22f * profile.Compactness01) : (1.0f - 0.45f * profile.Compactness01);
 
-        // Role-specific dynamic forward runs when in possession
+        // Role-specific dynamic forward runs when in possession.
+        //
+        // A5.6: these used to oscillate — `Sin(_elapsedTime * 1.4f + player.Id)` and friends — which is a
+        // generator of movement rather than a reason for it. The plan asks for the sinusoidal pushes to go
+        // "as intent-driven movement replaces them", and it has: a receiving duty now runs a set of timed
+        // paths (A5.1/A5.2) with a meeting region and a window, and a runner's movement comes from that
+        // rather than from standing in a lane that breathes. What is left here is the role's structural
+        // station in possession, which is a property of the shape, not of the clock. A static anchor is also
+        // the one that can be checked: `TeamShapeMetricsTests.AStillBall_DoesNotMoveTheAnchor`.
         float roleAttackPush = 0f;
         if (attacking)
         {
             roleAttackPush = slot.Role switch
             {
-                TacticalRole.Striker => 10.0f + 5.0f * MathF.Sin(_elapsedTime * 1.4f + player.Id),
-                TacticalRole.Winger => 9.0f + 4.5f * MathF.Cos(_elapsedTime * 1.3f + player.Id),
-                TacticalRole.CentralMidfielder => 6.5f + 4.0f * MathF.Sin(_elapsedTime * 1.1f + player.Id * 0.7f),
+                TacticalRole.Striker => 10.0f,
+                TacticalRole.Winger => 9.0f,
+                TacticalRole.CentralMidfielder => 6.5f,
                 TacticalRole.FullBack => 7.0f * profile.AttackingWidth01,
                 _ => 2.5f
             };
