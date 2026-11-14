@@ -343,12 +343,25 @@ public enum TeamId
 /// from the play as its costs). The <b>sinusoidal anchor pushes are gone</b>: the role push in possession
 /// no longer oscillates with an elapsed clock, and <c>UpdateTeamAnchors</c> no longer takes a clock at all,
 /// so an anchor is a pure function of the picture. Trajectories differ from version 27.</item>
+/// <item><c>AiBehaviour 29</c> — A6.1/A6.2: defending is coordinated instead of two men independently
+/// running at the carrier. <see cref="AI.PressPolicy"/> turns the old second-defender challenge into
+/// <b>pressure-cover-balance</b>: exactly one team-mate may be the second man, he steps in only when somebody
+/// is goal-side of the press (or he is himself goal-side, so stepping forward abandons nothing), and with
+/// neither he delays or holds instead. The defensive candidate vocabulary is now press, delay, cover, screen,
+/// track, intercept, hold and drop; the cover stands where its <b>cover shadow</b> blocks the opponent's most
+/// dangerous forward pass rather than at a fixed depth. Pressure is <b>angled</b>: the approach point is
+/// scanned around the carrier (inside a touchline carrier, goal-side of a central one, opposite side for the
+/// second man), and its depth is the balance (a lone presser jockeys once the press can be bypassed). The
+/// urgency itself is read from observable <b>evidence</b> — a back pass, a slow pass, a poor touch, a carrier
+/// running backwards, the touchline — moderated by cover and bypass risk. <see cref="FootballerObservation"/>
+/// gained the team's <c>BallResponderPlayerId</c> so a second defender knows who is already committing; that
+/// is a team fact, not an opponent read. Trajectories differ from version 28.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 28;
+    public const int AiBehaviour = 29;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -775,6 +788,16 @@ public sealed class FootballerObservation
     /// then fall back to their local nearest-teammate estimate.
     /// </summary>
     public bool? IsDesignatedBallResponder { get; init; }
+
+    /// <summary>
+    /// The team-mate the match elected as the ball responder this tick (A6.1), or null when there is no
+    /// match-level election behind this controller (standalone probes and fixtures).
+    ///
+    /// The team's own press is a plan its players can see: knowing who is closing the carrier down is what
+    /// lets a second defender avoid committing to the same space independently. It is a team fact, not a
+    /// read of any opponent, so it crosses no knowledge boundary (unlike an opponent's intent).
+    /// </summary>
+    public int? BallResponderPlayerId { get; init; }
 
     /// <summary>
     /// Oldest age, in ticks, among the opponent estimates in <see cref="VisiblePlayers"/> (A2.2), or 0

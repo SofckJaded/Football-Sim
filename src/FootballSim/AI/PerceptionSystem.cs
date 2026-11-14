@@ -121,7 +121,8 @@ public sealed class PerceptionSystem
         TeamJobAssignment? job = null,
         int tick = 0,
         TeamContext teamContext = default,
-        RestDefence teamSecurity = default)
+        RestDefence teamSecurity = default,
+        int? ballResponderPlayerId = null)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -219,6 +220,7 @@ public sealed class PerceptionSystem
             IntendedReceiverId = ballPossession.IntendedReceiverId,
             BallHoldRemainingSeconds = ball.HeldByPlayerId == self.Id ? ball.HeldReleaseDelaySeconds : 0f,
             IsDesignatedBallResponder = isDesignatedBallResponder,
+            BallResponderPlayerId = ballResponderPlayerId,
             TacticalJob = job?.Job ?? TacticalJob.Shape,
             TacticalJobAnchor = job?.Anchor,
             JobTargetPlayerId = job?.TargetPlayerId,

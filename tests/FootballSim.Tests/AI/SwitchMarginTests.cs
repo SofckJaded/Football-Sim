@@ -73,6 +73,13 @@ public sealed class SwitchMarginTests
     /// The behavioural half: with a large switch margin the same fixture's players change their chosen
     /// action fewer times than with the ablation (no hysteresis). This is the evidence that the two
     /// configuration fields reach the decision path rather than sitting in a settings object.
+    ///
+    /// Measured on `wide-overload-4v3`, and over <b>decisions that had an alternative</b> only. The margin
+    /// governs a choice between candidates; it cannot govern a player whose candidate set is replaced — a
+    /// defender becoming the second presser or the cover, a responder election handing the chase to a
+    /// team-mate — and since A6.1 those role changes are the bulk of the identity changes in a fixture. The
+    /// old fixture (`build-up-3v2`) now contains only forced defensive decisions plus a carrier who carries
+    /// for the whole window, so it measures 0 → 0 and can no longer distinguish the two settings at all.
     /// </summary>
     [Fact]
     public void TheConfiguredMargin_ChangesHowOftenPlayersSwitch()
@@ -85,19 +92,31 @@ public sealed class SwitchMarginTests
             $"a 1.0/0.5 margin produced {sticky} action changes against {eager} with no hysteresis");
     }
 
-    /// <summary>Runs a fixture with the given AI settings and counts how often a player changes action.</summary>
+    /// <summary>
+    /// Runs a fixture with the given AI settings and counts how often a player changes action between two
+    /// decisions that both had a runner-up (i.e. both were choices).
+    /// </summary>
     private static int CountActionChanges(AiRuntimeConfig ai)
     {
-        MatchScenario scenario = WithAi(ScenarioLibrary.BuildUpThreeVersusTwo(), ai);
+        MatchScenario scenario = WithAi(ScenarioLibrary.WideOverload(), ai);
         ScenarioRunResult run = ScenarioRunner.Run(scenario, 600, traceDecisions: true);
 
         int changes = 0;
         var last = new Dictionary<int, string>();
+        var lastHadChoice = new Dictionary<int, bool>();
         foreach (DecisionTraceEntry entry in run.Decisions)
         {
             string identity = entry.CandidateKey ?? entry.SelectedAction;
-            if (last.TryGetValue(entry.PlayerId, out string? previous) && previous != identity) changes++;
+            bool hasChoice = entry.RunnerUpAction is not null;
+            if (last.TryGetValue(entry.PlayerId, out string? previous) &&
+                previous != identity &&
+                hasChoice &&
+                lastHadChoice.GetValueOrDefault(entry.PlayerId))
+            {
+                changes++;
+            }
             last[entry.PlayerId] = identity;
+            lastHadChoice[entry.PlayerId] = hasChoice;
         }
 
         return changes;

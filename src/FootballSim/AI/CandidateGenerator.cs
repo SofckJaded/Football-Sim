@@ -210,6 +210,9 @@ public sealed class CandidateGenerator : IAiStateResettable
     private readonly CandidateRejection[] _rejections = new CandidateRejection[MaxRejections];
     private int _rejectionCount;
 
+    // A6.1: the defensive policy's answer for this decision. Reused like the other buffers.
+    private readonly PressCandidate[] _defenceBuffer = new PressCandidate[PressPolicy.MaxCandidates];
+
     private Vector2 _lastCarryDirection;
     private bool _hasLastCarryDirection;
     private float _tackleCooldown;
@@ -1909,29 +1912,35 @@ public sealed class CandidateGenerator : IAiStateResettable
 
             if (obs.PossessingTeam != obs.SelfTeam)
             {
-                // Defending: cut the carrier's path off instead of chasing the ball from behind. A
-                // pure chase at the same speed can never close the last metre, which is why a single
-                // carrier used to run through the whole team.
-                Vector2 goalSide = SimMath.SafeNormalize(
-                    new Vector2(-obs.AttackingDirectionX * _pitch.HalfLength, 0f) - ballXZ,
-                    new Vector2(-obs.AttackingDirectionX, 0f));
+                // A6.1/A6.2: the press is angled and its depth follows the cover behind it. A6.2's angle
+                // is chosen around the carrier — inside a touchline carrier, because the line is then the
+                // second defender, and goal-side of a central one, because that is the exit that hurts.
+                // The depth is the balance: a presser nobody covers jockeys instead of committing, so an
+                // unsupported press loses to delay rather than to a beaten tackle.
+                Vector2 ballVelocityXZ = new(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z);
+                PressSituation press = PressPolicy.BuildSituation(obs, _pitch);
+                Vector2 ownGoalSide = PressPolicy.GoalSideXZ(ballXZ, obs, _pitch);
 
                 Vector2 chasePoint;
-                if (obs.BallControlState == BallControlState.Controlled &&
-                    obs.BallControllingPlayerId is int carrierId &&
-                    TryGetVisibleEntity(obs, carrierId, out Vector2 carrierXZ, out Vector2 carrierVelXZ))
+                if (press.HasCarrier)
                 {
-                    Vector2 selfToCarrier = SimMath.SafeNormalize(carrierXZ - selfXZ, goalSide);
-                    bool alreadyGoalSide = Vector2.Dot(selfToCarrier, goalSide) < -0.15f;
-                    chasePoint = alreadyGoalSide
-                        ? carrierXZ + goalSide * 1.2f
-                        : PursuitPoint(ReachKinematics.FromObservation(obs), carrierXZ, carrierVelXZ) + goalSide * 1.0f;
+                    // A presser still behind a moving carrier has to cut him off before any angle matters:
+                    // one fixed-speed chase can never close the last metre. Once he is goal-side, the
+                    // approach is A6.2's angled one.
+                    float carrierSpeed = press.CarrierVelocityXZ.Length();
+                    bool goalSideOfCarrier =
+                        Vector2.Dot(selfXZ - press.CarrierXZ, ownGoalSide) > 0f;
+                    chasePoint = !goalSideOfCarrier && carrierSpeed > 1.5f
+                        ? PursuitPoint(
+                              ReachKinematics.FromObservation(obs), press.CarrierXZ, press.CarrierVelocityXZ) +
+                          ownGoalSide * 0.8f
+                        : PressPolicy.PressTarget(
+                            obs, press, _pitch, PressPolicy.PressStandoffFor(press), support: false);
                 }
                 else
                 {
-                    chasePoint = ballXZ
-                                 + new Vector2(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z) * 0.15f
-                                 + goalSide * 0.6f;
+                    chasePoint = PursuitPoint(
+                        ReachKinematics.FromObservation(obs), ballXZ, ballVelocityXZ) + ownGoalSide * 0.6f;
                 }
 
                 Vector2 toBallDirect = chasePoint - selfXZ;
@@ -1950,6 +1959,9 @@ public sealed class CandidateGenerator : IAiStateResettable
 
                 _lastCandidates.Add(new UtilityCandidate(attemptTackle ? "ExecuteTackle" : "CloseDownCarrier", 0.99f, pressCmd)
                 {
+                    // Where the press is going (A6.2). The trace and the inspector show the approach point,
+                    // which is what makes "angled pressure" observable rather than a claim about a direction.
+                    TargetXZ = new Vector3(chasePoint.X, 0f, chasePoint.Y),
                     // The target is the carrier: pressing a different player is a different act, and a
                     // commitment must not survive a change of who is being pressed.
                     Key = new CandidateKey(CandidateKind.Press, obs.BallControllingPlayerId ?? 0,
@@ -1977,10 +1989,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             return;
         }
 
-        // 1b. Second defender: the elected responder alone is not a defence. When an opponent is
-        //     on the ball, the two closest defenders also step in and challenge; everyone else
-        //     keeps the block. This is what stops one carrier walking through the middle.
-        if (TryAddCarrierChallenge(obs, ownGoalCenter))
+        // 1b. A6.1: the defensive half of the candidate set. The old second-defender challenge is replaced
+        //     by the team's pressure-cover-balance: exactly one team-mate may step in beside the presser,
+        //     only when the space behind the press is covered (or he is himself goal-side, so stepping
+        //     forward abandons nothing), and everybody else gets screen/track/drop alternatives instead
+        //     of independently abandoning the same space. A primary act is this player's defensive
+        //     decision for the tick and replaces the duty; a supporting act competes with it.
+        if (AddDefensiveCandidates(obs))
             return;
 
         // 2. Job-directed movement (audit F04). The team assigns a persistent job (outlet, third
@@ -2083,77 +2098,81 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// Adds a "step in and challenge" action for the second-closest defender when an opponent is
-    /// carrying the ball. Returns true when this player is one of the two closest defenders within
-    /// engagement range, in which case the challenge is his decision for this tick.
+    /// A6.1/A6.2: turns <see cref="PressPolicy"/>'s answer into this player's defensive candidates.
+    ///
+    /// Returns true when the policy offered a <b>primary</b> act — support press, delay, cover or hold.
+    /// A primary act *is* the player's defensive decision for the tick (the balance already chose him as
+    /// the second man, the cover or the holder), so the caller stops here instead of also offering his
+    /// team duty; that is what keeps two defenders from independently abandoning the same space. A
+    /// supporting act (screen, track, drop) is a candidate on the same scale as the duty and is offered
+    /// alongside it, so it has to earn the movement.
     /// </summary>
-    private bool TryAddCarrierChallenge(in FootballerObservation obs, Vector3 ownGoalCenter)
+    private bool AddDefensiveCandidates(in FootballerObservation obs)
     {
-        if (obs.PossessingTeam == obs.SelfTeam) return false;
-        if (obs.SelfRole == TacticalRole.Goalkeeper) return false;
-        // Central cover only: a winger stepping inside to double up would abandon the touchline
-        // (and the team's width), which is how a defensive fix becomes an attacking regression.
-        if (obs.SelfRole is not (TacticalRole.CenterBack or TacticalRole.DefensiveMidfielder)) return false;
-        if (obs.BallControlState != BallControlState.Controlled) return false;
-        if (obs.BallControllingPlayerId is not int carrierId || carrierId == obs.SelfId) return false;
-        if (!TryGetVisibleEntity(obs, carrierId, out Vector2 carrierXZ, out Vector2 carrierVelXZ)) return false;
+        PressSituation situation = PressPolicy.BuildSituation(obs, _pitch);
+        int count = PressPolicy.Build(obs, situation, _pitch, _defenceBuffer);
+        if (count == 0) return false;
 
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
-        float myDistance = Vector2.Distance(selfXZ, carrierXZ);
-
-        // In midfield the elected responder plus the block is enough; doubling up out there turned
-        // every attack into a scramble. The second man is for the defensive third, where the line
-        // actually needs a body between the carrier and the goal.
-        if (carrierXZ.X * obs.AttackingDirectionX > -32f) return false;
-
-        // Only the best-placed defender other than the elected responder engages.
-        int closerMates = 0;
-        foreach (var mate in obs.VisiblePlayers)
-        {
-            if (mate.Team != obs.SelfTeam || mate.Role == TacticalRole.Goalkeeper) continue;
-            float mateDistance = Vector2.Distance(
-                new Vector2(mate.EstimatedPosition.X, mate.EstimatedPosition.Z), carrierXZ);
-            if (mateDistance < myDistance - 0.25f) closerMates++;
-        }
-        if (closerMates > 1) return false;
-
-        const float engageRadius = 9f;
-        if (myDistance > engageRadius) return false;
-
-        // Interception line: where the carrier will be, plus a nudge to the goal side so the
-        // defender arrives in front of him rather than trailing behind.
-        Vector2 goalSide = SimMath.SafeNormalize(
-            new Vector2(ownGoalCenter.X, ownGoalCenter.Z) - carrierXZ,
-            new Vector2(-obs.AttackingDirectionX, 0f));
-        Vector2 targetXZ = carrierXZ + carrierVelXZ * 0.25f + goalSide * 2.0f;
-
-        Vector2 toTarget = targetXZ - selfXZ;
-        float distance = toTarget.Length();
-        Vector2 moveDir = distance > 0.35f
-            ? (toTarget / distance) * Math.Clamp(distance / 2.5f, 0.55f, 1.0f)
-            : Vector2.Zero;
-
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
-        // A covering defender jockeys: he only commits to a tackle when the ball is properly in
-        // reach, otherwise he would leave the very gap he was sent to close.
-        bool attemptTackle = _tackleCooldown <= 0f &&
-                             Vector2.Distance(selfXZ, ballXZ) <= obs.SelfAttributes.ReachRadius * 1.35f;
-        if (attemptTackle) _tackleCooldown = TackleCooldownSeconds;
+        Vector2 toBall = ballXZ - selfXZ;
+        Vector2 faceDir = toBall.LengthSquared() > 1e-4f ? Vector2.Normalize(toBall) : obs.SelfFacingXZ;
+        bool primary = false;
 
-        Vector2 faceDir = SimMath.SafeNormalize(carrierXZ - selfXZ, obs.SelfFacingXZ);
-        var command = new FootballerCommand(
-            moveDir, faceDir, true, false, attemptTackle, false, false, Vector3.Zero,
-            KickIntentType.None, Vector3.UnitX, 0f, 0f);
-
-        _lastCandidates.Add(new UtilityCandidate(
-            attemptTackle ? "ChallengeCarrierTackle" : "ChallengeCarrier", 0.995f, command)
+        for (int i = 0; i < count; i++)
         {
-            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y),
-            Key = new CandidateKey(CandidateKind.Challenge, obs.BallControllingPlayerId ?? 0,
-                attemptTackle ? "tackle" : "body")
-        });
-        return true;
+            PressCandidate candidate = _defenceBuffer[i];
+            if (!SimMath.IsFinite(candidate.TargetXZ)) continue;
+
+            Vector2 toTarget = candidate.TargetXZ - selfXZ;
+            float distance = toTarget.Length();
+            Vector2 moveDir = distance > 0.35f
+                ? (toTarget / distance) * Math.Clamp(distance / 3.0f, 0.45f, 1.0f)
+                : Vector2.Zero;
+
+            // A body challenge is a discrete act: it is emitted once, on the cooldown, and the execution
+            // layer still decides whether the contact is in reach (AGENTS §4.4, audit F18).
+            bool attemptTackle = candidate.WantsTackle && _tackleCooldown <= 0f;
+            if (attemptTackle) _tackleCooldown = TackleCooldownSeconds;
+
+            bool urgent = distance > 4f && candidate.Action is PressAction.SupportPress
+                or PressAction.Cover or PressAction.Track or PressAction.Drop;
+            var command = new FootballerCommand(
+                moveDir, faceDir, urgent, false, attemptTackle, false, false, Vector3.Zero,
+                KickIntentType.None, Vector3.UnitX, 0f, 0f);
+
+            _lastCandidates.Add(new UtilityCandidate(
+                PressPolicy.ActionNameOf(candidate.Action, attemptTackle), candidate.Score, command)
+            {
+                TargetXZ = new Vector3(candidate.TargetXZ.X, 0f, candidate.TargetXZ.Y),
+                Key = DefensiveKey(candidate, attemptTackle)
+            });
+
+            if (candidate.IsPrimary) primary = true;
+        }
+
+        return primary;
     }
+
+    /// <summary>
+    /// The stable identity of a defensive act, so a commitment survives the target moving but not a
+    /// change of act or of target player. The support press keeps the old challenge's identity
+    /// (<see cref="CandidateKind.Challenge"/> against the carrier) because it <i>is</i> the old challenge,
+    /// now resolved by the balance instead of by "I happen to be second nearest".
+    /// </summary>
+    private static CandidateKey DefensiveKey(in PressCandidate candidate, bool attemptTackle) =>
+        candidate.Action switch
+        {
+            PressAction.SupportPress => new CandidateKey(
+                CandidateKind.Challenge, candidate.TargetPlayerId, attemptTackle ? "tackle" : "body"),
+            PressAction.Delay => new CandidateKey(CandidateKind.Press, candidate.TargetPlayerId, "delay"),
+            PressAction.Cover => new CandidateKey(CandidateKind.Shape, TargetTag: "cover"),
+            PressAction.Screen => new CandidateKey(CandidateKind.Shape, TargetTag: "screen"),
+            PressAction.Track => new CandidateKey(CandidateKind.Job, TargetTag: "track"),
+            PressAction.Drop => new CandidateKey(CandidateKind.Job, TargetTag: "drop"),
+            PressAction.Hold => new CandidateKey(CandidateKind.Shape, TargetTag: "hold"),
+            _ => CandidateKey.None
+        };
 
     /// <summary>
     /// Where to run to meet a moving carrier (A2.1). Three "distance ÷ max speed" iterations used to
