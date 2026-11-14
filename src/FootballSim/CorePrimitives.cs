@@ -314,12 +314,21 @@ public enum TeamId
 /// (<c>CandidateGenerator.AnnouncedRunRankBonus</c>) so
 /// <see cref="AI.AiRuntimeConfig.MaxPassTargets"/> cannot prune the one option the advertisement exists
 /// for. Trajectories differ from version 23.</item>
+/// <item><c>AiBehaviour 25</c> — A5.4: the offside line is a <b>tactical budget before release and history
+/// after it</b>. One margin (<see cref="AI.OffsideTactics.MarginMeters"/>, 1 m) now governs the pass-target
+/// gate, the run region and the job target; the pass gate used 0.35 m, so the run generator and the carrier
+/// disagreed about the same receiver and a "pass to feet" could target a man the carrier then refused.
+/// Once a team-mate has played a pass with this player as its intended receiver
+/// (<see cref="AI.OffsideTactics.IsReleased"/>), the line stops mattering: his adopted run is not cancelled
+/// by a line that stepped up after the pass, only the frozen run is offered while the ball is coming, and
+/// his job and shape targets are no longer clamped back behind the line. Trajectories differ from
+/// version 24.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 24;
+    public const int AiBehaviour = 25;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

@@ -591,9 +591,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (mate.Team != obs.SelfTeam || mate.Role == TacticalRole.Goalkeeper) return false;
 
         float mateProjX = mate.EstimatedPosition.X * obs.AttackingDirectionX;
-        // STRICT OFFSIDE CHECK: never pass to an AI teammate in an offside position. A human caller is
-        // exempt because the request is theirs to make and the law is judged at the contact.
-        if (!isHumanCaller && mateProjX > offsideLineProjX - 0.35f)
+        // A5.4: one tactical margin, and the same number the run generator keeps — the law's own threshold
+        // is the contact snapshot (0.15 m), so a ball played to a man a hand's width inside the line is a
+        // guess on the passer's own perception rather than a fact. A human caller is exempt because the
+        // request is theirs to make and the law is judged at the contact.
+        if (!isHumanCaller && mateProjX > offsideLineProjX - OffsideTactics.MarginMeters)
         {
             refusal = RejectionOffside;
             return false;
@@ -1588,23 +1590,25 @@ public sealed class CandidateGenerator : IAiStateResettable
                 AddJobCandidates(obs, new Vector2(jobAnchor.X, jobAnchor.Z), offsideLineProjX);
         }
 
-        // 3. All other 9 outfield players hold lanes, offer clean angles, and STAY ONSIDE!
+        // 3. All other 9 outfield players hold lanes, offer clean angles, and STAY ONSIDE — until the ball
+        //    has been played to them (A5.4), at which point the line is history and pulling them back
+        //    would be cancelling a legal run.
         Vector2 targetSpotXZ = anchorXZ;
 
-        if (obs.PossessingTeam == obs.SelfTeam)
+        if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs))
         {
             float phaseWave = obs.MatchTimeSeconds * 1.2f + obs.SelfId * 1.7f;
             if (obs.SelfRole is TacticalRole.Striker or TacticalRole.Winger)
             {
                 float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 3.5f + 2.5f * MathF.Sin(phaseWave);
-                // Strictly clamp forward runs 1.0m behind the offside line so attackers never camp offside!
-                float onsideProjX = MathF.Min(desiredProjX, offsideLineProjX - 1.0f);
+                // Hold the tactical margin so attackers never camp offside (A5.4).
+                float onsideProjX = MathF.Min(desiredProjX, OffsideTactics.MaxAttackingProjection(offsideLineProjX));
                 targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f);
             }
             else if (obs.SelfRole == TacticalRole.CentralMidfielder)
             {
                 float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 2.5f * MathF.Cos(phaseWave);
-                float onsideProjX = MathF.Min(desiredProjX, offsideLineProjX - 2.0f);
+                float onsideProjX = MathF.Min(desiredProjX, offsideLineProjX - OffsideTactics.MidfieldMarginMeters);
                 targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 5f, _pitch.HalfLength - 5f);
             }
         }
@@ -1636,10 +1640,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (driftDist > anchorDriftMeters && driftDist > 1e-3f)
             targetSpotXZ = anchorXZ + (driftVec / driftDist) * anchorDriftMeters;
 
-        // Re-enforce onside limit after repulsion when in possession
-        if (obs.PossessingTeam == obs.SelfTeam && (targetSpotXZ.X * obs.AttackingDirectionX) > offsideLineProjX - 0.85f)
+        // Re-enforce the tactical margin after repulsion when in possession — and only before release: a
+        // receiver the ball is travelling to is not dragged back behind a line the law has already judged
+        // (A5.4).
+        if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs) &&
+            (targetSpotXZ.X * obs.AttackingDirectionX) > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
         {
-            targetSpotXZ.X = obs.AttackingDirectionX * (offsideLineProjX - 0.85f);
+            targetSpotXZ.X = obs.AttackingDirectionX * OffsideTactics.MaxAttackingProjection(offsideLineProjX);
         }
 
         targetSpotXZ.X = Math.Clamp(targetSpotXZ.X, -_pitch.HalfLength + 3.5f, _pitch.HalfLength - 3.5f);
@@ -1859,9 +1866,12 @@ public sealed class CandidateGenerator : IAiStateResettable
     {
         bool attackingJob = obs.TacticalJob is TacticalJob.NearOutlet or TacticalJob.ThirdPlayerOption
             or TacticalJob.FarSideWidth or TacticalJob.DepthRun or TacticalJob.Overlap;
-        if (attackingJob && obs.PossessingTeam == obs.SelfTeam)
+        // A5.4: the margin applies before release. A player the ball is already travelling to may work
+        // beyond the line — the law settled his position at the contact — so his job target is not pulled
+        // back behind it.
+        if (attackingJob && obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs))
         {
-            float maxOnsideProj = offsideLineProjX - 1.0f;
+            float maxOnsideProj = OffsideTactics.MaxAttackingProjection(offsideLineProjX);
             if (jobTargetXZ.X * obs.AttackingDirectionX > maxOnsideProj)
                 jobTargetXZ.X = obs.AttackingDirectionX * MathF.Max(0f, maxOnsideProj);
         }

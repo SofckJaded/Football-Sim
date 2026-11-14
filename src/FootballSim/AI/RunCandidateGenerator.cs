@@ -49,17 +49,24 @@ public sealed class RunCandidateGenerator
     /// <summary>Fixed capacity of the emitted-path buffer; covers every kind plus the adopted one.</summary>
     public const int PathCapacity = 8;
 
-    /// <summary>Gap kept between an attacking meeting point and the offside line, in metres (A5.4).</summary>
-    public const float OnsideMarginMeters = 1.0f;
+    /// <summary>
+    /// Gap kept between an attacking meeting point and the offside line, in metres (A5.4). The value is
+    /// owned by <see cref="OffsideTactics.MarginMeters"/> — one tactical margin for the pass gate, the run
+    /// region and the job target — and this alias exists because the run generator is where the margin was
+    /// first named.
+    /// </summary>
+    public const float OnsideMarginMeters = OffsideTactics.MarginMeters;
 
     /// <summary>
     /// Slack on the onside test for an <i>adopted</i> run, in metres. The defensive line moves by a few
     /// tenths most ticks; without this the meeting region would be re-clamped and the intent re-adopted
     /// every second, and a run that restarts is not a run. Standing marginally beyond the line is not an
     /// offence — the ball cannot be played to him there, which the pass model already refuses — so the
-    /// intent survives until the line has moved a real distance.
+    /// intent survives until the line has moved a real distance. A5.4 adds the sharper rule: once the ball
+    /// has actually been played to him, the line stops mattering altogether
+    /// (<see cref="OffsideTactics.IsReleased"/>).
     /// </summary>
-    public const float OnsideToleranceMeters = 1.5f;
+    public const float OnsideToleranceMeters = OffsideTactics.AdoptionToleranceMeters;
 
     /// <summary>A path must gain at least this much ground to be a run rather than a shuffle.</summary>
     public const float MinRunGainMeters = 2.5f;
@@ -192,7 +199,12 @@ public sealed class RunCandidateGenerator
         // A5.3: once a team-mate has played the ball into the region, the frozen path is the only run on
         // offer. Re-selecting another kind is how a runner abandons a near-post run two ticks before the
         // ball lands in it; the other duties still compete (shape, press, the pass interception).
-        if (_intent is RunIntent receiving && IsClaimLive(obsRef, tick))
+        //
+        // A5.4 extends the same rule to any pass already travelling to this player, not only an announced
+        // one: while the ball is on its way he may keep running — and run beyond the line — to meet it, so
+        // there is nothing to re-select and no reason to clamp him.
+        bool receivingBall = IsClaimLive(obsRef, tick) || OffsideTactics.IsReleased(obsRef);
+        if (_intent is RunIntent receiving && receivingBall)
         {
             RunScoreTerms receivingTerms = RunScoring.Score(receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity);
             EmitAndRefreshConfidence(receiving, receivingTerms);
@@ -609,6 +621,11 @@ public sealed class RunCandidateGenerator
         if (tick > intent.Path.ExpiresTick) return false;
 
         if (!IsForwardRun(intent.Kind)) return true;
+
+        // A5.4: the ball has already been played to this player, so the law has judged him — at the
+        // contact. A line that stepped up since then cannot turn his run into an offence, and re-clamping
+        // him here would end a run exactly when it is being delivered to.
+        if (OffsideTactics.IsReleased(obs)) return true;
 
         float meetProj = intent.Path.MeetXZ.X * obs.AttackingDirectionX;
         return meetProj <= offsideLineProjX - OnsideMarginMeters + OnsideToleranceMeters;

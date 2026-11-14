@@ -1160,6 +1160,43 @@ board lookup per eligible receiver, neither of which is measurable here.
 
 ---
 
+## 2026-11-14 — the line is a budget before release and history after it (simulation version `ai25-rs1`)
+
+A5.4. One tactical onside margin (`OffsideTactics.MarginMeters`, 1 m) now governs the pass-target gate, the
+run region and the job target — the pass gate used 0.35 m, so the run generator and the carrier disagreed
+about the same receiver. And once a team-mate has played a pass with a player as its intended receiver, the
+line stops mattering: his adopted run is not cancelled by a line that stepped up after the pass, only the
+frozen run is offered while the ball is coming, and his job and shape targets are not clamped back behind
+the line. Behaviour change, so the gate, the reference match and the perf sample were re-captured.
+
+### Reference 11v11 — `a5-onside-contact-match-11v11.txt`
+
+| Metric | `ai23-rs1` | `ai24-rs1` | `ai25-rs1` |
+| :--- | :--- | :--- | :--- |
+| Ticks | 325 362 | 325 546 | 325 358 |
+| Score | 3–3 | 6–4 | 1–7 |
+| Possession (share) | 49.7 / 50.3 | 50.8 / 49.2 | 49.4 / 50.6 |
+| Passes | 488 / 392 (86 / 83 %) | 478 / 489 (86 / 84 %) | 478 / 461 (**85 / 84 %**) |
+| Shots | 29 / 47 | 37 / 40 | 38 / 38 |
+| Mean team width | 44.0 / 41.3 m | 43.7 / 41.2 m | 43.7 / 41.6 m |
+| Run adverts published / withdrawn / claimed | 15 078 / 7 764 / 137 | 14 976 / 7 733 / 189 | 15 125 / 7 607 / 212 |
+
+Pass volume and completion are unchanged from `ai24` on both sides, which is the number to read; the score
+is not a signal (A4 already recorded 25–10 and 0–3 on adjacent versions, and 1–7 here).
+
+### Tactical differentiation gate — `a5-onside-contact-tactical-gate.txt`
+
+5 seeds x 240 s: full time, played, the possession side wider on **5/5** seeds, mean **3.23 m** (3.17 m at
+`ai24`, 3.58 m at `ai22`; the gate is a majority-and-margin test). **PASS.**
+
+### Performance — `a5-onside-contact-perf.txt`
+
+170.2 us mean, p99 577.7 us, 62 593 B/tick — between the `ai24` (155.7) and `ai22` (172.5) samples and
+inside the single-sample spread; the change adds no per-tick work of its own (one observation predicate and
+one constant lookup replace existing comparisons).
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
