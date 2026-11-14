@@ -801,22 +801,18 @@ public sealed class TeamJobCoordinator
         threats.Sort((a, b) => Vector2.Distance(a.PositionXZ, ownGoalXZ)
             .CompareTo(Vector2.Distance(b.PositionXZ, ownGoalXZ)));
 
-        int assigned = 0;
         foreach (TeamBelief.Opponent threat in threats)
         {
-            if (assigned >= _markerCap) break;
-            if (counts.GetValueOrDefault(TacticalJob.Marker) >= _markerCap) break;
-
-            // One threat, one holder. A man who already has a marker is not assigned a second one; the only
-            // question is whether his responsibility should move to the defender whose zone now owns him
-            // (A6.3's explicit handover).
+            // A handover transfers an existing responsibility, so a full marking budget must not hide
+            // it: check the held marker before the cap that only governs *new* marking assignments.
             if (TryFindHeldMarker(threat.PlayerId, players, taken, out FootballerState? incumbent))
             {
                 TryHandOverMarking(threat, incumbent!, players, available, counts, taken,
                     formation, ownGoalXZ, attackDirX, tick);
-                assigned++;
                 continue;
             }
+
+            if (counts.GetValueOrDefault(TacticalJob.Marker) >= _markerCap) continue;
 
             FootballerState? best = null;
             float bestScore = float.MinValue;
@@ -841,13 +837,12 @@ public sealed class TeamJobCoordinator
                 }
             }
 
-            if (best is null) break;
+            if (best is null) continue;
 
             Assign(best, TacticalJob.Marker, anchor, threat.PlayerId, $"Mark #{threat.PlayerId}", tick);
             taken.Add(best.Id);
             available.Remove(best);
             counts[TacticalJob.Marker] = counts.GetValueOrDefault(TacticalJob.Marker) + 1;
-            assigned++;
         }
     }
 

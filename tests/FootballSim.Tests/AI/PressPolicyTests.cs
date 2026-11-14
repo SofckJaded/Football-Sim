@@ -4,6 +4,8 @@ using System.Numerics;
 using FootballSim;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Locomotion;
+using FootballSim.Physics;
 using FootballSim.Tactics;
 using Xunit;
 
@@ -649,6 +651,102 @@ public sealed class PressPolicyTests
     // ---------------------------------------------------------------------------------------------
     // Helpers.
     // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The second man is a team election, not each defender's private nearest-mate answer. Two centre-backs
+    /// placed exactly equidistant from the carrier, observed through the real perception noise, each see the
+    /// other a little further away and both claim the role. The elected id is one answer for the whole team,
+    /// so exactly one of them may step in.
+    /// </summary>
+    [Fact]
+    public void TwoEquidistantCentreBacks_DoNotBothElectThemselves()
+    {
+        const int CbAId = 4;
+        const int CbBId = 5;
+        const int PresserId = 6;
+        const int CarrierId = 15;
+
+        FootballerState cbA = State(CbAId, TeamId.Home, TacticalRole.CenterBack, new Vector2(-8f, -6f));
+        FootballerState cbB = State(CbBId, TeamId.Home, TacticalRole.CenterBack, new Vector2(-8f, 6f));
+        FootballerState presser = State(PresserId, TeamId.Home, TacticalRole.DefensiveMidfielder, new Vector2(0f, -2f));
+        FootballerState carrier = State(CarrierId, TeamId.Away, TacticalRole.Striker, new Vector2(0f, 0f));
+        FootballerState[] players = [cbA, cbB, presser, carrier];
+
+        var ball = new BallState
+        {
+            Position = new Vector3(0f, BallGeometry.DefaultRadius, 0f),
+            LastTouchedByTeam = TeamId.Away,
+            LastTouchedByPlayerId = CarrierId
+        };
+
+        // Without the team election the two independent noisy pictures can both claim the man. These are
+        // actual PerceptionSystem observations (seed 2 reproduces the audit's independent-noise failure).
+        FootballerObservation noisyA = NoisyObservation(cbA, players, ball, supportPresserPlayerId: null);
+        FootballerObservation noisyB = NoisyObservation(cbB, players, ball, supportPresserPlayerId: null);
+        PressSituation localA = PressPolicy.BuildSituation(noisyA, Pitch);
+        PressSituation localB = PressPolicy.BuildSituation(noisyB, Pitch);
+        Assert.True(localA.IsSupport && localB.IsSupport,
+            $"the fixture no longer reproduces the independent-noise failure it exists for " +
+            $"(A={localA.IsSupport}, B={localB.IsSupport}; " +
+            $"A picture: {DescribeMates(noisyA)}, B picture: {DescribeMates(noisyB)})");
+
+        // The one team answer: the shared belief elects A (equal distance, lower id), and that is what every
+        // observation carries.
+        TeamBelief belief = TeamBelief.FromTruth(TeamId.Home, players);
+        int elected = PressPolicy.ElectSupportPresser(
+            TeamId.Home, players, belief, PresserId, CarrierId, humanPlayerId: null);
+        Assert.Equal(CbAId, elected);
+
+        FootballerObservation electedA = NoisyObservation(cbA, players, ball, elected);
+        FootballerObservation electedB = NoisyObservation(cbB, players, ball, elected);
+
+        Assert.Equal(elected, electedA.SupportPresserPlayerId);
+        Assert.Equal(elected, electedB.SupportPresserPlayerId);
+        int supportCount =
+            (PressPolicy.BuildSituation(electedA, Pitch).IsSupport ? 1 : 0) +
+            (PressPolicy.BuildSituation(electedB, Pitch).IsSupport ? 1 : 0);
+        Assert.Equal(1, supportCount);
+        Assert.True(PressPolicy.BuildSituation(electedA, Pitch).IsSupport);
+    }
+
+    private static FootballerState State(int id, TeamId team, TacticalRole role, Vector2 position) =>
+        new()
+        {
+            Id = id,
+            Team = team,
+            ShirtNumber = id,
+            Role = role,
+            Position = new Vector3(position.X, 0f, position.Y),
+            TacticalAnchor = new Vector3(position.X, 0f, position.Y),
+            Attributes = new PlayerAttributes(),
+            Tendencies = PlayerTendencyProfile.ForRole(role),
+            LastCommand = FootballerCommand.Idle
+        };
+
+    private static FootballerObservation NoisyObservation(
+        FootballerState self,
+        IReadOnlyList<FootballerState> players,
+        BallState ball,
+        int? supportPresserPlayerId) =>
+        new PerceptionSystem().BuildObservation(
+            self, players, ball, TeamId.Away, MatchPhase.FirstHalf,
+            matchTimeSeconds: 10f, attackingDirX: 1f, isSetPieceTaker: false,
+            teamProfile: TeamTacticalProfile.PossessionControl, rng: new SeededRandom(2),
+            possession: new BallPossessionSnapshot(BallControlState.Controlled, TeamId.Away, 15, null),
+            isDesignatedBallResponder: false,
+            ballResponderPlayerId: 6,
+            supportPresserPlayerId: supportPresserPlayerId);
+
+    private static string DescribeMates(in FootballerObservation observation)
+    {
+        var text = new System.Text.StringBuilder();
+        foreach (PerceivedEntity entity in observation.VisiblePlayers)
+        {
+            if (entity.Team != observation.SelfTeam) continue;
+            text.Append($"#{entity.PlayerId}@({entity.EstimatedPosition.X:F2},{entity.EstimatedPosition.Z:F2}) ");
+        }
+        return text.ToString();
+    }
 
     private static PerceivedEntity Mate(int id, TacticalRole role, Vector2 position, Vector2 velocity = default) =>
         new(id, TeamId.Home, role, new Vector3(position.X, 0f, position.Y),

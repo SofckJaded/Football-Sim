@@ -100,6 +100,73 @@ public sealed class LineDepthTests
     }
 
     /// <summary>
+    /// The band has to reach the feet, not just the job table: a line defender's normal movement candidate
+    /// must point at his assigned band target. Before A6.3 was integrated, the <c>DefensiveLine</c> duty was
+    /// excluded from job-directed movement and the fallback shape step used the formation anchor, leaving
+    /// the allocated band unread by the body it was meant to move.
+    /// </summary>
+    [Fact]
+    public void ALinePlayer_IsSentToHisAssignedBand_NotHisFormationAnchor()
+    {
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = 20260818UL,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = 90f
+        });
+
+        int samples = 0;
+        int shapeSamples = 0;
+        int offAnchorSamples = 0;
+        float worst = 0f;
+        int mismatches = 0;
+
+        for (int tick = 0; tick < 600; tick++)
+        {
+            engine.StepTick();
+
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch) continue;
+                TeamJobAssignment? duty = engine.TeamJobs.Get(player.Id);
+                if (duty?.Job != TacticalJob.DefensiveLine) continue;
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController ai) continue;
+
+                UtilityCandidate selected = ai.LastSelected;
+                if (selected.TargetXZ is not Vector3 target) continue;
+                bool normalLineMovement =
+                    selected.ActionName == "HoldDefensiveZone" ||
+                    selected.ActionName.StartsWith("Job:DefensiveLine", StringComparison.Ordinal);
+                if (!normalLineMovement) continue;
+
+                samples++;
+                if (selected.ActionName == "HoldDefensiveZone") shapeSamples++;
+
+                Vector2 targetXZ = new(target.X, target.Z);
+                Vector2 assigned = new(duty.Value.Anchor.X, duty.Value.Anchor.Z);
+                float distance = Vector2.Distance(targetXZ, assigned);
+                worst = MathF.Max(worst, distance);
+                if (distance > 1f) mismatches++;
+
+                // How often the band the allocator placed is genuinely away from the player's own
+                // formation anchor: those are the samples where the old fallback sent the body elsewhere.
+                Vector2 formationAnchor = new(
+                    player.TacticalAnchor.X, player.TacticalAnchor.Z);
+                if (Vector2.Distance(assigned, formationAnchor) > 2f) offAnchorSamples++;
+            }
+        }
+
+        Assert.True(samples > 100, $"only {samples} normal line-movement samples: the probe did not run");
+        Assert.True(shapeSamples > 0, "no line player's normal shape movement was sampled");
+        Assert.True(offAnchorSamples > 0,
+            "the fixture's line duties never moved more than 2 m off the formation anchor, so it " +
+            "cannot distinguish the band target from the old fallback");
+        Assert.True(mismatches == 0,
+            $"{mismatches}/{samples} line movements were more than 1 m from the assignment " +
+            $"(worst {worst:F2} m); the band did not reach the movement target");
+    }
+
+    /// <summary>
     /// The band is more than a copy of the shape: over a passage of play it moves the line away from its
     /// own formation anchors, and it always reports itself inside its own bounds.
     /// </summary>
@@ -204,6 +271,28 @@ public sealed class LineDepthTests
         Assert.Equal(AwayStriker, marker.Value.TargetPlayerId);
     }
 
+    /// <summary>
+    /// A full marking budget must not suppress a handover. The one-marker profile (direct counterattack)
+    /// reaches its cap as soon as the striker is picked up; the transfer to the centre-back whose zone the
+    /// run crosses is a change of owner, not a new marking slot, so it has to remain possible.
+    /// </summary>
+    [Fact]
+    public void AHandover_IsStillMadeWhenTheMarkingBudgetIsFull()
+    {
+        Assert.Equal(1, DefensiveLineModel.MarkerCount(TeamTacticalProfile.DirectCounterattack));
+
+        MatchSimulationEngine running = EngineFor(
+            strikerRuns: true, homeProfile: TeamTacticalProfile.DirectCounterattack);
+        for (int tick = 0; tick < 220; tick++) running.StepTick();
+
+        Assert.True(running.TeamJobs.HandoverCount >= 1,
+            "the one-marker profile was already at its cap, so the crossing run was never handed over");
+        MarkingHandover handover = running.TeamJobs.Handovers[0];
+        Assert.Equal(AwayStriker, handover.ThreatPlayerId);
+        Assert.Equal(HomeCbA, handover.FromPlayerId);
+        Assert.Equal(HomeCbB, handover.ToPlayerId);
+    }
+
     /// <summary>The handover log as a failure message, so a churn failure names its reason.</summary>
     private static string Describe(MatchSimulationEngine engine)
     {
@@ -219,7 +308,8 @@ public sealed class LineDepthTests
     /// Two centre-backs, one away striker standing between them, and an away keeper holding the ball at the
     /// other end so the home side is defending without a centre-back being dragged into the press.
     /// </summary>
-    private static MatchSimulationEngine EngineFor(bool strikerRuns)
+    private static MatchSimulationEngine EngineFor(
+        bool strikerRuns, TeamTacticalProfile? homeProfile = null)
     {
         var scenario = new MatchScenario
         {
@@ -227,7 +317,8 @@ public sealed class LineDepthTests
             Seed = 20261114UL,
             BallPosition = new Vector3(45.4f, 0f, 0f),
             BallSetup = ScenarioBallSetup.Controlled,
-            BallOwnerPlayerId = AwayKeeper
+            BallOwnerPlayerId = AwayKeeper,
+            HomeProfile = homeProfile ?? TeamTacticalProfile.PossessionControl
         };
 
         scenario.Add(MatchScenario.Player(HomeKeeper, TeamId.Home, TacticalRole.Goalkeeper,

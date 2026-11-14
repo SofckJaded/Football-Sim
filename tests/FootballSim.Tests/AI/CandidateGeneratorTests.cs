@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Input;
 using FootballSim.Locomotion;
 using Xunit;
 
@@ -89,43 +90,88 @@ public sealed class CandidateGeneratorTests
         Assert.Equal(0f, generator.TackleCooldown);
     }
 
+    [Fact]
+    public void AnOpponentsCallForPass_DoesNotReleaseThisCarriersDelay()
+    {
+        var comms = new MatchCommunicationContext();
+        var generator = new CandidateGenerator(new PitchDimensions(), comms);
+        FootballerObservation awayCarrier = Observation(ballAtFeet: true, selfTeam: TeamId.Away);
+        var awayGoal = new System.Numerics.Vector3(-52.5f, 0f, 0f);
+
+        generator.GenerateOnBallCandidates(awayCarrier, awayGoal, 0f);
+        Assert.Equal(0, PassCount(generator));
+
+        // The home human asks for the ball: the away carrier's observations are unchanged, and the call
+        // is not his team's instruction.
+        comms.RaiseCallForPass(TeamId.Home, 9, 2.5f, throughBall: false);
+        generator.Clear();
+        generator.GenerateOnBallCandidates(awayCarrier, awayGoal, 0f);
+        Assert.Equal(0, PassCount(generator));
+
+        // Positive control: the same call from the carrier's own team does release the pass, so the
+        // filter above is team identity and not a disabled call path.
+        comms.RaiseCallForPass(TeamId.Away, 9, 2.5f, throughBall: false);
+        generator.Clear();
+        generator.GenerateOnBallCandidates(awayCarrier, awayGoal, 0f);
+        Assert.True(PassCount(generator) > 0,
+            "an own-team call for the pass must still release the carrier's normal delay");
+    }
+
+    private static int PassCount(CandidateGenerator generator)
+    {
+        int count = 0;
+        for (int i = 0; i < generator.CandidateCount; i++)
+        {
+            if (generator.Candidates[i].Key.Kind == CandidateKind.Pass) count++;
+        }
+
+        return count;
+    }
+
     private static FootballerObservation OnBallObservation() => Observation(ballAtFeet: true);
 
     private static FootballerObservation OffBallObservation() => Observation(ballAtFeet: false);
 
-    private static FootballerObservation Observation(bool ballAtFeet) => new()
+    private static FootballerObservation Observation(bool ballAtFeet, TeamId selfTeam = TeamId.Home)
     {
-        SelfId = 8,
-        SelfTeam = TeamId.Home,
-        SelfRole = TacticalRole.CentralMidfielder,
-        SelfPosition = new System.Numerics.Vector3(0f, 0f, 0f),
-        SelfVelocity = System.Numerics.Vector3.Zero,
-        SelfFacingXZ = new System.Numerics.Vector2(1f, 0f),
-        Stamina01 = 1f,
-        AvailableToKick = ballAtFeet,
-        ControlQuality01 = ballAtFeet ? 1f : 0f,
-        PerceivedBallPosition = ballAtFeet
-            ? new System.Numerics.Vector3(0.4f, 0f, 0f)
-            : new System.Numerics.Vector3(8f, 0f, 0f),
-        PerceivedBallVelocity = System.Numerics.Vector3.Zero,
-        PossessingTeam = ballAtFeet ? TeamId.Home : TeamId.Away,
-        BallLastTouchedByPlayerId = 8,
-        BallControlState = ballAtFeet ? BallControlState.Controlled : BallControlState.Loose,
-        BallControllingPlayerId = ballAtFeet ? 8 : null,
-        TacticalAnchorPosition = new System.Numerics.Vector3(0f, 0f, 0f),
-        AttackingDirectionX = 1f,
-        MatchTimeSeconds = 0f,
-        CurrentMatchPhase = MatchPhase.FirstHalf,
-        IsSetPieceTaker = false,
-        VisiblePlayers = new List<PerceivedEntity>
+        bool home = selfTeam == TeamId.Home;
+        TeamId opponent = home ? TeamId.Away : TeamId.Home;
+        return new()
         {
-            new(9, TeamId.Home, TacticalRole.Striker, new System.Numerics.Vector3(20f, 0f, 2f),
-                System.Numerics.Vector3.Zero, 0.9f),
-            new(12, TeamId.Away, TacticalRole.CenterBack, new System.Numerics.Vector3(30f, 0f, -4f),
-                System.Numerics.Vector3.Zero, 0.9f)
-        },
-        TeamProfile = TeamTacticalProfile.PossessionControl,
-        SelfTendencies = new PlayerTendencies(),
-        SelfAttributes = new PlayerAttributes()
-    };
+            SelfId = 8,
+            SelfTeam = selfTeam,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new System.Numerics.Vector3(0f, 0f, 0f),
+            SelfVelocity = System.Numerics.Vector3.Zero,
+            SelfFacingXZ = new System.Numerics.Vector2(home ? 1f : -1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = ballAtFeet,
+            ControlQuality01 = ballAtFeet ? 1f : 0f,
+            PerceivedBallPosition = ballAtFeet
+                ? new System.Numerics.Vector3(0.4f, 0f, 0f)
+                : new System.Numerics.Vector3(8f, 0f, 0f),
+            PerceivedBallVelocity = System.Numerics.Vector3.Zero,
+            PossessingTeam = ballAtFeet ? selfTeam : opponent,
+            BallLastTouchedByPlayerId = 8,
+            BallControlState = ballAtFeet ? BallControlState.Controlled : BallControlState.Loose,
+            BallControllingPlayerId = ballAtFeet ? 8 : null,
+            TacticalAnchorPosition = new System.Numerics.Vector3(0f, 0f, 0f),
+            AttackingDirectionX = home ? 1f : -1f,
+            MatchTimeSeconds = 0f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                new(9, selfTeam, TacticalRole.Striker,
+                    new System.Numerics.Vector3(home ? 20f : -20f, 0f, 2f),
+                    System.Numerics.Vector3.Zero, 0.9f),
+                new(12, opponent, TacticalRole.CenterBack,
+                    new System.Numerics.Vector3(home ? 30f : -30f, 0f, -4f),
+                    System.Numerics.Vector3.Zero, 0.9f)
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+    }
 }

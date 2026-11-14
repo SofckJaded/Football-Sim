@@ -441,7 +441,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         float offsideLineProjX,
         bool underHeavyPressure)
     {
-        bool humanCalled = _communication?.HasActiveCall == true;
+        // A call is this team's instruction only. An opponent's call must not release this carrier's
+        // normal pass delay (audit: identical away observations generated a pass only when home called).
+        bool humanCalled = _communication?.IsActiveCallFor(obs.SelfTeam) == true;
         // Tempo (team): a high-tempo side releases the ball sooner after receiving it.
         float passTriggerSeconds = Math.Clamp(0.45f - 0.30f * (obs.TeamProfile.Tempo01 - 0.55f), 0.20f, 0.65f);
         bool readyToPass = _timeOnBall >= passTriggerSeconds || underHeavyPressure || humanCalled;
@@ -1999,10 +2001,10 @@ public sealed class CandidateGenerator : IAiStateResettable
             return;
 
         // 2. Job-directed movement (audit F04). The team assigns a persistent job (outlet, third
-        //    player, depth run, width, overlap, cover, marker...); score a couple of reachable
-        //    target points around its anchor instead of a single formation step.
+        //    player, depth run, width, overlap, cover, marker, the defensive line...); score a couple
+        //    of reachable target points around its anchor instead of a single formation step.
         if (obs.TacticalJobAnchor is Vector3 jobAnchor &&
-            obs.TacticalJob is not (TacticalJob.Shape or TacticalJob.DefensiveLine))
+            obs.TacticalJob is not TacticalJob.Shape)
         {
             // A5.1/A5.2: a receiving duty's options are the bounded run paths, not one anchor. The duty
             // still decides *who* runs; the path decides where and when.
@@ -2020,58 +2022,69 @@ public sealed class CandidateGenerator : IAiStateResettable
         //    would be cancelling a legal run.
         Vector2 targetSpotXZ = anchorXZ;
 
-        if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs))
+        if (obs.TacticalJob == TacticalJob.DefensiveLine && obs.TacticalJobAnchor is Vector3 lineTarget)
         {
-            float phaseWave = obs.MatchTimeSeconds * 1.2f + obs.SelfId * 1.7f;
-            if (obs.SelfRole is TacticalRole.Striker or TacticalRole.Winger)
-            {
-                float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 3.5f + 2.5f * MathF.Sin(phaseWave);
-                // Hold the tactical margin so attackers never camp offside (A5.4).
-                float onsideProjX = MathF.Min(desiredProjX, OffsideTactics.MaxAttackingProjection(offsideLineProjX));
-                targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f);
-            }
-            else if (obs.SelfRole == TacticalRole.CentralMidfielder)
-            {
-                float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 2.5f * MathF.Cos(phaseWave);
-                float onsideProjX = MathF.Min(desiredProjX, offsideLineProjX - OffsideTactics.MidfieldMarginMeters);
-                targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 5f, _pitch.HalfLength - 5f);
-            }
+            // The allocator already placed this duty on the shared band, accounting for the ball side,
+            // the far side and the line's caps. Repulsion and formation-anchor drift belong to a player
+            // taking up a support spot; applying them here is what moved line defenders up to 13.9 m off
+            // their assigned depth while their job said otherwise.
+            targetSpotXZ = new Vector2(lineTarget.X, lineTarget.Z);
         }
-
-        // Anti-crowding repulsion so teammates keep clean passing spacing
-        Vector2 repulsion = Vector2.Zero;
-        foreach (var mate in obs.VisiblePlayers)
+        else
         {
-            if (mate.Team != obs.SelfTeam || mate.Role == TacticalRole.Goalkeeper) continue;
-            Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
-            Vector2 awayFromMate = selfXZ - mateXZ;
-            float d = awayFromMate.Length();
-            if (d < 8.5f && d > 1e-3f)
+            if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs))
             {
-                repulsion += (awayFromMate / d) * ((8.5f - d) * 1.25f);
+                float phaseWave = obs.MatchTimeSeconds * 1.2f + obs.SelfId * 1.7f;
+                if (obs.SelfRole is TacticalRole.Striker or TacticalRole.Winger)
+                {
+                    float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 3.5f + 2.5f * MathF.Sin(phaseWave);
+                    // Hold the tactical margin so attackers never camp offside (A5.4).
+                    float onsideProjX = MathF.Min(desiredProjX, OffsideTactics.MaxAttackingProjection(offsideLineProjX));
+                    targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f);
+                }
+                else if (obs.SelfRole == TacticalRole.CentralMidfielder)
+                {
+                    float desiredProjX = (anchorXZ.X * obs.AttackingDirectionX) + 2.5f * MathF.Cos(phaseWave);
+                    float onsideProjX = MathF.Min(desiredProjX, offsideLineProjX - OffsideTactics.MidfieldMarginMeters);
+                    targetSpotXZ.X = obs.AttackingDirectionX * Math.Clamp(onsideProjX, -_pitch.HalfLength + 5f, _pitch.HalfLength - 5f);
+                }
             }
-        }
 
-        targetSpotXZ += repulsion;
+            // Anti-crowding repulsion so teammates keep clean passing spacing
+            Vector2 repulsion = Vector2.Zero;
+            foreach (var mate in obs.VisiblePlayers)
+            {
+                if (mate.Team != obs.SelfTeam || mate.Role == TacticalRole.Goalkeeper) continue;
+                Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+                Vector2 awayFromMate = selfXZ - mateXZ;
+                float d = awayFromMate.Length();
+                if (d < 8.5f && d > 1e-3f)
+                {
+                    repulsion += (awayFromMate / d) * ((8.5f - d) * 1.25f);
+                }
+            }
 
-        // Audit F18: positional discipline (player) and positional freedom (team) bound how far a
-        // player strays from the formation anchor when taking up a support spot. At the neutral
-        // baselines (discipline 0.70, freedom 0.55) this allows ~7 m of drift; a free role may roam
-        // further, a disciplined one holds the structure.
-        float anchorDriftMeters = (2.5f + 12f * (1f - obs.SelfTendencies.PositionalDiscipline01))
-                                  * (0.70f + 0.80f * obs.TeamProfile.PositionalFreedom01);
-        Vector2 driftVec = targetSpotXZ - anchorXZ;
-        float driftDist = driftVec.Length();
-        if (driftDist > anchorDriftMeters && driftDist > 1e-3f)
-            targetSpotXZ = anchorXZ + (driftVec / driftDist) * anchorDriftMeters;
+            targetSpotXZ += repulsion;
 
-        // Re-enforce the tactical margin after repulsion when in possession — and only before release: a
-        // receiver the ball is travelling to is not dragged back behind a line the law has already judged
-        // (A5.4).
-        if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs) &&
-            (targetSpotXZ.X * obs.AttackingDirectionX) > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
-        {
-            targetSpotXZ.X = obs.AttackingDirectionX * OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+            // Audit F18: positional discipline (player) and positional freedom (team) bound how far a
+            // player strays from the formation anchor when taking up a support spot. At the neutral
+            // baselines (discipline 0.70, freedom 0.55) this allows ~7 m of drift; a free role may roam
+            // further, a disciplined one holds the structure.
+            float anchorDriftMeters = (2.5f + 12f * (1f - obs.SelfTendencies.PositionalDiscipline01))
+                                      * (0.70f + 0.80f * obs.TeamProfile.PositionalFreedom01);
+            Vector2 driftVec = targetSpotXZ - anchorXZ;
+            float driftDist = driftVec.Length();
+            if (driftDist > anchorDriftMeters && driftDist > 1e-3f)
+                targetSpotXZ = anchorXZ + (driftVec / driftDist) * anchorDriftMeters;
+
+            // Re-enforce the tactical margin after repulsion when in possession — and only before release: a
+            // receiver the ball is travelling to is not dragged back behind a line the law has already judged
+            // (A5.4).
+            if (obs.PossessingTeam == obs.SelfTeam && !OffsideTactics.IsReleased(obs) &&
+                (targetSpotXZ.X * obs.AttackingDirectionX) > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
+            {
+                targetSpotXZ.X = obs.AttackingDirectionX * OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+            }
         }
 
         targetSpotXZ.X = Math.Clamp(targetSpotXZ.X, -_pitch.HalfLength + 3.5f, _pitch.HalfLength - 3.5f);
@@ -2314,7 +2327,11 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         float baseUtility = JobBaseUtility(obs.TacticalJob);
         AddJobCandidate(obs, $"{obs.TacticalJob}", jobTargetXZ, baseUtility);
-        if (Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
+
+        // The defensive line's target is the allocator's band, not a support point: stepping it out of
+        // a cover shadow locally would reopen the depth disagreement A6.3 removed.
+        if (obs.TacticalJob != TacticalJob.DefensiveLine &&
+            Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
             AddJobCandidate(obs, $"{obs.TacticalJob}Adj", alternativeXZ, baseUtility - 0.03f, adjusted: true);
     }
 

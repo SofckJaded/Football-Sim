@@ -1751,7 +1751,7 @@ public sealed class AuditRegressionTests
         var ai = new TacticalUtilityAiController(pitch, comms);
         var obs = Observe(passer, new[] { passer, caller }, ball);
 
-        comms.RaiseCallForPass(9, 2.5f, throughBall);
+        comms.RaiseCallForPass(TeamId.Home, 9, 2.5f, throughBall);
         for (int i = 0; i < 12; i++) ai.Decide(obs, Dt);
 
         var candidate = ai.LastCandidates.FirstOrDefault(c => c.ActionName.Contains("To#9"));

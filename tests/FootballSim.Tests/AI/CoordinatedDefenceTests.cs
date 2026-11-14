@@ -119,6 +119,96 @@ public sealed class CoordinatedDefenceTests
             $"the presser aimed at Z={target.Value.Z:F1} from a carrier at {carrier.Position.Z:F1}: outside him");
     }
 
+    /// <summary>
+    /// The live path publishes one second man per defending team. Two equidistant centre-backs observe the
+    /// same situation through different noise; with the match election every one of their observations
+    /// carries the same id, so at most one second-man candidate exists on any tick.
+    /// </summary>
+    [Fact]
+    public void TheLiveMatch_PublishesOneSecondManPerTeam()
+    {
+        var scenario = new MatchScenario
+        {
+            Name = "equidistant second men",
+            Seed = 9UL,
+            BallPosition = new Vector3(-20f, 0f, 0f),
+            BallSetup = ScenarioBallSetup.Controlled,
+            BallOwnerPlayerId = 207
+        };
+
+        scenario.Add(MatchScenario.Player(101, TeamId.Home, TacticalRole.Goalkeeper,
+            new Vector3(-48f, 0f, 0f), 1));
+        scenario.Add(MatchScenario.Player(109, TeamId.Home, TacticalRole.Striker,
+            new Vector3(-20f, 0f, -3f), 9));
+        scenario.Add(MatchScenario.Player(102, TeamId.Home, TacticalRole.CenterBack,
+            new Vector3(-28f, 0f, -6f), 4));
+        scenario.Add(MatchScenario.Player(103, TeamId.Home, TacticalRole.CenterBack,
+            new Vector3(-28f, 0f, 6f), 5));
+        scenario.Add(MatchScenario.Player(209, TeamId.Away, TacticalRole.Goalkeeper,
+            new Vector3(46f, 0f, 0f), 1).WithController(
+            new FixedCommandController(ScenarioCommands.Hold(), "holding keeper")));
+        scenario.Add(MatchScenario.Player(207, TeamId.Away, TacticalRole.Striker,
+            new Vector3(-20f, 0f, 0f), 9).WithController(
+            new FixedCommandController(ScenarioCommands.Hold(), "holding carrier")));
+
+        var engine = new MatchSimulationEngine(scenario);
+
+        int samples = 0;
+        int defendingTicks = 0;
+        int supportSituations = 0;
+        int electedZero = 0;
+        int electedOther = 0;
+        for (int tick = 0; tick < 240; tick++)
+        {
+            engine.StepTick();
+            if (tick % 3 != 0) continue;
+
+            bool defending = false;
+            int? published = null;
+            foreach (FootballerState player in engine.Players)
+            {
+                if (player.Team != TeamId.Home || !player.IsActiveOnPitch) continue;
+                FootballerObservation observation = engine.GetLastObservation(player.Id)!;
+                if (observation.BallControlState != BallControlState.Controlled ||
+                    observation.PossessingTeam == TeamId.Home)
+                {
+                    continue;
+                }
+
+                defending = true;
+                Assert.NotNull(observation.SupportPresserPlayerId);
+                if (published is null) published = observation.SupportPresserPlayerId;
+                else Assert.Equal(published, observation.SupportPresserPlayerId);
+                if (PressPolicy.BuildSituation(observation, engine.Pitch).IsSupport) supportSituations++;
+            }
+
+            if (!defending) continue;
+            defendingTicks++;
+            if (published == 0) electedZero++;
+            else if (published is not null) electedOther++;
+
+            int offered = 0;
+            foreach (FootballerState player in engine.Players)
+            {
+                if (player.Team != TeamId.Home || !player.IsActiveOnPitch) continue;
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController ai) continue;
+                foreach (UtilityCandidate candidate in ai.LastCandidates)
+                {
+                    if (candidate.Key.Kind != CandidateKind.Challenge) continue;
+                    offered++;
+                    break;
+                }
+            }
+
+            Assert.InRange(offered, 0, 1);
+            if (offered > 0) samples++;
+        }
+
+        Assert.True(samples > 0,
+            $"the fixture never offered the second man: defending {defendingTicks}, " +
+            $"elected zero {electedZero}, elected other {electedOther}, support situations {supportSituations}");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers.
     // ---------------------------------------------------------------------------------------------

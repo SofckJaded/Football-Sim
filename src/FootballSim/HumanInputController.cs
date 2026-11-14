@@ -18,6 +18,12 @@ public sealed class MatchCommunicationContext
     public bool HumanCalledThroughBall { get; private set; }
 
     /// <summary>
+    /// The team whose player asked for the ball. A call is a team instruction: an opponent's call must
+    /// never change this team's release timing (audit: a home call bypassed the away carrier's delay).
+    /// </summary>
+    public TeamId? HumanCallForPassTeam { get; private set; }
+
+    /// <summary>
     /// The team's run advertisement board (A5.3). One channel, extended rather than duplicated: the same
     /// match-owned object that carries the human's call for the pass now carries the AI's announcements of
     /// where its runners have committed to meet the ball, with the communication delay the plan asks for.
@@ -26,8 +32,12 @@ public sealed class MatchCommunicationContext
 
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
-    public void RaiseCallForPass(int playerId, float durationSeconds, bool throughBall)
+    /// <summary>True when the active call came from <paramref name="team"/>, i.e. is this team's own shout.</summary>
+    public bool IsActiveCallFor(TeamId team) => HasActiveCall && HumanCallForPassTeam == team;
+
+    public void RaiseCallForPass(TeamId team, int playerId, float durationSeconds, bool throughBall)
     {
+        HumanCallForPassTeam = team;
         HumanCallForPassPlayerId = playerId;
         HumanCallForPassTimer = MathF.Max(0f, durationSeconds);
         HumanCalledThroughBall = throughBall;
@@ -45,6 +55,7 @@ public sealed class MatchCommunicationContext
         HumanCallForPassPlayerId = null;
         HumanCallForPassTimer = 0f;
         HumanCalledThroughBall = false;
+        HumanCallForPassTeam = null;
     }
 }
 
@@ -389,6 +400,7 @@ public sealed class HumanInputController : IFootballerController
             distToBall > 2.8f && observation.PossessingTeam == observation.SelfTeam)
         {
             Communication.RaiseCallForPass(
+                observation.SelfTeam,
                 LockedPlayerId,
                 2.5f,
                 _bufferedKick is KickIntentType.ThroughPass or KickIntentType.LobbedThroughPass);

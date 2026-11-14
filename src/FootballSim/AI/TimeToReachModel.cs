@@ -174,6 +174,16 @@ public static class TimeToReachModel
     private const int RefineIterations = 10;
 
     /// <summary>
+    /// A moving target gets at most this many aim corrections. The lead estimate starts from the
+    /// constant-speed pursuit root, so one correction is normally enough; the bound keeps a
+    /// badly-conditioned geometry from turning a reach query into an unbounded solve.
+    /// </summary>
+    private const int InterceptRefinements = 3;
+
+    /// <summary>Target speed below which it is treated as a point (numerical, not tactical).</summary>
+    private const float MinMovingTargetSpeedSquared = 0.01f;
+
+    /// <summary>
     /// Fatigue multiplier the locomotion step applies to top speed. Exposed because a squad's reach
     /// model and its execution must use the same curve, or a "fresh" estimate is fiction.
     /// </summary>
@@ -292,14 +302,66 @@ public static class TimeToReachModel
         if (Vector2.Distance(state.PositionXZ, targetXZ) <= reach)
             return new ReachEstimate(true, 0f, targetXZ, speed);
 
+        if (targetVelocityXZ.LengthSquared() <= MinMovingTargetSpeedSquared)
+            return SolveToward(state, targetXZ, targetXZ, Vector2.Zero, velocity, speed, reach, horizon, sprint);
+
+        // A moving target has to be intercepted, not reached: find the meeting by iterating the aim
+        // between the target's path and the player's own arrival to that point (time-to-aim, which
+        // includes acceleration and the turn). Then test the resulting path against the target.
+        // Aiming a constant direction at his current position can only meet a target that runs into
+        // that line — a lateral runner simply moves away from it.
+        Vector2 aim = LeadPursuitPoint(state, targetXZ, targetVelocityXZ, horizon, sprint);
+
+        for (int i = 0; i < InterceptRefinements; i++)
+        {
+            ReachEstimate toAim = SolveToward(
+                state, aim, aim, Vector2.Zero, velocity, speed, reach, horizon, sprint);
+            if (!toAim.Reachable) break;
+
+            Vector2 nextAim = targetXZ + targetVelocityXZ * toAim.Seconds;
+            if (Vector2.DistanceSquared(nextAim, aim) <= 0.0225f)
+            {
+                aim = nextAim;
+                break;
+            }
+
+            aim = nextAim;
+        }
+
+        ReachEstimate estimate = SolveToward(
+            state, aim, targetXZ, targetVelocityXZ, velocity, speed, reach, horizon, sprint);
+        if (estimate.Reachable) return estimate;
+
+        // The lead can be past the meeting region when the target is slowing into the player's path;
+        // the old current-position path is still a valid fallback and often meets him.
+        return SolveToward(
+            state, targetXZ, targetXZ, targetVelocityXZ, velocity, speed, reach, horizon, sprint);
+    }
+
+    /// <summary>
+    /// Builds the path toward <paramref name="aimXZ"/> and tests it against the moving target. The turn
+    /// cost is averaged over the trip in two passes, exactly as for a stationary point; only the aim
+    /// differs, which is what lets the same model answer both "run to this place" and "meet this man".
+    /// </summary>
+    private static ReachEstimate SolveToward(
+        in ReachKinematics state,
+        Vector2 aimXZ,
+        Vector2 targetXZ,
+        Vector2 targetVelocityXZ,
+        Vector2 velocity,
+        float speed,
+        float reach,
+        float horizon,
+        bool sprint)
+    {
         // Two passes: the turn cost needs a trip length, and the trip length depends on the turn cost.
         // Solving with the optimistic (aligned) speed first gives a length to average the turn over;
         // the second pass uses it. One correction is enough because the cap moves at most 15 %.
-        if (!TryBuildTrajectory(state, targetXZ, velocity, sprint, turnFactor: 1f, out Trajectory optimistic))
-            return unreachable;
+        if (!TryBuildTrajectory(state, aimXZ, velocity, sprint, turnFactor: 1f, out Trajectory optimistic))
+            return ReachEstimate.Unreachable(horizon);
 
         float tripGuess = EstimateTripSeconds(optimistic, targetXZ, targetVelocityXZ, reach, horizon);
-        Vector2 desired = SimMath.SafeNormalize(targetXZ - state.PositionXZ, new Vector2(1f, 0f));
+        Vector2 desired = SimMath.SafeNormalize(aimXZ - state.PositionXZ, new Vector2(1f, 0f));
         Vector2 facing = SimMath.SafeNormalize(state.FacingXZ, SimMath.SafeNormalize(velocity, desired));
         float angle = MathF.Acos(Math.Clamp(Vector2.Dot(facing, desired), -1f, 1f));
         float speedRatio = state.MaxSprintSpeed > 1e-3f ? speed / state.MaxSprintSpeed : 0f;
@@ -307,10 +369,64 @@ public static class TimeToReachModel
         float effectiveTurnRate = MathF.Max(MinTurnRate, turnRate * 1.25f * (1f - 0.25f * speedRatio));
         float turnFactor = AverageTurnFactor(angle, effectiveTurnRate, tripGuess);
 
-        if (!TryBuildTrajectory(state, targetXZ, velocity, sprint, turnFactor, out Trajectory trajectory))
-            return unreachable;
+        if (!TryBuildTrajectory(state, aimXZ, velocity, sprint, turnFactor, out Trajectory trajectory))
+            return ReachEstimate.Unreachable(horizon);
 
         return FindArrival(trajectory, targetXZ, targetVelocityXZ, reach, horizon);
+    }
+
+    /// <summary>
+    /// First aim point for a moving target: the constant-speed pursuit root, i.e. the first time a
+    /// player running at his cap could be level with the target's straight-line path.
+    ///
+    /// Acceleration and the turn are ignored here on purpose — they are corrected by re-aiming at the
+    /// arrival the real trajectory produces. With no positive root (the target outruns the player) the
+    /// aim is the target's position at the horizon: either the path still catches him while he turns
+    /// into it, or the honest answer is unreachable.
+    /// </summary>
+    private static Vector2 LeadPursuitPoint(
+        in ReachKinematics state,
+        Vector2 targetXZ,
+        Vector2 targetVelocityXZ,
+        float horizon,
+        bool sprint)
+    {
+        float speed = SpeedCap(state, sprint);
+        if (!float.IsFinite(speed) || speed <= 1e-3f) return targetXZ;
+
+        Vector2 offset = targetXZ - state.PositionXZ;
+        float a = targetVelocityXZ.LengthSquared() - speed * speed;
+        float b = 2f * Vector2.Dot(offset, targetVelocityXZ);
+        float c = offset.LengthSquared();
+
+        float seconds;
+        if (MathF.Abs(a) <= 1e-4f)
+        {
+            // |v| == the player's cap: the distance is linear in t.
+            seconds = MathF.Abs(b) > 1e-4f ? -c / b : horizon;
+            if (!float.IsFinite(seconds) || seconds <= 0f) seconds = horizon;
+        }
+        else
+        {
+            float discriminant = b * b - 4f * a * c;
+            if (discriminant < 0f)
+            {
+                seconds = horizon;
+            }
+            else
+            {
+                float root = MathF.Sqrt(discriminant);
+                float first = (-b - root) / (2f * a);
+                float second = (-b + root) / (2f * a);
+                seconds = float.MaxValue;
+                if (float.IsFinite(first) && first > 0f && first < seconds) seconds = first;
+                if (float.IsFinite(second) && second > 0f && second < seconds) seconds = second;
+                if (seconds == float.MaxValue) seconds = horizon;
+            }
+        }
+
+        if (!float.IsFinite(seconds) || seconds < 0f) seconds = 0f;
+        return targetXZ + targetVelocityXZ * MathF.Min(seconds, horizon);
     }
 
     /// <summary>

@@ -278,7 +278,7 @@ foreach (float halfLength in new[] { 1f, 2700f })
     var ball = new BallState { Position = new(0.4f, .11f, 0), LastTouchedByTeam = TeamId.Home, LastTouchedByPlayerId = 8 };
     var ai = new TacticalUtilityAiController(pitch2, comms);
     var obs = Observe(passer, new[] { passer, caller }, ball);
-    comms.RaiseCallForPass(9, 2.5f, false);
+    comms.RaiseCallForPass(TeamId.Home, 9, 2.5f, false);
     for (int i = 0; i < 12; i++) ai.Decide(obs, dt);
 
     var candidate = ai.LastCandidates.FirstOrDefault(c => c.ActionName.Contains("To#9"));

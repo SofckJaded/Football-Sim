@@ -368,12 +368,19 @@ public enum TeamId
 /// (zone/man share of the profile: direct counterattack marks one, possession two, gegenpress three) and it
 /// moves by an <b>explicit handover</b> with a recorded reason when the threat crosses into another
 /// defender's zone; one threat can never be marked twice. Trajectories differ from version 29.</item>
+/// <item><c>AiBehaviour 31</c> — five integration fixes. Line defenders now follow the allocator's band
+/// target as normal movement instead of their formation anchor; a moving target is met through an iterative
+/// lead (the reach query no longer declares a reachable lateral runner unreachable); a marking handover is
+/// still possible when the marking budget is full; the second man is a match-level election published in
+/// <see cref="FootballerObservation.SupportPresserPlayerId"/> instead of each defender's noisy independent
+/// answer; and a human's call for the pass is filtered to the caller's own team. Trajectories differ from
+/// version 30.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 30;
+    public const int AiBehaviour = 31;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -810,6 +817,18 @@ public sealed class FootballerObservation
     /// read of any opponent, so it crosses no knowledge boundary (unlike an opponent's intent).
     /// </summary>
     public int? BallResponderPlayerId { get; init; }
+
+    /// <summary>
+    /// The team-mate the match elected as the <b>second man</b> beside the ball responder this tick (A6.1),
+    /// or null when there is no match-level election behind this controller (standalone probes and
+    /// fixtures). Zero means the match looked and found no eligible second man.
+    ///
+    /// Resolving this independently from each defender's own picture is not safe: every observation carries
+    /// its own noise, so two equidistant centre-backs can each conclude that he is the nearest one. The
+    /// second man is a team commitment — exactly one player may step in — so it is elected once and
+    /// published like <see cref="BallResponderPlayerId"/>.
+    /// </summary>
+    public int? SupportPresserPlayerId { get; init; }
 
     /// <summary>
     /// Oldest age, in ticks, among the opponent estimates in <see cref="VisiblePlayers"/> (A2.2), or 0

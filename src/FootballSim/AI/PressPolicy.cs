@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using FootballSim.Core;
+using FootballSim.Locomotion;
 using FootballSim.Tactics;
 
 namespace FootballSim.AI;
@@ -84,7 +85,8 @@ public readonly record struct PressEvidence(
 /// The believing team's pressing picture for one player, built only from his own observation (A6.1).
 ///
 /// It answers the questions the balance needs, and it answers them the same way for every member of the
-/// team because every member sees the same team-mates (A2.2 observes team-mates in full):
+/// team because every member sees the same team-mates (A2.2 observes team-mates in full) and the second man
+/// is a match-level election published in <see cref="FootballerObservation.SupportPresserPlayerId"/>:
 /// <list type="bullet">
 /// <item>who is pressing (<see cref="PresserId"/> — the allocator's elected responder);</item>
 /// <item>who is the one defender allowed to step in beside him (<see cref="IsSupport"/>);</item>
@@ -159,7 +161,8 @@ public readonly record struct PressCandidate(
 ///
 /// <list type="bullet">
 /// <item><b>one second man.</b> Exactly one team-mate may step in beside the presser: the nearest
-///   central defender or holding midfielder to the carrier. Everybody else keeps the structure.</item>
+///   central defender or holding midfielder to the carrier, elected once for the team and published in
+///   every player's observation. Everybody else keeps the structure.</item>
 /// <item><b>cover first.</b> Stepping in is allowed when somebody is already goal-side of the press (the
 ///   line is the cover) or when the player is himself goal-side of the carrier — a defender stepping
 ///   forward from in front of the ball abandons nothing. With no cover and no goal-side position, the act
@@ -357,9 +360,16 @@ public static class PressPolicy
         if (!isPresser && presserId > 0 && TryFind(obs, presserId, out PerceivedEntity presser))
             presserXZ = new Vector2(presser.EstimatedPosition.X, presser.EstimatedPosition.Z);
 
-        int supportId = hasCarrier && !isPresser
-            ? ResolveSupport(obs, carrierXZ, presserId)
-            : 0;
+        int supportId = 0;
+        if (hasCarrier && !isPresser)
+        {
+            // With a match-level election this is the one declared second man; without one (standalone
+            // probes and fixtures) fall back to this player's own picture. The fallback is approximate by
+            // construction — the observation is noisy — which is exactly why the live path does not use it.
+            supportId = obs.SupportPresserPlayerId is int designated
+                ? Math.Max(0, designated)
+                : ResolveSupport(obs, carrierXZ, presserId);
+        }
         // A temporary responsibility (A3.3) is an exception layered on a team-mate's vacated slot: it takes
         // precedence over taking a second pressing role, or the gap it exists to protect opens again.
         bool isSupport = supportId == obs.SelfId && !obs.IsTemporaryResponsibility;
@@ -880,6 +890,65 @@ public static class PressPolicy
         }
 
         return bestId;
+    }
+
+    /// <summary>
+    /// Elects the one second man for a team from the team's shared inputs: its own players' exact positions
+    /// and the <see cref="TeamBelief"/> position of the carrier. Every player's observation is then given
+    /// the same answer, so two defenders cannot independently conclude that each is the nearest candidate
+    /// (which is what happens when each uses his own noisy copy of the same picture).
+    ///
+    /// Returns 0 when there is no carrier to press, no eligible central defender/holding midfielder, or the
+    /// nearest one is outside <see cref="SupportEngageMeters"/>. The caller publishes the value in
+    /// <see cref="FootballerObservation.SupportPresserPlayerId"/>.
+    /// </summary>
+    public static int ElectSupportPresser(
+        TeamId team,
+        IReadOnlyList<FootballerState> players,
+        TeamBelief opponents,
+        int? presserId,
+        int? carrierId,
+        int? humanPlayerId)
+    {
+        if (presserId is not int presser || carrierId is not int carrier) return 0;
+
+        // The shared picture, not an individual's noisy estimate: the election has to be one answer for
+        // the whole team or it is not an election.
+        bool found = false;
+        Vector2 carrierXZ = default;
+        IReadOnlyList<TeamBelief.Opponent> believed = opponents.Opponents;
+        for (int i = 0; i < believed.Count; i++)
+        {
+            if (believed[i].PlayerId != carrier) continue;
+            carrierXZ = believed[i].PositionXZ;
+            found = true;
+            break;
+        }
+
+        if (!found) return 0;
+
+        int bestId = 0;
+        float bestDistance = float.MaxValue;
+
+        for (int i = 0; i < players.Count; i++)
+        {
+            FootballerState player = players[i];
+            if (player.Team != team || !player.IsActiveOnPitch) continue;
+            if (player.Id == presser || player.Id == humanPlayerId) continue;
+            if (!IsSupportEligible(player.Role)) continue;
+
+            Vector2 playerXZ = new(player.Position.X, player.Position.Z);
+            float distance = Vector2.Distance(playerXZ, carrierXZ);
+            if (distance < bestDistance - 0.05f ||
+                (MathF.Abs(distance - bestDistance) <= 0.05f &&
+                 (bestId == 0 || player.Id < bestId)))
+            {
+                bestDistance = distance;
+                bestId = player.Id;
+            }
+        }
+
+        return bestDistance <= SupportEngageMeters ? bestId : 0;
     }
 
     private static int ResolveSupport(

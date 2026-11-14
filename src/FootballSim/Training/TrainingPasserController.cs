@@ -67,7 +67,7 @@ public sealed class TrainingPasserController : IFootballerController
             return FacingOnly(lookXZ);
         }
 
-        bool calledForPass = _communication.HasActiveCall &&
+        bool calledForPass = _communication.IsActiveCallFor(obs.SelfTeam) &&
                              _communication.HumanCallForPassPlayerId == _targetPlayerId;
 
         if (_passOnlyOnRequest && !calledForPass)

@@ -145,6 +145,53 @@ public sealed class TimeToReachModelTests
     }
 
     [Fact]
+    public void ALateralRunner_IsMetAtTheFuturePosition_NotTheInitialOne()
+    {
+        // The model used to build the path toward (10, 0) and then test it against a target that had
+        // moved to (10, 3t): a player who can reach (10, 7.5) in 1.88 s was declared unable to intercept
+        // him at all. Running at the lead point meets him long before the horizon.
+        ReachKinematics chaser = Kinematics(Vector2.Zero, new Vector2(1f, 0f));
+        Vector2 start = new(10f, 0f);
+        Vector2 velocity = new(0f, 3f);
+
+        ReachEstimate estimate = TimeToReachModel.ToMovingPoint(chaser, start, velocity);
+
+        Assert.True(estimate.Reachable, "the lateral runner is interceptable inside the horizon");
+        Assert.True(estimate.Seconds < 2.0f, $"intercept took {estimate.Seconds:F2}s");
+        Assert.True(estimate.MeetingPointXZ.X is > 9.5f and < 10.5f,
+            $"meeting point x={estimate.MeetingPointXZ.X:F2} is not on the runner's line");
+        Assert.True(estimate.MeetingPointXZ.Y > 2f,
+            $"meeting point y={estimate.MeetingPointXZ.Y:F2} is at the runner's start, not ahead of it");
+
+        // The reported meeting point is consistent with the reported time: the target really is there.
+        Vector2 targetAtArrival = start + velocity * estimate.Seconds;
+        Assert.True(Vector2.Distance(estimate.MeetingPointXZ, targetAtArrival) < 1e-3f,
+            $"meeting point {estimate.MeetingPointXZ} is not the target at {estimate.Seconds:F3}s " +
+            $"({targetAtArrival})");
+    }
+
+    [Fact]
+    public void AReachableLateralRunner_IsNotDeclaredUnreachableByTheInitialAim()
+    {
+        // The same geometry as the audit reproduction, stated as the consistency that was missing: if the
+        // runner's eventual position is reachable before the horizon, the meeting with the runner is too.
+        ReachKinematics chaser = Kinematics(Vector2.Zero, new Vector2(1f, 0f));
+        Vector2 start = new(10f, 0f);
+        Vector2 velocity = new(0f, 3f);
+        float horizon = TimeToReachModel.DefaultHorizonSeconds;
+        Vector2 eventual = start + velocity * horizon;
+
+        ReachEstimate toEventual = TimeToReachModel.ToPoint(chaser, eventual, horizon);
+        ReachEstimate meeting = TimeToReachModel.ToMovingPoint(chaser, start, velocity, horizon);
+
+        Assert.True(toEventual.Reachable);
+        Assert.True(meeting.Reachable);
+        Assert.True(meeting.Seconds <= toEventual.Seconds,
+            $"meeting the runner ({meeting.Seconds:F3}s) cannot be later than reaching his eventual " +
+            $"position ({toEventual.Seconds:F3}s)");
+    }
+
+    [Fact]
     public void Speed_SearchesStrictlyFaster_SoAFasterDefenderCanNeverLookSafer()
     {
         // The A2 exit gate's mechanism: pass safety is scored from arrival times, so a faster defender

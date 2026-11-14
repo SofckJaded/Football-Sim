@@ -582,6 +582,12 @@ public sealed class MatchSimulationEngine
                 _homeBelief, _awayBelief,
                 _tacticalCoordinator.HomeFormation, _tacticalCoordinator.AwayFormation);
 
+            // A6.1: one second man per team, elected once from the team's shared inputs. Resolving it
+            // independently in each defender's noisy observation let two equidistant centre-backs both
+            // decide they were the nearest eligible player and step in together.
+            int? homeSupportPresser = ElectSupportPresser(TeamId.Home, possession, humanPlayerId);
+            int? awaySupportPresser = ElectSupportPresser(TeamId.Away, possession, humanPlayerId);
+
             foreach (var p in _players)
             {
                 if (!p.IsActiveOnPitch) continue;
@@ -595,7 +601,8 @@ public sealed class MatchSimulationEngine
                     attackDirX, isTaker, profile, _perceptionRng,
                     possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick,
                     _tacticalCoordinator.ContextFor(p.Team), _teamJobs.SecurityOf(p.Team),
-                    _ballResponderElection.GetResponder(p.Team), _teamJobs.LineBandOf(p.Team));
+                    _ballResponderElection.GetResponder(p.Team), _teamJobs.LineBandOf(p.Team),
+                    p.Team == TeamId.Home ? homeSupportPresser : awaySupportPresser);
                 _latestObservations[p.Id] = obs;
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);
@@ -673,6 +680,33 @@ public sealed class MatchSimulationEngine
 
         _homeBelief.RebuildFromObservations(_players, _latestObservations);
         _awayBelief.RebuildFromObservations(_players, _latestObservations);
+    }
+
+    /// <summary>
+    /// Elects the team's second presser from its shared belief and its own exact player positions, or
+    /// returns null when the team is not defending against a controlled carrier. The value is published in
+    /// every player's observation so all of them resolve the same man (A6.1: exactly one second man).
+    /// </summary>
+    private int? ElectSupportPresser(
+        TeamId team,
+        BallPossessionSnapshot possession,
+        int? humanPlayerId)
+    {
+        if (possession.State != BallControlState.Controlled ||
+            possession.PossessionTeam == team ||
+            possession.ControllingPlayerId is not int carrierId)
+        {
+            return null;
+        }
+
+        TeamBelief belief = team == TeamId.Home ? _homeBelief : _awayBelief;
+        int elected = PressPolicy.ElectSupportPresser(
+            team, _players, belief,
+            _ballResponderElection.GetResponder(team), carrierId, humanPlayerId);
+
+        // Zero is a real answer ("nobody may step in"): publish it so the observation does not fall back
+        // to each defender's noisy independent resolution.
+        return elected;
     }
 
     /// <summary>
