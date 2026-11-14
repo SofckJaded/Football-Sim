@@ -393,6 +393,52 @@ public sealed class RunAdvertisementTests
             "without a promise the same runner is third on progression and is pruned: that is the A/B");
     }
 
+    /// <summary>
+    /// The A5 exit gate: "runs do not … force a return pass from a carrier". A team-mate announcing a region
+    /// <b>behind</b> the ball is information about one ball the carrier may play, not a debt he owes: every
+    /// forward option scores exactly the same as it does in a silent world. The A/B is the same world with
+    /// and without the shout, and the forward candidates are compared key by key.
+    /// </summary>
+    [Fact]
+    public void AnAnnouncedRunBehindTheCarrier_DoesNotChangeTheForwardOptions()
+    {
+        var comms = new MatchCommunicationContext();
+        comms.Runs.Publish(
+            TeamId.Home,
+            RunnerId,
+            Intent(RunKind.CheckShort, new Vector2(-8f, 6f), Regions.PublishedTick, Regions.MeetTick,
+                Regions.ExpiresTick),
+            Regions.PublishedTick);
+
+        var withShout = new CandidateGenerator(Pitch, comms) { TimeOnBall = 0.8f };
+        withShout.GenerateOnBallCandidates(CarrierObservation(), new Vector3(Pitch.HalfLength, 0f, 0f), 34f);
+
+        var silent = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
+        silent.GenerateOnBallCandidates(CarrierObservation(), new Vector3(Pitch.HalfLength, 0f, 0f), 34f);
+
+        List<string> shouted = ForwardOptions(withShout);
+        List<string> quiet = ForwardOptions(silent);
+
+        Assert.NotEmpty(quiet);
+        Assert.Equal(quiet, shouted);
+    }
+
+    /// <summary>Every candidate that plays the ball forward, as "key → score", in a stable order.</summary>
+    private static List<string> ForwardOptions(CandidateGenerator generator)
+    {
+        var options = new List<string>();
+        for (int i = 0; i < generator.CandidateCount; i++)
+        {
+            UtilityCandidate candidate = generator.Candidates[i];
+            if (candidate.TargetXZ is not Vector3 target) continue;
+            if (target.X <= 2f) continue;
+            options.Add($"{candidate.Key.Describe()} {candidate.UtilityScore:F4}");
+        }
+
+        options.Sort(StringComparer.Ordinal);
+        return options;
+    }
+
     [Fact]
     public void ACarrier_PlaysToTheAnnouncedRegion()
     {

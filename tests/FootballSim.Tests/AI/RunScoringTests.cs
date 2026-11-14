@@ -420,6 +420,40 @@ public sealed class RunScoringTests
 
     // ---- the controller integration ---------------------------------------------------------------
 
+    /// <summary>
+    /// The A5 exit gate: "runs do not oscillate between start/stop on small score changes". The world wobbles
+    /// by about half a metre for a second — the ball rolling, the picture shifting — while the player keeps
+    /// deciding. The run he adopted stays the same run: same kind, same meeting region, same adoption tick. A
+    /// system that re-scored from scratch every tick would start and stop him as the terms crossed over.
+    /// </summary>
+    [Fact]
+    public void ASmallScoreChange_DoesNotRestartTheRun()
+    {
+        var controller = new TacticalUtilityAiController(Pitch);
+
+        // Settle the commitment on a still world first.
+        FootballerObservation still = DepthObservation(tick: 100);
+        for (int i = 0; i < 12; i++) controller.Decide(still, 1f / 60f);
+        Assert.Equal(CandidateKind.Run, controller.LastSelected.Key.Kind);
+        Assert.NotNull(controller.Runs.Intent);
+
+        RunIntent adopted = controller.Runs.Intent!.Value;
+
+        for (int step = 1; step <= 60; step++)
+        {
+            // Half a metre of honest movement: the ball rolls and the picture with it.
+            var ballXZ = new Vector2(0.4f * MathF.Sin(step * 0.9f), 20f + 0.4f * MathF.Cos(step * 0.7f));
+            FootballerObservation drifted = DepthObservation(ballXZ, tick: 100 + step);
+
+            controller.Decide(drifted, 1f / 60f);
+
+            Assert.Equal(CandidateKind.Run, controller.LastSelected.Key.Kind);
+            Assert.Equal(adopted.Kind, controller.Runs.Intent!.Value.Kind);
+            Assert.Equal(adopted.Path.MeetXZ, controller.Runs.Intent!.Value.Path.MeetXZ);
+            Assert.Equal(adopted.AdoptedTick, controller.Runs.Intent!.Value.AdoptedTick);
+        }
+    }
+
     [Fact]
     public void TheController_AdoptsTheRunItChose_AndHoldsItLikeAJob()
     {
