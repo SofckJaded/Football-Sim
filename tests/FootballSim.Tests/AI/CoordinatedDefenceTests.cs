@@ -99,24 +99,49 @@ public sealed class CoordinatedDefenceTests
     /// <summary>
     /// The presser's approach point is on the inside of a touchline carrier — the line is then the second
     /// defender — and it is a point, not a direction: the trace can show it.
+    ///
+    /// Sampled while the fixture is still defending: A6.4 lets a pressing side counter-press at a turnover, and
+    /// a live counter-press can win the ball back well inside the old ninety-tick window. The property is about
+    /// the press, so it is measured on the last tick the press existed rather than on a fixed tick number.
     /// </summary>
     [Fact]
     public void ThePresserTakesTheInsideOfTheTouchlineCarrier()
     {
         var engine = new MatchSimulationEngine(ScenarioLibrary.TouchlinePress());
-        for (int tick = 0; tick < 90; tick++) engine.StepTick();
 
-        FootballerState presser = FindPresser(engine, TeamId.Home);
-        var controller = Assert.IsType<TacticalUtilityAiController>(engine.GetController(presser.Id));
+        FootballerState? presser = null;
+        TacticalUtilityAiController? controller = null;
+        Vector3? sampledTarget = null;
+        int sampledCarrierId = 0;
+        int samples = 0;
 
-        Assert.Equal(CandidateKind.Press, controller.LastSelected.Key.Kind);
-        Vector3? target = controller.LastSelected.TargetXZ;
-        Assert.NotNull(target);
+        for (int tick = 0; tick < 120; tick++)
+        {
+            engine.StepTick();
 
-        FootballerState carrier = engine.Players.Single(p => p.Id == engine.Possession.ControllingPlayerId);
+            FootballerState? candidate = TryFindPresser(engine, TeamId.Home);
+            if (candidate is null) continue;
+            if (engine.GetController(candidate.Id) is not TacticalUtilityAiController ai) continue;
+            if (ai.LastSelected.Key.Kind != CandidateKind.Press) continue;
+            if (ai.LastSelected.TargetXZ is not Vector3 target) continue;
+            if (engine.Possession.ControllingPlayerId is not int carrierId) continue;
+
+            presser = candidate;
+            controller = ai;
+            sampledTarget = target;
+            sampledCarrierId = carrierId;
+            samples++;
+        }
+
+        Assert.True(samples > 0, "the fixture never produced a home presser aiming at a carrier");
+        Assert.NotNull(presser);
+        Assert.NotNull(controller);
+        Assert.NotNull(sampledTarget);
+
+        FootballerState carrier = engine.Players.Single(p => p.Id == sampledCarrierId);
         Assert.True(carrier.Position.Z < 0f, "the fixture's carrier is on the negative touchline");
-        Assert.True(target!.Value.Z > carrier.Position.Z + 0.2f,
-            $"the presser aimed at Z={target.Value.Z:F1} from a carrier at {carrier.Position.Z:F1}: outside him");
+        Assert.True(sampledTarget!.Value.Z > carrier.Position.Z + 0.2f,
+            $"the presser aimed at Z={sampledTarget.Value.Z:F1} from a carrier at {carrier.Position.Z:F1}: outside him");
     }
 
     /// <summary>
@@ -215,13 +240,19 @@ public sealed class CoordinatedDefenceTests
 
     private static FootballerState FindPresser(MatchSimulationEngine engine, TeamId team)
     {
+        return TryFindPresser(engine, team) ??
+               throw new InvalidOperationException($"No elected ball responder for {team}.");
+    }
+
+    private static FootballerState? TryFindPresser(MatchSimulationEngine engine, TeamId team)
+    {
         foreach (FootballerState player in engine.Players)
         {
             if (player.Team != team || !player.IsActiveOnPitch) continue;
             if (engine.GetLastObservation(player.Id)?.IsDesignatedBallResponder == true) return player;
         }
 
-        throw new InvalidOperationException($"No elected ball responder for {team}.");
+        return null;
     }
 
     private static FootballerState? FindJobPlayer(MatchSimulationEngine engine, TeamId team, TacticalJob job)

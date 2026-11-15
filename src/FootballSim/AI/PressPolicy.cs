@@ -94,7 +94,9 @@ public readonly record struct PressEvidence(
 /// <item>whether anybody is actually behind the press (<see cref="HasCoverBehind"/>);</item>
 /// <item>how exposed the goal-side space already is (<see cref="BypassRisk01"/>);</item>
 /// <item>how much the situation itself argues for pressing (<see cref="Urgency01"/>, moderated by
-///   cover and bypass risk).</item>
+///   cover and bypass risk);</item>
+/// <item>what the team has already decided about the turnover (<see cref="Turnover"/>, A6.4) — a team fact
+///   published in the observation, like the elected second man.</item>
 /// </list>
 /// </summary>
 public readonly record struct PressSituation(
@@ -111,7 +113,8 @@ public readonly record struct PressSituation(
     float BypassRisk01,
     float Danger01,
     float Urgency01,
-    PressEvidence Evidence)
+    PressEvidence Evidence,
+    TurnoverResponse Turnover = TurnoverResponse.None)
 {
     /// <summary>No carrier in the picture: nothing here applies.</summary>
     public static PressSituation None => default;
@@ -122,7 +125,7 @@ public readonly record struct PressSituation(
             ? "no carrier"
             : $"carrier #{CarrierId} at ({CarrierXZ.X:F1}, {CarrierXZ.Y:F1}) · presser #{PresserId}" +
               $" · cover {(HasCoverBehind ? "behind" : "none")} · bypass {BypassRisk01:F2}" +
-              $" · urgency {Urgency01:F2} · {Evidence.Describe()}";
+              $" · urgency {Urgency01:F2} · turnover {Turnover} · {Evidence.Describe()}";
 }
 
 /// <summary>
@@ -173,6 +176,11 @@ public readonly record struct PressCandidate(
 /// <item><b>the cover shadows the lane.</b> The player the allocator made the cover drops behind the
 ///   presser to the point that blocks the opponent's most dangerous forward pass, scored by
 ///   <see cref="CoverShadow01"/> instead of by a fixed distance (A6.2).</item>
+/// <item><b>the team answer comes first.</b> Whatever the local picture says, a team that has answered its
+///   turnover with <see cref="TurnoverResponse.Retreat"/> does not add a second body in front of the ball,
+///   while one that chose <see cref="TurnoverResponse.CounterPress"/> has already compared the numbers and
+///   its second man steps in without passing this player's own urgency test (A6.4). The presser's standing
+///   depth is the same answer — see <see cref="PressStandoffFor"/>.</item>
 /// </list>
 ///
 /// <b>Knowledge boundary.</b> Every input is the player's own <see cref="FootballerObservation"/>: the
@@ -220,6 +228,13 @@ public static class PressPolicy
     /// tackle with nobody behind is how an unsupported press is beaten.
     /// </summary>
     public const float DelayStandoffMeters = 3.2f;
+
+    /// <summary>
+    /// Depth of the presser's standing point when the team has decided to <b>retreat</b> (A6.4), in metres.
+    /// Deeper than a jockey on purpose: the side is getting back behind the ball, so the man on the ball
+    /// shepherds him rather than holding him at tackling range.
+    /// </summary>
+    public const float RetreatStandoffMeters = 5f;
 
     /// <summary>Bypass risk above which the lone presser jockeys instead of closing to contact range.</summary>
     public const float JockeyBypassRisk = 0.30f;
@@ -395,7 +410,8 @@ public static class PressPolicy
         return new PressSituation(
             hasCarrier, carrierId, carrierXZ, carrierVel,
             presserId, presserXZ, isPresser, isSupport, isCover,
-            hasCoverBehind, bypass, danger, urgency, evidence);
+            hasCoverBehind, bypass, danger, urgency, evidence,
+            obs.TeamTurnover.Response);
     }
 
     /// <summary>
@@ -437,10 +453,25 @@ public static class PressPolicy
         // the press is covered (or he is himself goal-side, so stepping forward abandons nothing).
         if (situation.IsSupport)
         {
+            // A6.4: a team that has decided to retreat is not adding a second body in front of the ball —
+            // the whole point of the answer is that the side re-forms behind it.
+            if (situation.Turnover == TurnoverResponse.Retreat)
+            {
+                Vector2 keep = obs.TacticalJobAnchor is Vector3 jobAnchor
+                    ? new Vector2(jobAnchor.X, jobAnchor.Z)
+                    : selfXZ + goalSide * 1.5f;
+                buffer[0] = new PressCandidate(PressAction.Hold, keep, 0, 0.94f, 0f, IsPrimary: true);
+                return 1;
+            }
+
             bool goalSideOfCarrier = Vector2.Dot(selfXZ - situation.CarrierXZ, goalSide) > 0f;
             bool balanceHolds = situation.HasCoverBehind || goalSideOfCarrier;
             float carrierProj = situation.CarrierXZ.X * obs.AttackingDirectionX;
-            bool worthEngaging = carrierProj <= SupportOwnHalfProjX ||
+
+            // A6.4: a counter-press is the team's own answer to "are we enough bodies here?", so it replaces
+            // this player's local urgency estimate. Every other answer keeps the local test.
+            bool worthEngaging = situation.Turnover == TurnoverResponse.CounterPress ||
+                                 carrierProj <= SupportOwnHalfProjX ||
                                  situation.Urgency01 >= SupportUrgencyGate ||
                                  EvidenceStrength(situation.Evidence) >= 0.5f;
 
@@ -828,15 +859,26 @@ public static class PressPolicy
         TouchlineWeight * Clamp01(evidence.Touchline01));
 
     /// <summary>
-    /// The depth the presser stands at: close enough to tackle when somebody covers behind him, a jockey
-    /// when he is alone in front of his own goal. This is the whole "an unsupported press can lose to
-    /// delay" rule, expressed as a distance rather than as a different action, because the act — closing
-    /// the carrier down — is the same either way.
+    /// The depth the presser stands at. Three inputs, in this order:
+    /// <list type="number">
+    /// <item>A6.4's team answer — a decided counter-press closes to contact range because the numbers were
+    ///   already compared; a decided retreat shepherds at <see cref="RetreatStandoffMeters"/>; a decided
+    ///   delay/recover holds the jockeying depth whatever the cover is.</item>
+    /// <item>with no team answer (a standalone controller, or a settled block) the old rule stands: close
+    ///   down when somebody covers behind, jockey when the press can be bypassed.</item>
+    /// </list>
+    /// This is the whole "an unsupported press can lose to delay" rule, expressed as a distance rather than
+    /// as a different action, because the act — closing the carrier down — is the same either way.
     /// </summary>
-    public static float PressStandoffFor(in PressSituation situation) =>
-        !situation.HasCoverBehind && situation.BypassRisk01 > JockeyBypassRisk
+    public static float PressStandoffFor(in PressSituation situation) => situation.Turnover switch
+    {
+        TurnoverResponse.CounterPress => PressStandoffMeters,
+        TurnoverResponse.Retreat => RetreatStandoffMeters,
+        TurnoverResponse.DelayRecover => DelayStandoffMeters,
+        _ => !situation.HasCoverBehind && situation.BypassRisk01 > JockeyBypassRisk
             ? DelayStandoffMeters
-            : PressStandoffMeters;
+            : PressStandoffMeters
+    };
 
     /// <summary>The direction from a point toward this player's own goal.</summary>
     public static Vector2 GoalSideXZ(Vector2 fromXZ, in FootballerObservation obs, PitchDimensions pitch) =>

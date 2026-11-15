@@ -106,6 +106,10 @@ public readonly record struct RestartContext(RestartKind Kind, TeamId? Team)
 /// immediately, the zone has a deadband plus a structural dwell, a transition is a bounded clock, and
 /// the restart is owned by the rules engine. Consumers must read the member they need instead of
 /// mapping the whole context back to one enum.
+///
+/// <see cref="TransitionSeconds"/> is the transition clock itself (A6.4): the transition mode says which
+/// window the profile allows, the clock says how far into it the passage is, so a consumer can bound its
+/// own window against the same number instead of keeping a second clock.
 /// </summary>
 public readonly record struct TeamContext(
     TeamId Team,
@@ -115,7 +119,8 @@ public readonly record struct TeamContext(
     TeamZone Zone,
     TransitionMode Transition,
     RestartContext Restart,
-    bool IsEmergencyDefence)
+    bool IsEmergencyDefence,
+    float TransitionSeconds = 0f)
 {
     /// <summary>True when this team has the right to the ball, whether or not it is being held.</summary>
     public bool HasClaim => ClaimedTeam == Team;

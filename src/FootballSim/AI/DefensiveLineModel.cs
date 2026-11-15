@@ -36,7 +36,8 @@ public readonly record struct DefensiveLineBand(
     int DeepestRunnerId,
     float DeepestRunnerProjX,
     int KeeperId,
-    float KeeperReachMeters)
+    float KeeperReachMeters,
+    float TurnoverShiftMeters = 0f)
 {
     /// <summary>No usable band: the team is not defending, or it has no line to place.</summary>
     public static DefensiveLineBand None => default;
@@ -52,6 +53,7 @@ public readonly record struct DefensiveLineBand(
         ? "no band"
         : $"line {ProjX:F1} m in [{MinProjX:F1}, {MaxProjX:F1}] from anchors {AnchorMeanProjX:F1}" +
           $" · field {FieldShiftMeters:+0.0;-0.0} · pressure {PasserPressure01:F2} ({PressureShiftMeters:+0.0;-0.0})" +
+          $" · turnover {TurnoverShiftMeters:+0.0;-0.0}" +
           $" · ball cap {BallCapShiftMeters:+0.0;-0.0}" +
           $" · run {(HasCredibleRunner ? $"#{DeepestRunnerId} at {DeepestRunnerProjX:F1} ({RunShiftMeters:+0.0;-0.0})" : "none")}" +
           $" · keeper #{KeeperId} reach {KeeperReachMeters:F1} m ({KeeperShiftMeters:+0.0;-0.0})";
@@ -78,6 +80,11 @@ public readonly record struct DefensiveLineBand(
 ///   keeper's own reach over <see cref="SweepBudgetSeconds"/> sets a second cap, which is what makes a high
 ///   line a property of the keeper rather than of a profile field alone.</item>
 /// </list>
+///
+/// A6.4 adds one overlay on top of those four, not a fifth fact: the team's own turnover response
+/// (<see cref="TurnoverSituation.LineShiftMeters"/>) squeezes the line up after a decision to counter-press
+/// and asks it back after a decision to retreat, bounded by <see cref="MaxTurnoverShiftMeters"/> and by every
+/// cap above — the turn is a reason to move the line, never a licence to leave the block.
 ///
 /// <b>Knowledge boundary.</b> The band is a team-level fact built the way the allocator already works:
 /// opponents come only from <see cref="TeamBelief"/> (what this team has seen), the team's own players are
@@ -158,6 +165,17 @@ public static class DefensiveLineModel
     /// metres. A man ahead of the ball cannot be played in behind: a pass to him travels away from this goal.
     /// </summary>
     public const float RunnerAheadOfBallToleranceMeters = 1f;
+
+    // ---------------------------------------------------------------------------------------------
+    // The turnover response (A6.4).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Largest amount the team's turnover response may move the band, in metres. It is a squeeze or a drop,
+    /// not a repositioning, and the four inputs above still own the depth: a counter-press can ask the line
+    /// up and a retreat can ask it back, and the caps decide what either actually gets.
+    /// </summary>
+    public const float MaxTurnoverShiftMeters = 6f;
 
     // ---------------------------------------------------------------------------------------------
     // Keeper coverage.
@@ -249,7 +267,8 @@ public static class DefensiveLineModel
         TeamBelief opponents,
         TeamTacticalProfile profile,
         float attackDirX,
-        PitchDimensions pitch)
+        PitchDimensions pitch,
+        float turnoverShiftMeters = 0f)
     {
         float anchorSum = 0f;
         int lineCount = 0;
@@ -287,7 +306,13 @@ public static class DefensiveLineModel
         float pressure01 = PasserPressure01(players, team, possession, opponents, attackDirX);
         float pressureShift = PressurePushMeters * (pressure01 - 0.5f) * 2f;
 
-        float target = anchorMean + fieldShift + pressureShift;
+        // A6.4: the team's own answer to the turnover squeezes the line up or asks it back. It is bounded
+        // here as well as by the caller, because it must never become a fifth depth model.
+        float turnoverShift = float.IsFinite(turnoverShiftMeters)
+            ? Math.Clamp(turnoverShiftMeters, -MaxTurnoverShiftMeters, MaxTurnoverShiftMeters)
+            : 0f;
+
+        float target = anchorMean + fieldShift + pressureShift + turnoverShift;
 
         // Credible runs cap the line before anything else does.
         float runThreat01 = 0f;
@@ -345,7 +370,8 @@ public static class DefensiveLineModel
             DeepestRunnerId: runnerId,
             DeepestRunnerProjX: runnerProj,
             KeeperId: keeper?.Id ?? 0,
-            KeeperReachMeters: keeperReach);
+            KeeperReachMeters: keeperReach,
+            TurnoverShiftMeters: turnoverShift);
     }
 
     /// <summary>

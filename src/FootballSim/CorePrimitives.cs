@@ -375,12 +375,24 @@ public enum TeamId
 /// <see cref="FootballerObservation.SupportPresserPlayerId"/> instead of each defender's noisy independent
 /// answer; and a human's call for the pass is filtered to the caller's own team. Trajectories differ from
 /// version 30.</item>
+/// <item><c>AiBehaviour 32</c> — A6.4: a team <b>answers its own turnover</b> instead of the profile's
+/// counter-press window being a window nothing consumed. <see cref="AI.TurnoverResponseModel"/> compares four
+/// belief-side inputs — local arrival numbers (ours versus theirs through the one reach model), central
+/// security (the A3.6 <see cref="AI.RestDefence"/>, read for the side that just lost the ball), the new
+/// carrier's <b>constraint</b> (the share of the exits he can use that one of ours would reach first) and his
+/// <b>escape routes</b> (<see cref="AI.RestDefence.OutletExposure01"/>) — and chooses <b>counter-press</b>,
+/// <b>delay/recover</b> or <b>retreat</b> for the first six seconds after the loss. The profile's window is
+/// still a maximum: the counter-press answer needs it open, and a chosen answer cannot outlive it. The answer
+/// is held for half a second and published in <see cref="FootballerObservation.TeamTurnover"/>, where the
+/// existing owners of movement consume it: the defensive line's band moves up or down (inside the A6.3 caps),
+/// the marking mix gains or loses a man, the presser's standoff becomes contact / jockey / shepherd, and the
+/// second man is licensed only when the team chose to press. Trajectories differ from version 31.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 31;
+    public const int AiBehaviour = 32;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -860,6 +872,16 @@ public sealed class FootballerObservation
     /// Default is "no band", which a controller must treat as unknown rather than as depth zero.
     /// </summary>
     public AI.DefensiveLineBand TeamLineBand { get; init; }
+
+    /// <summary>
+    /// The team's answer to its own most recent turnover (A6.4): counter-press, hold the carrier up while the
+    /// side recovers, or retreat — with the four inputs the answer was compared on. It is a team fact built by
+    /// the allocator from the team's belief and its own players, published like
+    /// <see cref="TeamLineBand"/> so a defender's press depth and the second man's licence cannot disagree
+    /// with the decision the rest of the team made. Default is "no transition": a standalone controller, or a
+    /// team that has the ball or has already reorganised.
+    /// </summary>
+    public AI.TurnoverSituation TeamTurnover { get; init; }
 }
 
 public interface IFootballerController

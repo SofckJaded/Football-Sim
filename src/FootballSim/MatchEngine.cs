@@ -580,7 +580,8 @@ public sealed class MatchSimulationEngine
                 _ballResponderElection.GetResponder(TeamId.Away),
                 homeDirX, CurrentTick, _config.HomeProfile, _config.AwayProfile,
                 _homeBelief, _awayBelief,
-                _tacticalCoordinator.HomeFormation, _tacticalCoordinator.AwayFormation);
+                _tacticalCoordinator.HomeFormation, _tacticalCoordinator.AwayFormation,
+                _tacticalCoordinator.HomeContext, _tacticalCoordinator.AwayContext);
 
             // A6.1: one second man per team, elected once from the team's shared inputs. Resolving it
             // independently in each defender's noisy observation let two equidistant centre-backs both
@@ -602,7 +603,8 @@ public sealed class MatchSimulationEngine
                     possession, _ballResponderElection.IsResponder(p.Team, p.Id), _teamJobs.Get(p.Id), CurrentTick,
                     _tacticalCoordinator.ContextFor(p.Team), _teamJobs.SecurityOf(p.Team),
                     _ballResponderElection.GetResponder(p.Team), _teamJobs.LineBandOf(p.Team),
-                    p.Team == TeamId.Home ? homeSupportPresser : awaySupportPresser);
+                    p.Team == TeamId.Home ? homeSupportPresser : awaySupportPresser,
+                    _teamJobs.TurnoverOf(p.Team));
                 _latestObservations[p.Id] = obs;
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);

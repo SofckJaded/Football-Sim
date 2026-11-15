@@ -1,0 +1,31 @@
+﻿=== A6.3 defensive line evidence: 4 seeds x 7200 s ===
+Simulation version : ai32-rs1
+Profiles           : home Possession / Positional Play (marks 2, man-share 0.65) | away Direct Counterattack (marks 1, man-share 0.39)
+Units              : metres, attack-relative (own goal line = -52, opponent's = +52).
+                     spread = |actual line depth - band depth| over the players on the line;
+                     shift  = band depth - the line's mean formation-anchor depth.
+
+Seed 20260818: FT in 434196 ticks | score 2-7 | handovers 931
+
+Seed 20268737: FT in 434562 ticks | score 12-6 | handovers 869
+
+Seed 20276656: FT in 434356 ticks | score 6-3 | handovers 908
+
+Seed 20284575: FT in 434016 ticks | score 8-3 | handovers 947
+
+=== Totals over 4 seeds (4 completed, 289506 defending samples) ===
+Band depth         : mean -20.4 m | mean ball -0.8 m | mean anchors -16.4 m
+Shift from anchors : mean -4.0 m | mean absolute 5.1 m (the depth the same players would have held before A6.3)
+Line target spread : mean 1.19 m | worst tick mean 3.00 m @ tick 12 | 289105 samples with a line
+Local exceptions   : 367963 at the band | 95754 ball-side (+3 m) | 312673 far-side (-2 m) | 49167 clamped by the band's range
+Body-vs-band gap   : mean 3.66 m | worst 65.66 m (physical lag: the target moves before the player can arrive)
+Keeper context     : mean reach 17.7 m from mean depth -49.1 m
+Field position     : mean shift -0.1 m | moved >0.5 m in 94.7% of samples
+Passer pressure    : mean 0.46 | mean shift -0.3 m | moved >0.5 m in 66.0%
+Ball cap           : pulled the line back in 14.8% of samples | mean shift -1.05 m
+Credible runs      : capped the line in 14.6% of samples | mean shift -0.67 m
+Keeper coverage    : capped the line in 12.7% of samples | mean shift -0.61 m
+Markers            : mean 0.59 per defending sample (style caps 2/1)
+Handovers          : 3655 total | mean slots 2.3 m -> 1.1 m
+Observation match  : every line player saw the placed band
+RESULT: bands placed, shared and observed

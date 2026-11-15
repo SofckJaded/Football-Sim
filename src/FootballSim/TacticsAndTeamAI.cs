@@ -335,7 +335,8 @@ public sealed class TeamTacticalCoordinator
             zone,
             ResolveTransition(profile, hasClaim),
             _restart,
-            emergency);
+            emergency,
+            _claimSeconds);
     }
 
     private void RebuildContexts(float homeAttackDirX, float ballX)

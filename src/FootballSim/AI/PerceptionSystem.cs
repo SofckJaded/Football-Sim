@@ -124,7 +124,8 @@ public sealed class PerceptionSystem
         RestDefence teamSecurity = default,
         int? ballResponderPlayerId = null,
         DefensiveLineBand lineBand = default,
-        int? supportPresserPlayerId = null)
+        int? supportPresserPlayerId = null,
+        TurnoverSituation teamTurnover = default)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -240,6 +241,7 @@ public sealed class PerceptionSystem
             TacticalContext = teamContext,
             TeamSecurity = teamSecurity,
             TeamLineBand = lineBand,
+            TeamTurnover = teamTurnover,
             VisiblePlayers = visible,
             TeamProfile = teamProfile,
             SelfTendencies = self.Tendencies,

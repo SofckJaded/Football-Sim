@@ -16,21 +16,30 @@ namespace FootballSim.Tests.AI;
 /// The old allocator scored a single point per duty and could hand two teammates targets a few
 /// centimetres apart — measured at 0.4 m between DefensiveCover and NearOutlet in `wide-overload-4v3`,
 /// because a kept incumbent's region was not visible to the duties assigned after it. With regions
-/// scored against the teammates already placed, the fixtures hold their closest pair above 8 m.
+/// scored against the teammates already placed, the fixtures hold their closest pair at 5.5 m or more.
 /// </summary>
 public sealed class JobTargetStructureTests
 {
     /// <summary>
     /// Closest two home <b>off-ball</b> targets must stay apart. Measured minimum across the four fixtures is
-    /// 6.1 m, so 6 m is the assertion with margin rather than a pin on one frame.
+    /// <b>5.48 m</b> (`wide-overload-4v3`, t=156, NearOutlet #104 vs DefensiveCover #102); the other three
+    /// measure 7.35 m, 11.32 m and 18.67 m. So 5 m is the assertion: strict enough to catch the 0.4 m stacking
+    /// this test exists for, loose enough that a legitimate 5 m line/depth change does not read as a defect.
     ///
-    /// The <see cref="TacticalJob.BallResponder"/> is not an off-ball duty: he is the man on the ball (or the
-    /// receiver a pass is travelling to), and his assignment carries his shape slot rather than a place the
-    /// team is trying to occupy. Comparing that with a team-mate's target measured the carrier's drift from
-    /// his own slot — a 5.98 m "closest pair" that A6.1's changed defensive movement surfaced in `box-cross`.
-    /// `build-up-3v2` has only two outfield players, so it has a single off-ball duty and cannot express this
-    /// property at all; `counterattack-3v3` is the fourth fixture instead, and `build-up-3v2` keeps its own
-    /// "always offers a free receiver" test.
+    /// History, because the number has moved twice and both times for a measured reason: the original floor
+    /// was 6.1 m, and A6.1's defensive movement left a 5.98 m pair in `box-cross` — which was fixed by
+    /// excluding the <see cref="TacticalJob.BallResponder"/> rather than by lowering the threshold. A6.4 moved
+    /// the floor to 5.48 m in the 4v3: the away trio starts with nobody behind the ball, so the new turnover
+    /// response has it retreat, which deepens the block by up to 5 m and lets `DefensiveCover` and
+    /// `NearOutlet` refine 0.6 m closer together. The separation is a soft region preference (there is no hard
+    /// floor — `docs/KNOWN_ISSUES.md` records that), and 5.5 m between a short outlet and the cover behind the
+    /// ball is two adjacent duties, not the stacking the 0.4 m case was.
+    ///
+    /// The <see cref="TacticalJob.BallResponder"/> is still not an off-ball duty: he is the man on the ball (or
+    /// the receiver a pass is travelling to), and his assignment carries his shape slot rather than a place the
+    /// team is trying to occupy. `build-up-3v2` has only two outfield players, so it has a single off-ball duty
+    /// and cannot express this property at all; `counterattack-3v3` is the fourth fixture instead, and
+    /// `build-up-3v2` keeps its own "always offers a free receiver" test.
     /// </summary>
     [Theory]
     [InlineData("wide-overload-4v3")]
@@ -39,6 +48,7 @@ public sealed class JobTargetStructureTests
     [InlineData("box-cross")]
     public void TheOffBallTargets_AreNotStackedOnEachOther(string key)
     {
+        const float minimumSeparationMeters = 5f;
         ScenarioLibrary.Definition definition = ScenarioLibrary.All.Single(d => d.Key == key);
         var engine = new MatchSimulationEngine(definition.Build());
 
@@ -65,7 +75,7 @@ public sealed class JobTargetStructureTests
                 if (distance < closest)
                 {
                     closest = distance;
-                    Assert.True(distance >= 6f,
+                    Assert.True(distance >= minimumSeparationMeters,
                         $"{key} t={tick}: #{targets[i].Id}({targets[i].Job}) and #{targets[j].Id}({targets[j].Job}) " +
                         $"are {distance:F1} m apart");
                 }

@@ -47,6 +47,9 @@ public static class Program
             case "--lines":
                 return RunLineEvidence(args) ? 0 : 1;
 
+            case "--turnovers":
+                return RunTurnoverEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
@@ -58,6 +61,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --perf [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --deliveries [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --lines [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --turnovers [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -681,6 +685,173 @@ public static class Program
 
     /// <summary>How often the line probe samples a defending team, in ticks (0.1 s).</summary>
     private const int LineSampleInterval = 6;
+
+    /// <summary>
+    /// A6.4 evidence: how often each tournament answer is in force, what the four inputs looked like when it
+    /// was, and what it did to the line and the marking mix.
+    ///
+    /// Denominator: one live tick of one team, sampled every <see cref="TurnoverSampleInterval"/> ticks. A
+    /// sample is "in a transition" when the team has a turnover answer at all — the first
+    /// <see cref="TurnoverResponseModel.ResponseWindowSeconds"/> seconds after the ball was lost — and the
+    /// answer in force is the one that tick. The aggregates are the same fact the players' observations carry,
+    /// not a re-derived guess. Choice counts are episodes: a new count every time the published answer
+    /// changes, so "the side never counter-pressed" is distinguishable from "it counter-pressed and gave it
+    /// up".
+    /// </summary>
+    private static bool RunTurnoverEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 900f;
+
+        var homeProfile = TeamTacticalProfile.PossessionControl;
+        var awayProfile = TeamTacticalProfile.DirectCounterattack;
+
+        Console.WriteLine($"=== A6.4 turnover response evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Profiles           : home {homeProfile.Name} (pressing {homeProfile.PressingIntensity01:F2}," +
+                          $" window {homeProfile.CounterPressDurationSeconds:F1} s)" +
+                          $" | away {awayProfile.Name} (pressing {awayProfile.PressingIntensity01:F2}," +
+                          $" window {awayProfile.CounterPressDurationSeconds:F1} s)");
+        Console.WriteLine($"Response window    : {TurnoverResponseModel.ResponseWindowSeconds:F1} s after the loss," +
+                          $" held for {TurnoverResponseModel.MinimumHoldTicks} ticks");
+
+        int answers = 4;
+        var samples = new int[answers];
+        var localSum = new double[answers];
+        var securitySum = new double[answers];
+        var constraintSum = new double[answers];
+        var escapeSum = new double[answers];
+        var shiftSum = new double[answers];
+        var shiftCount = new int[answers];
+        var markerSum = new double[answers];
+        int windowSamples = 0;
+        int totalSamples = 0;
+        int matchesPlayed = 0;
+        int samplesInTransition = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = homeProfile,
+                AwayProfile = awayProfile
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+            for (int tick = 0; tick < maxTicks; tick++)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+                if (tick % TurnoverSampleInterval != 0) continue;
+
+                totalSamples += 2;
+                if (engine.TeamJobs.TurnoverOf(TeamId.Home).CounterPressWindowOpen) windowSamples++;
+
+                foreach (TeamId team in new[] { TeamId.Home, TeamId.Away })
+                {
+                    TurnoverSituation situation = engine.TeamJobs.TurnoverOf(team);
+                    int answer = (int)situation.Response;
+                    if (answer < 0 || answer >= answers) continue;
+
+                    samples[answer]++;
+                    if (!situation.Responds) continue;
+                    samplesInTransition++;
+
+                    localSum[answer] += situation.LocalNumbers01;
+                    securitySum[answer] += situation.CentralSecurity01;
+                    constraintSum[answer] += situation.CarrierConstraint01;
+                    escapeSum[answer] += situation.EscapeRoute01;
+
+                    DefensiveLineBand band = engine.TeamJobs.LineBandOf(team);
+                    if (band.IsValid)
+                    {
+                        shiftSum[answer] += band.TurnoverShiftMeters;
+                        shiftCount[answer]++;
+                    }
+
+                    int markers = 0;
+                    foreach (FootballerState player in engine.Players)
+                    {
+                        if (player.Team != team || !player.IsActiveOnPitch) continue;
+                        if (engine.TeamJobs.Get(player.Id)?.Job == TacticalJob.Marker) markers++;
+                    }
+
+                    markerSum[answer] += markers;
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matchesPlayed++;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks | " +
+                              $"score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals}");
+            foreach (TeamId team in new[] { TeamId.Home, TeamId.Away })
+            {
+                Console.WriteLine($"  {team,-5} choices: counter-press {engine.TeamJobs.TurnoverChoiceCount(team, TurnoverResponse.CounterPress),3}" +
+                                  $" | delay/recover {engine.TeamJobs.TurnoverChoiceCount(team, TurnoverResponse.DelayRecover),3}" +
+                                  $" | retreat {engine.TeamJobs.TurnoverChoiceCount(team, TurnoverResponse.Retreat),3}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matchesPlayed} completed, {totalSamples} team-samples) ===");
+        if (matchesPlayed == 0 || totalSamples == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"Transition samples : {samplesInTransition}/{totalSamples} " +
+                          $"({100.0 * samplesInTransition / totalSamples:F1} % of live ticks carried a turnover answer)");
+        Console.WriteLine($"Counter-press window: open on {100.0 * windowSamples / Math.Max(1, totalSamples / 2):F1} % of sampled ticks");
+
+        string[] names =
+        {
+            "no transition", "counter-press", "delay/recover", "retreat"
+        };
+
+        for (int i = 0; i < answers; i++)
+        {
+            int count = samples[i];
+            if (count == 0)
+            {
+                Console.WriteLine($"{names[i],-14}: never chosen");
+                continue;
+            }
+
+            int responded = i == 0 ? 0 : count;
+            string inputs = responded == 0
+                ? string.Empty
+                : $" | local {localSum[i] / responded:F2} security {securitySum[i] / responded:F2}" +
+                  $" constraint {constraintSum[i] / responded:F2} escape {escapeSum[i] / responded:F2}";
+            string body = shiftCount[i] == 0
+                ? string.Empty
+                : $" | line shift {(shiftSum[i] / shiftCount[i]):+0.00;-0.00} m, {markerSum[i] / responded:F2} markers";
+
+            Console.WriteLine($"{names[i],-14}: {100.0 * count / totalSamples,5:F1} % of samples" +
+                              $" ({count} ticks){inputs}{body}");
+        }
+
+        bool ok = matchesPlayed == seedCount && samplesInTransition > 0;
+        Console.WriteLine(ok
+            ? "RESULT: turnovers answered, inputs and consequences measured"
+            : "RESULT: incomplete, or no turnover was ever answered");
+        return ok;
+    }
+
+    /// <summary>How often the turnover probe samples each team, in ticks (0.2 s).</summary>
+    private const int TurnoverSampleInterval = 12;
 
     private static void Accumulate(
         int[] offered, int[] chosen, int[] executed, float[] marginSum, float[] marginWorst, int[] marginTicks,

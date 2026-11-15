@@ -302,9 +302,15 @@ public partial class MatchClientNode : Node3D
         string bandLine = band.IsValid
             ? $"\nLINE BAND: {band.ProjX:F1} m | range {band.MinProjX:F0}..{band.MaxProjX:F0}" +
               $" | field {band.FieldShiftMeters:+0.0;-0.0} | pressure {band.PasserPressure01:F2}" +
+              $" | turnover {band.TurnoverShiftMeters:+0.0;-0.0}" +
               $" | run {(band.HasCredibleRunner ? $"#{band.DeepestRunnerId}" : "none")}" +
               $" | keeper reach {band.KeeperReachMeters:F0} m"
             : "\nLINE BAND: none (in possession or no line)";
+
+        // A6.4: the team's answer to its own turnover, with the four inputs it was compared on. Read from the
+        // same object the players' observations carry, so the readout cannot disagree with the decision.
+        AI.TurnoverSituation turnover = _engine.TeamJobs.TurnoverOf(inspected.Team);
+        string turnoverLine = $"\nTURNOVER: {turnover.Describe()}";
 
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
             return contextLine + beliefLine;
@@ -316,7 +322,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return contextLine + bandLine + beliefLine + cellLine;
+        return contextLine + bandLine + turnoverLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 

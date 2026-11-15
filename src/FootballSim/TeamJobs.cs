@@ -66,7 +66,7 @@ public readonly record struct TeamJobAssignment(
 
 /// <summary>
 /// A6.3: one explicit transfer of marking responsibility. The threat crossed into another defender's zone,
-/// so the job moved from one player to another on a stated tick, with both slots' distances recorded — a
+/// so the job moved from one player to another on a stated tick, with both slots' distances recorded â€” a
 /// handover that can be explained, rather than a silent re-selection when the hold happened to expire.
 /// </summary>
 public readonly record struct MarkingHandover(
@@ -176,6 +176,9 @@ public sealed class TeamJobCoordinator
     /// <summary>The rest-defence picture from each team's last in-possession pass (A3.6).</summary>
     private readonly Dictionary<TeamId, RestDefence> _security = new();
 
+    /// <summary>The turnover response in force for each team (A6.4), with the tick it was chosen on.</summary>
+    private readonly Dictionary<TeamId, TurnoverCommitment> _turnovers = new();
+
     private TeamId? _lastPossessionTeam;
     private int _lastRecomputeTick = -RecomputeIntervalTicks;
 
@@ -209,6 +212,22 @@ public sealed class TeamJobCoordinator
     /// </summary>
     public DefensiveLineBand LineBandOf(TeamId team) =>
         _lineBands.TryGetValue(team, out DefensiveLineBand band) ? band : DefensiveLineBand.None;
+
+    /// <summary>
+    /// The turnover response in force for <paramref name="team"/> (A6.4), with the four inputs it was
+    /// compared on. The same object every player's observation carries, so a defender's press depth and the
+    /// line's band are placed from one decision rather than two.
+    /// </summary>
+    public TurnoverSituation TurnoverOf(TeamId team) =>
+        _turnovers.TryGetValue(team, out TurnoverCommitment? commitment)
+            ? commitment.Situation
+            : TurnoverSituation.None;
+
+    /// <summary>Lifetime count of times <paramref name="team"/> chose <paramref name="response"/> (A6.4).</summary>
+    public int TurnoverChoiceCount(TeamId team, TurnoverResponse response) =>
+        _turnovers.TryGetValue(team, out TurnoverCommitment? commitment)
+            ? commitment.CountOf(response)
+            : 0;
 
     /// <summary>
     /// Explicit marking handovers this match has made, oldest first (A6.3), bounded to
@@ -249,7 +268,9 @@ public sealed class TeamJobCoordinator
         TeamBelief homeOpponents,
         TeamBelief awayOpponents,
         TeamFormation homeFormation,
-        TeamFormation awayFormation)
+        TeamFormation awayFormation,
+        TeamContext? homeContext = null,
+        TeamContext? awayContext = null)
     {
         bool urgent = possessingTeam != _lastPossessionTeam;
         if (!urgent && tick - _lastRecomputeTick < RecomputeIntervalTicks)
@@ -269,9 +290,9 @@ public sealed class TeamJobCoordinator
         }
 
         AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick,
-            homeProfile, homeOpponents, homeFormation);
+            homeProfile, homeOpponents, homeFormation, homeContext);
         AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick,
-            awayProfile, awayOpponents, awayFormation);
+            awayProfile, awayOpponents, awayFormation, awayContext);
     }
 
     private void AssignTeam(
@@ -285,7 +306,8 @@ public sealed class TeamJobCoordinator
         int tick,
         TeamTacticalProfile profile,
         TeamBelief opponents,
-        TeamFormation formation)
+        TeamFormation formation,
+        TeamContext? context)
     {
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
 
@@ -299,14 +321,21 @@ public sealed class TeamJobCoordinator
         float wideZ = (_pitch.HalfWidth - 3f) * (0.55f + 0.55f * profile.AttackingWidth01);
         bool inPossession = possessingTeam == team;
 
+        // A6.4: the team's answer to the turnover is decided before anything is placed from it, because the
+        // line band and the marking mix are both consequences of that one answer.
+        TurnoverSituation turnover = UpdateTurnover(
+            team, players, ball, possession, opponents, profile, attackDirX, tick, context);
+
         // A6.3: one shared depth band for the line, from field position, passer pressure, credible runs and
         // the keeper's sweep cover. It is evaluated once per pass, before the keep loop can re-anchor a line
         // player, because a line that half-moved together is not a line.
-        _markerCap = DefensiveLineModel.MarkerCount(profile);
+        _markerCap = Math.Clamp(
+            DefensiveLineModel.MarkerCount(profile) + turnover.MarkerAdjustment, 1, MaxPerJob(TacticalJob.Marker));
         _handoversThisPass = 0;
         DefensiveLineBand band = inPossession
             ? DefensiveLineBand.None
-            : DefensiveLineModel.Evaluate(team, players, ball, possession, opponents, profile, attackDirX, _pitch);
+            : DefensiveLineModel.Evaluate(team, players, ball, possession, opponents, profile, attackDirX, _pitch,
+                turnover.LineShiftMeters);
         _lineBands[team] = band;
 
         FootballerState? carrier = null;
@@ -515,7 +544,7 @@ public sealed class TeamJobCoordinator
             // A6.3: how many opponents this profile marks man-for-man is a style decision, not a constant.
             AssignMarkers(players, available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, formation);
 
-            // A6.3: the remaining defenders hold one shared depth band — the whole line steps together,
+            // A6.3: the remaining defenders hold one shared depth band â€” the whole line steps together,
             // each man in his own lane, with the ball-side and far-side exceptions the band allows.
             foreach (FootballerState player in available.ToArray())
             {
@@ -555,12 +584,69 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
+    /// A6.4: decides this team's answer to its own turnover and holds it for the model's commitment window.
+    ///
+    /// The answer is a commitment, not a per-pass vote: <see cref="TurnoverResponseModel.Hold"/> keeps it
+    /// until it expires or the episode changes (a different carrier, the counter-press window closing, the
+    /// transition ending). The *inputs* published with it are always the fresh ones, so a trace can say what
+    /// the picture is now and why the answer was or was not changed.
+    /// </summary>
+    private TurnoverSituation UpdateTurnover(
+        TeamId team,
+        IReadOnlyList<FootballerState> players,
+        BallState ball,
+        BallPossessionSnapshot possession,
+        TeamBelief opponents,
+        TeamTacticalProfile profile,
+        float attackDirX,
+        int tick,
+        TeamContext? context)
+    {
+        if (!_turnovers.TryGetValue(team, out TurnoverCommitment? commitment))
+        {
+            commitment = new TurnoverCommitment { ChosenAtTick = tick };
+            _turnovers[team] = commitment;
+        }
+
+        // A caller with no team context behind it (a standalone allocator, a probe) has no transition clock
+        // and no transition mode: the model must not invent one from a default context.
+        if (context is not TeamContext teamContext)
+        {
+            commitment.Situation = TurnoverSituation.None;
+            commitment.CarrierId = 0;
+            commitment.ChosenAtTick = tick;
+            return commitment.Situation;
+        }
+
+        TurnoverSituation fresh = TurnoverResponseModel.Evaluate(
+            team, players, ball, possession, opponents, profile, attackDirX, _pitch,
+            teamContext.TransitionSeconds,
+            teamContext.Transition == TransitionMode.CounterPress);
+
+        bool carrierChanged = fresh.HasCarrier && commitment.CarrierId != 0 &&
+                              fresh.CarrierId != commitment.CarrierId;
+
+        TurnoverSituation next = TurnoverResponseModel.Hold(
+            commitment.Situation, fresh, tick - commitment.ChosenAtTick, carrierChanged);
+
+        if (next.Response != commitment.Situation.Response)
+        {
+            commitment.ChosenAtTick = tick;
+            if (next.Responds) commitment.Count(next.Response);
+        }
+
+        commitment.CarrierId = fresh.HasCarrier ? fresh.CarrierId : 0;
+        commitment.Situation = next;
+        return next;
+    }
+
+    /// <summary>
     /// A3.5: creates, maintains, hands back or expires the team's coverage request.
     ///
     /// A line player pulled more than <see cref="VacateDistanceMeters"/> out of the shape he was given,
     /// by the press job, leaves a gap behind him: the slot he owns, provided that slot is goal-side of
     /// the ball and inside play range. Nearby line players bid for it, the deterministic winner accepts,
-    /// and the request stays live until it ends with a stated reason — the source is back in his line
+    /// and the request stays live until it ends with a stated reason â€” the source is back in his line
     /// (handback), the press ended, the ball left the area, the hold expired, the owner left the pitch,
     /// or the passage turned over. One request per team is the cascade bound.
     /// </summary>
@@ -680,7 +766,7 @@ public sealed class TeamJobCoordinator
     ///
     /// The two references are deliberately different. *Is he out of the line* is measured against the
     /// shape anchor he was given, because that anchor already carries the line height and the ball
-    /// terms the side is playing with — a high line is not a vacancy. *What must be protected* is the
+    /// terms the side is playing with â€” a high line is not a vacancy. *What must be protected* is the
     /// slot he owns, because that is the region of the formation that is now empty and it does not move
     /// while the ball does.
     /// </summary>
@@ -720,7 +806,7 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
-    /// A3.5: collects the bids for a vacated region — every eligible line player who could slide across,
+    /// A3.5: collects the bids for a vacated region â€” every eligible line player who could slide across,
     /// with the score, the travel, the role fit and how near his own slot is. The request keeps them, so
     /// the accepted owner can be explained after the fact.
     /// </summary>
@@ -850,10 +936,10 @@ public sealed class TeamJobCoordinator
     /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
     ///
     /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
-    /// move the job — but responsibility for a threat belongs to the defender whose place in the formation is
+    /// move the job â€” but responsibility for a threat belongs to the defender whose place in the formation is
     /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
-    /// another slot — by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
-    /// — the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
+    /// another slot â€” by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
+    /// â€” the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
     /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
     /// distances so the handover can be explained after the fact. At most
     /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
@@ -887,10 +973,10 @@ public sealed class TeamJobCoordinator
     /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
     ///
     /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
-    /// move the job — but responsibility for a threat belongs to the defender whose place in the formation is
+    /// move the job â€” but responsibility for a threat belongs to the defender whose place in the formation is
     /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
-    /// another slot — by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
-    /// — the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
+    /// another slot â€” by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
+    /// â€” the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
     /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
     /// distances so the handover can be explained after the fact. At most
     /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
@@ -913,7 +999,7 @@ public sealed class TeamJobCoordinator
         float incumbentSlotDistance = Vector2.Distance(
             new Vector2(incumbentSlot.X, incumbentSlot.Z), threat.PositionXZ);
 
-        // The zone owner is normally a defender *on the line* — held this pass, so not in `available`. The
+        // The zone owner is normally a defender *on the line* â€” held this pass, so not in `available`. The
         // handover is allowed to take him off the line (the released marker takes his place on it), which is
         // what "pick him up" means; anyone with a contextual duty of his own is not a candidate.
         FootballerState? owner = null;
@@ -1076,7 +1162,7 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
-    /// A3.4: bounded local search for a better region around the duty's nominal target — two rings of
+    /// A3.4: bounded local search for a better region around the duty's nominal target â€” two rings of
     /// lateral and depth probes, clamped to the pitch (and to the offside line when the duty is an
     /// attacking one). Two rings are deliberate: the scoring penalises stacking on a teammate, and a
     /// single ring cannot always pay the separation back, so the search has to be able to reach the
@@ -1286,6 +1372,29 @@ public sealed class TeamJobCoordinator
 
     /// <summary>A part of the shape a teammate had to leave, and the world region that stands in for it.</summary>
     private readonly record struct Vacancy(int SourcePlayerId, Vector3 Region);
+
+    /// <summary>
+    /// One team's turnover commitment (A6.4): the answer in force, when it was chosen, which opponent's
+    /// possession it was chosen against, and how often each answer has been chosen over the match â€” the
+    /// choice counts are how a probe distinguishes "the side never counter-pressed" from "it counter-pressed
+    /// and gave it up".
+    /// </summary>
+    private sealed class TurnoverCommitment
+    {
+        private readonly int[] _choices = new int[4];
+
+        public TurnoverSituation Situation;
+        public int ChosenAtTick;
+        public int CarrierId;
+
+        public int CountOf(TurnoverResponse response) =>
+            (int)response is >= 0 and < 4 ? _choices[(int)response] : 0;
+
+        public void Count(TurnoverResponse response)
+        {
+            if ((int)response is >= 0 and < 4) _choices[(int)response]++;
+        }
+    }
 
     /// <summary>The point the shape wants this player at, for "is he out of the line" tests.</summary>
     private static Vector2 AnchorXZ(FootballerState player) =>
