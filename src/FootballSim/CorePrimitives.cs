@@ -397,12 +397,21 @@ public enum TeamId
 /// flight time, so an out-of-reach shot is not dived for. A shot that is on target is a shot, not a loose ball:
 /// the keeper does not fall through to a sweep when the dive is declined. Trajectories differ from version
 /// 32.</item>
+/// <item><c>AiBehaviour 34</c> — A6.6: the keeper's <b>handling is gated on the law</b> (Law 12) through one
+/// model, <see cref="Rules.GoalkeeperLawModel"/>: hands only inside his own penalty area, never on a ball a
+/// team-mate deliberately kicked to him, and never on a ball nobody has touched since his own release. The
+/// verdict is the <i>execution's</i> contact reach, height, body-orientation rule and claim priority, so a
+/// keeper outside his area plays as an outfielder and a back-pass is played with the feet rather than caught
+/// by accident; the keeper's own decision reads the same verdict, so he no longer dives for a shot whose only
+/// interception point is outside his area. The ball carries <see cref="Physics.BallState.LastPlay"/> (kind,
+/// kick intent, player, team) — a deliberate kick is not a deflection, and the old last-touch-team test could
+/// not tell them apart. Trajectories differ from version 33.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 33;
+    public const int AiBehaviour = 34;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -572,6 +581,44 @@ public readonly record struct BallContactEvent(
     /// A keeper catch/parry. It is a "deliberate save", which by law does **not** reset offside.
     /// </summary>
     public bool IsSaveOrDeflection => Kind == BallContactKind.Save;
+}
+
+/// <summary>
+/// How the ball was last put into play (A6.6): the contact kind, the kick that produced it and who
+/// made it. It exists because one law cannot be decided from "the ball's last toucher" alone — Law 12
+/// distinguishes a ball <b>deliberately kicked</b> to the goalkeeper from one that merely deflected off
+/// a team-mate, and the goalkeeper's own release from anybody else's play.
+///
+/// The fact is public play information, exactly like <see cref="Physics.BallState.LastTouchedByTeam"/>: every
+/// player saw the pass. It is therefore safe to publish in an observation, where it must not be confused
+/// with the ownership model (which is about who <i>has</i> the ball).
+/// </summary>
+/// <param name="Kind">The contact that played it.</param>
+/// <param name="Intent">The kick, when <paramref name="Kind"/> is <see cref="BallContactKind.Kick"/>.</param>
+/// <param name="PlayerId">Who played it; null when the play is unknown (a restart setup, a seeded ball).</param>
+/// <param name="Team">That player's team.</param>
+public readonly record struct BallLastPlay(
+    BallContactKind Kind,
+    KickIntentType Intent,
+    int? PlayerId,
+    TeamId? Team)
+{
+    /// <summary>
+    /// No play is recorded: a restart has reset the ball, or a fixture seeded one. Every law that reads
+    /// this must treat "unknown" as unconstrained rather than guessing a play.
+    /// </summary>
+    public static BallLastPlay None => new(BallContactKind.Kick, KickIntentType.None, null, null);
+
+    /// <summary>True when a real contact is recorded here.</summary>
+    public bool IsKnown => PlayerId.HasValue;
+
+    /// <summary>
+    /// True when the play was a deliberate kick, i.e. the thing Law 12's back-pass clause names. A header
+    /// is a deliberate play but not a kick, and a control touch or a tackle is neither, so neither is covered
+    /// by that clause. A throw-in is executed as a kick contact in this engine, so it is covered here too.
+    /// </summary>
+    public bool IsDeliberateKick =>
+        Kind == BallContactKind.Kick && Intent != KickIntentType.Header;
 }
 
 /// <summary>
@@ -769,6 +816,14 @@ public sealed class FootballerObservation
     /// it), not the possession model — use <see cref="BallControlState"/> for "who has the ball".
     /// </summary>
     public TeamId? BallLastTouchedByTeam { get; init; }
+
+    /// <summary>
+    /// How the ball was last put into play (A6.6), when the engine knows. It lets a controller answer a
+    /// law question the ownership model cannot: a keeper may not handle a ball a team-mate deliberately
+    /// kicked to him, but may handle one that merely deflected off him. It is public play information,
+    /// like <see cref="BallLastTouchedByTeam"/>, and never an opponent's intent or a live attribute.
+    /// </summary>
+    public BallLastPlay BallLastPlay { get; init; } = BallLastPlay.None;
     public required Vector3 TacticalAnchorPosition { get; init; }
     public required float AttackingDirectionX { get; init; }
     public required float MatchTimeSeconds { get; init; }

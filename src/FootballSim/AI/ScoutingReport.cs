@@ -55,7 +55,8 @@ public readonly record struct CapabilityEstimate(
             Balance01: 1f,
             Stamina01: 1f,
             BallContactRules.ReachRadius(
-                ReachRadius, goalkeeper, isDiving: false, requestingTackle: false, receivingOrDribbling: true));
+                ReachRadius, keeperHandling: goalkeeper, isDiving: false, requestingTackle: false,
+                receivingOrDribbling: true));
 }
 
 /// <summary>

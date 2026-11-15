@@ -166,6 +166,22 @@ public sealed class MatchScenario
     /// <summary>Sets the ball's last-touch team without inventing a contact event.</summary>
     public TeamId? BallLastTouchedByTeam { get; init; }
 
+    /// <summary>
+    /// How the seeded ball was last played (A6.6), for a fixture that starts after a specific play. Only the
+    /// kind and the intent are given; the player and team default to <see cref="BallOwnerPlayerId"/> and its
+    /// team, because a seeded play is by definition the owner's.
+    /// </summary>
+    public BallContactKind BallLastPlayKind { get; init; } = BallContactKind.Kick;
+
+    /// <summary>The kick <see cref="BallLastPlayKind"/> refers to, when it is a kick.</summary>
+    public KickIntentType BallLastPlayIntent { get; init; } = KickIntentType.GroundPass;
+
+    /// <summary>
+    /// Who played the seeded ball, when that is not <see cref="BallOwnerPlayerId"/> — the case a loose ball
+    /// needs: nobody has it, but a named team-mate just kicked it (a back-pass fixture, A6.6).
+    /// </summary>
+    public int? BallLastPlayPlayerId { get; init; }
+
     public List<ScenarioPlayer> Players { get; } = new();
 
     public int HomeCount => Players.Count(p => p.Team == TeamId.Home);
@@ -236,7 +252,37 @@ public sealed class MatchScenario
             Velocity = BallVelocity,
             AngularVelocity = BallAngularVelocity,
             LastTouchedByTeam = BallLastTouchedByTeam ?? (BallOwnerPlayerId is int ownerId ? FindPlayer(ownerId).Team : null),
-            LastTouchedByPlayerId = BallOwnerPlayerId
+            LastTouchedByPlayerId = BallOwnerPlayerId,
+            LastPlay = CreateLastPlay()
+        };
+    }
+
+    /// <summary>
+    /// The play history the seeded ball starts with (A6.6). A fixture that begins mid-passage must state how
+    /// the ball got there, or a law that reads the last play would treat a back-pass as open play: an
+    /// in-flight ball was kicked by its passer, a held ball was caught by its keeper, and a loose ball has
+    /// whatever play <see cref="BallLastPlayPlayerId"/> names (none by default).
+    /// </summary>
+    private BallLastPlay CreateLastPlay()
+    {
+        if (BallLastPlayPlayerId is int playedById)
+        {
+            return new BallLastPlay(BallLastPlayKind, BallLastPlayIntent, playedById,
+                FindPlayer(playedById).Team);
+        }
+
+        if (BallOwnerPlayerId is not int ownerId) return BallLastPlay.None;
+
+        ScenarioPlayer owner = FindPlayer(ownerId);
+        return BallSetup switch
+        {
+            ScenarioBallSetup.InFlightPass => new BallLastPlay(
+                BallLastPlayKind, BallLastPlayIntent, ownerId, owner.Team),
+            ScenarioBallSetup.KeeperHeld => new BallLastPlay(
+                BallContactKind.Save, KickIntentType.None, ownerId, owner.Team),
+            ScenarioBallSetup.Controlled => new BallLastPlay(
+                BallContactKind.Collection, KickIntentType.None, ownerId, owner.Team),
+            _ => BallLastPlay.None
         };
     }
 

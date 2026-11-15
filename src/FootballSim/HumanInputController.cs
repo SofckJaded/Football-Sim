@@ -3,6 +3,7 @@ using System.Numerics;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
+using FootballSim.Rules;
 
 namespace FootballSim.Input;
 
@@ -67,6 +68,12 @@ public sealed class HumanInputController : IFootballerController
     public bool IsSpectatorMode { get; private set; }
 
     private readonly PassPlanner _passPlanner = new(new PitchDimensions());
+
+    /// <summary>
+    /// Pitch the input's own reach predictions assume. It mirrors the planner above: the match is played
+    /// on the standard pitch, and a custom one would need the engine to hand the input the same instance.
+    /// </summary>
+    private readonly PitchDimensions _pitch = new();
 
     public Vector2 MoveStickXZ { get; set; }
 
@@ -377,12 +384,21 @@ public sealed class HumanInputController : IFootballerController
 
         // Audit F17: use the same physical reach the execution layer applies, instead of a private
         // 1.125 m planar range that let a press be "fired" where execution could never play the ball.
+        // A6.6: a locked human keeper reaches with his hands only where the law allows them, exactly as
+        // the execution layer decides it, or the input would again promise a contact that cannot happen.
         bool receivingOrDribbling = BallContactRules.IsReceivingOrDribbling(
             observation.BallLastTouchedByTeam,
             observation.BallLastTouchedByPlayerId,
             observation.SelfTeam,
             observation.SelfId);
-        bool isGoalkeeper = observation.SelfRole == TacticalRole.Goalkeeper;
+        bool isGoalkeeper = observation.SelfRole == TacticalRole.Goalkeeper &&
+                            GoalkeeperLawModel.EvaluateHandling(
+                                _pitch,
+                                -observation.AttackingDirectionX * _pitch.HalfLength,
+                                observation.SelfId,
+                                observation.SelfTeam,
+                                observation.PerceivedBallPosition,
+                                observation.BallLastPlay).MayUseHands;
         float strikeReach = BallContactRules.ReachRadius(
             observation.SelfAttributes.ReachRadius,
             isGoalkeeper,

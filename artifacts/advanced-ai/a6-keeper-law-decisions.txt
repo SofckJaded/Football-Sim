@@ -1,0 +1,23 @@
+=== A6.6 goalkeeper trajectory and handling-law evidence: 4 seeds x 14400 s ===
+Simulation version : ai34-rs1
+Sweep race         : horizon 2.0 s, margin 0.35 s, commit range 12.5 m, handling height 2.42 m
+Shot decision      : horizon 0.90 s, mouth slack 0.6 m
+Handling law       : own penalty area 16.5 m x 40.32 m (Law 12: no deliberate team-mate kick, no second handling after release)
+Trajectory         : 32 samples every 15 per second, real solver
+
+Seed 20260818: FT in 868858 ticks | score 11-2 | 144810 keeper samples
+
+Seed 20268737: FT in 868702 ticks | score 5-6 | 289594 keeper samples
+
+Seed 20276656: FT in 868540 ticks | score 8-4 | 434352 keeper samples
+
+Seed 20284575: FT in 868532 ticks | score 5-3 | 579108 keeper samples
+
+=== Totals over 4 seeds (4 completed, 579108 keeper samples) ===
+  KeeperFirst         :   258 episodes | keeper 0.70 s vs opponent unreachable
+  Contested           :   176 episodes | keeper 1.48 s vs opponent 0.47 s
+  KeeperCannotReach   :   374 episodes
+Sweep verdicts     : 808 episodes, 434 taken, 374 declined
+Handling law       : 552041 of 579108 keeper samples barred from the hands (95.3 %) | Allowed 27067, OutsideOwnPenaltyArea 545901, TeamMateDeliberateKick 5379, SecondHandling 761
+Shots on target    : 426 | dived for 235 (mean intercept 0.20 s) | declined as out of reach 191 | declined as unhandleable 0
+RESULT: sweeps and dives decided on the ball's real trajectory, handling gated on the law

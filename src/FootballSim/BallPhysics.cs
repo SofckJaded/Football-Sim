@@ -122,6 +122,15 @@ public sealed class BallState
     public BallContactSurface ContactState { get; set; } = BallContactSurface.Air;
     public int? LastTouchedByPlayerId { get; set; }
     public TeamId? LastTouchedByTeam { get; set; }
+
+    /// <summary>
+    /// How the ball was last put into play (A6.6). A law that distinguishes a deliberate kick from a
+    /// deflection needs this; <see cref="LastTouchedByTeam"/> alone cannot tell them apart. Reset to
+    /// <see cref="BallLastPlay.None"/> whenever a restart re-places the ball, so a stale back-pass can
+    /// never follow the ball into the next passage of play.
+    /// </summary>
+    public BallLastPlay LastPlay { get; set; } = BallLastPlay.None;
+
     public List<BallCollisionEvent> RecentCollisions { get; } = new();
 
     /// <summary>
@@ -156,6 +165,7 @@ public sealed class BallState
         ContactState = ContactState,
         LastTouchedByPlayerId = LastTouchedByPlayerId,
         LastTouchedByTeam = LastTouchedByTeam,
+        LastPlay = LastPlay,
         HeldByPlayerId = HeldByPlayerId,
         HeldReleaseDelaySeconds = HeldReleaseDelaySeconds,
         InvalidStateRecoveries = InvalidStateRecoveries

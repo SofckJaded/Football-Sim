@@ -24,6 +24,7 @@ public sealed class GoalkeeperDecisionTests
 
     private const int KeeperId = 1;
     private const int StrikerId = 15;
+    private const int MateId = 6;
 
     // ---------------------------------------------------------------------------------------------
     // The gate clause: arrival perturbations.
@@ -145,6 +146,69 @@ public sealed class GoalkeeperDecisionTests
     }
 
     /// <summary>
+    /// A6.6: reach is not permission. The same shot, the same keeper, the keeper's distance from his goal
+    /// the only difference: standing inside his area the body can reach the ball's path and the hands may
+    /// use it, so he dives; standing just outside the area the body can still reach it, but handling it
+    /// would be an offence, so he must not.
+    /// </summary>
+    [Fact]
+    public void AShotReachableOnlyOutsideTheArea_IsNotDivedFor()
+    {
+        // A 30 m/s shot from 19.5 m out crosses the goal line inside the 0.9 s horizon. The area line is
+        // 16.5 m from the goal, so -36.6 m is inside it and -34.2 m is 2 m outside: the ball passes each
+        // keeper at a sample the body can reach, and only the legality of the handling differs.
+        var controller = new GoalkeeperController(Pitch);
+        BallState shot = ShotFrom(new Vector3(-33f, 0.11f, 0.6f), new Vector3(-30f, 0f, 0f));
+
+        FootballerState insideKeeper = Keeper(new Vector3(-36.6f, 0f, 1.8f));
+        FootballerCommand inside = controller.Decide(
+            Observe(insideKeeper, shot, TeamId.Away), dt: 1f / 60f);
+
+        Assert.True(controller.LastShot.IsOnTarget, controller.LastShot.Describe());
+        Assert.True(controller.LastShot.CanIntercept, controller.LastShot.Describe());
+        Assert.Equal(GoalkeeperHandlingReason.Allowed, controller.LastShot.HandlingBlocked);
+        Assert.True(inside.RequestKeeperDive, "the keeper did not dive for a shot he may handle");
+
+        FootballerState outsideKeeper = Keeper(new Vector3(-34.2f, 0f, 1.8f));
+        FootballerCommand outside = controller.Decide(
+            Observe(outsideKeeper, shot, TeamId.Away), dt: 1f / 60f);
+
+        Assert.True(controller.LastShot.IsOnTarget, controller.LastShot.Describe());
+        Assert.True(controller.LastShot.CanIntercept,
+            $"the fixture needs a physically reachable ball: {controller.LastShot.Describe()}");
+        Assert.Equal(GoalkeeperHandlingReason.OutsideOwnPenaltyArea, controller.LastShot.HandlingBlocked);
+        Assert.False(controller.LastShot.CanSave, "a shot outside the area was declared saveable");
+        Assert.False(outside.RequestKeeperDive, "the keeper dived for a ball he may not handle");
+        Assert.DoesNotContain("DiveSave", controller.GetDebugSummary());
+    }
+
+    /// <summary>
+    /// A6.6: the handling gate is the same one the execution layer applies. A ball at 1.8 m is above the
+    /// keeper's feet and inside his hands — an opponent's ball he plays, a team-mate's deliberate kick he
+    /// must leave alone (his feet cannot reach it), which is exactly the "played with the feet" rule.
+    /// </summary>
+    [Fact]
+    public void ABackPassAtHandlingHeight_IsNotGathered()
+    {
+        var controller = new GoalkeeperController(Pitch);
+        FootballerState keeperState = Keeper(new Vector3(-51.9f, 0f, 0f));
+        BallState ball = ShotFrom(new Vector3(-51.3f, 1.8f, 0f), Vector3.Zero);
+
+        FootballerCommand opponentsBall = controller.Decide(
+            Observe(keeperState, ball, TeamId.Away), dt: 1f / 60f);
+        Assert.True(controller.LastHandling.MayUseHands, controller.LastHandling.Describe());
+        Assert.NotEqual(KickIntentType.None, opponentsBall.KickType);
+
+        var backPass = new BallLastPlay(BallContactKind.Kick, KickIntentType.GroundPass, MateId, TeamId.Home);
+        FootballerCommand matesBall = controller.Decide(
+            Observe(keeperState, ball, TeamId.Home, lastPlay: backPass), dt: 1f / 60f);
+
+        Assert.False(controller.LastHandling.MayUseHands);
+        Assert.Equal(GoalkeeperHandlingReason.TeamMateDeliberateKick, controller.LastHandling.Reason);
+        Assert.Equal(KickIntentType.None, matesBall.KickType);
+    }
+
+    /// <summary>
     /// Nothing carries over between decisions: a shot evaluated last tick must not still be "on target" after
     /// the ball has become a slow loose ball somewhere else.
     /// </summary>
@@ -199,7 +263,8 @@ public sealed class GoalkeeperDecisionTests
         FootballerState keeper,
         BallState ball,
         TeamId possession,
-        Vector2? strikerXZ = null)
+        Vector2? strikerXZ = null,
+        BallLastPlay? lastPlay = null)
     {
         var visible = new List<PerceivedEntity>
         {
@@ -223,8 +288,9 @@ public sealed class GoalkeeperDecisionTests
             PerceivedBallPosition = ball.Position,
             PerceivedBallVelocity = ball.Velocity,
             PossessingTeam = possession,
-            BallLastTouchedByPlayerId = possession == TeamId.Home ? keeper.Id : StrikerId,
-            BallLastTouchedByTeam = possession,
+            BallLastTouchedByPlayerId = lastPlay?.PlayerId ?? (possession == TeamId.Home ? keeper.Id : StrikerId),
+            BallLastTouchedByTeam = lastPlay?.Team ?? possession,
+            BallLastPlay = lastPlay ?? BallLastPlay.None,
             BallControlState = possession == TeamId.Home
                 ? BallControlState.Controlled
                 : BallControlState.Loose,

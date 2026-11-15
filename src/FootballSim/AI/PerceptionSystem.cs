@@ -218,6 +218,7 @@ public sealed class PerceptionSystem
             PossessingTeam = confirmedPossessingTeam ?? ballPossession.PossessionTeam ?? ball.LastTouchedByTeam,
             BallLastTouchedByPlayerId = ball.LastTouchedByPlayerId,
             BallLastTouchedByTeam = ball.LastTouchedByTeam,
+            BallLastPlay = ball.LastPlay,
             BallControlState = ballPossession.State,
             BallControllingPlayerId = ballPossession.ControllingPlayerId,
             IntendedReceiverId = ballPossession.IntendedReceiverId,

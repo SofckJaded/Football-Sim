@@ -46,6 +46,12 @@ public sealed class GoalkeeperController : IFootballerController
     /// <summary>Last shot this keeper evaluated (A6.5), for tests and probes.</summary>
     public GoalkeeperShot LastShot { get; private set; }
 
+    /// <summary>
+    /// A6.6: the law's answer for the ball this keeper is looking at, published per decision so a probe can
+    /// say whether the keeper is even allowed to use his hands (and why not).
+    /// </summary>
+    public GoalkeeperHandlingVerdict LastHandling { get; private set; } = GoalkeeperHandlingVerdict.Allowed;
+
     /// <summary>True when this decision actually ran the sweep race (A6.5). A probe needs it to tell "declined" from "not asked".</summary>
     public bool SweepEvaluated { get; private set; }
 
@@ -74,6 +80,13 @@ public sealed class GoalkeeperController : IFootballerController
         float distToBall = Vector2.Distance(selfXZ, ballXZ);
         float verticalDelta = obs.PerceivedBallPosition.Y - obs.SelfPosition.Y;
 
+        // A6.6: the law decides what the keeper's hands may do, once per decision, from the ball's position
+        // and how it was last played. The decision below uses exactly this verdict, so the keeper never
+        // starts a movement the execution layer will refuse (or, worse, the referee would punish).
+        LastHandling = GoalkeeperLawModel.EvaluateHandling(
+            _pitch, ownGoalX, obs.SelfId, obs.SelfTeam, obs.PerceivedBallPosition, obs.BallLastPlay);
+        bool keeperMayHandle = LastHandling.MayUseHands;
+
         // Audit F03: the keeper is holding the ball in its hands. This must be handled before any
         // reach/recovery gate: while holding, the keeper cannot rush, dive or tackle, and the only
         // legal action is a single, deliberate release once the hold delay has elapsed.
@@ -85,13 +98,16 @@ public sealed class GoalkeeperController : IFootballerController
         State = obs.AvailableToKick ? GoalkeeperState.Positioning : GoalkeeperState.Recovering;
 
         // Audit F12: decision and execution must agree on reach. The keeper can only handle the ball
-        // inside its physical standing reach (ReachRadius * 1.12 ≈ 0.84 m) and below its handling
-        // height — the old gate used the wider approach radius (≈1.24 m), so the keeper would start
-        // distribution movement while still unable to touch the ball. The height is A6.5's constant, so
-        // the hand-off to distribution and the claim filter cannot disagree.
-        bool ballWithinHandlingReach = distToBall <= obs.SelfAttributes.ReachRadius * 1.12f
-                                       && verticalDelta >= -0.05f
-                                       && verticalDelta <= GoalkeeperDecisionModel.HandlingHeightMeters;
+        // inside the reach and below the height the execution layer accepts — the old gate used the wider
+        // approach radius (≈1.24 m), so the keeper would start distribution movement while still unable to
+        // touch the ball. A6.6: both numbers now come from BallContactRules with the law's verdict, so a
+        // ball he may not handle (a back-pass) is judged by his feet and head, not by his hands.
+        bool ballWithinHandlingReach =
+            distToBall <= BallContactRules.ReachRadius(
+                obs.SelfAttributes.ReachRadius, keeperMayHandle, isDiving: false,
+                requestingTackle: false, receivingOrDribbling: false)
+            && verticalDelta >= BallContactRules.MinContactHeightDelta
+            && verticalDelta <= BallContactRules.MaxContactHeight(keeperMayHandle, jumpingOrHeading: false);
         if (obs.AvailableToKick && ballWithinHandlingReach)
         {
             State = GoalkeeperState.Distribution;
@@ -101,7 +117,8 @@ public sealed class GoalkeeperController : IFootballerController
         // 1. A shot on target, decided on the ball's real trajectory (A6.5). The old gate extrapolated the
         // flight in a straight line and dived at a fixed plane inside the goal line whether or not the body
         // could get there; now the crossing time and the reachable interception point come from one estimate,
-        // and a shot the keeper cannot reach is deliberately not dived for.
+        // and a shot the keeper cannot reach is deliberately not dived for. A6.6: a physically reachable shot
+        // the keeper may not handle (the interception point outside his own area) is not dived for either.
         float speedTowardGoal = -obs.PerceivedBallVelocity.X * obs.AttackingDirectionX;
         bool shotOnTarget = false;
         if (speedTowardGoal > 11.0f)
@@ -113,7 +130,7 @@ public sealed class GoalkeeperController : IFootballerController
             LastShot = shot;
             ShotEvaluated = true;
             shotOnTarget = shot.IsOnTarget;
-            if (shot.IsOnTarget && shot.CanIntercept)
+            if (shot.IsOnTarget && shot.CanSave)
             {
                 Vector3 interceptPoint = shot.InterceptPoint;
                 Vector3 diveVec = interceptPoint - obs.SelfPosition;
@@ -1015,6 +1032,9 @@ public sealed class MatchRulesEngine
         ball.HeldReleaseDelaySeconds = 0f;
         ball.LastTouchedByTeam = awardedTeam;
         ball.LastTouchedByPlayerId = null;
+        // A6.6: a re-placed ball carries no play history. Without this a back-pass that produced the
+        // restart would still bar the keeper from handling the ball the restart put back into play.
+        ball.LastPlay = BallLastPlay.None;
 
         ResetTransientPlayerState(players);
 
@@ -1165,6 +1185,7 @@ public sealed class MatchRulesEngine
         ball.HeldReleaseDelaySeconds = 0f;
         ball.LastTouchedByTeam = kickoffTeam;
         ball.LastTouchedByPlayerId = null;
+        ball.LastPlay = BallLastPlay.None;
         _playersInOffsidePositionAtLastPass.Clear();
         DesignatedSetPieceTakerId = null;
         _restartAwaitingKick = false;

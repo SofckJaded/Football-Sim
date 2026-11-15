@@ -2466,6 +2466,8 @@ public sealed class AuditRegressionTests
 
     /// <summary>
     /// Audit F03: a friendly back-pass must be handled with the feet, never caught as a save.
+    /// A6.6: the fixture now states that the ball came from a team-mate's deliberate kick, so what stops
+    /// the catch is the law (Law 12) and not merely a ball too slow to reach the save branch.
     /// </summary>
     [Fact]
     public void F03_BackPass_IsNotCaughtAndIsDistributedWithTheFeet()
@@ -2479,7 +2481,8 @@ public sealed class AuditRegressionTests
             Position = new Vector3(-51.4f, 0.11f, 0f),
             Velocity = new Vector3(-3f, 0f, 0f),
             LastTouchedByTeam = TeamId.Home,
-            LastTouchedByPlayerId = 5
+            LastTouchedByPlayerId = 5,
+            LastPlay = new BallLastPlay(BallContactKind.Kick, KickIntentType.GroundPass, 5, TeamId.Home)
         };
 
         new FootballerExecutionSystem(pitch).UpdateLocomotionAndContacts(

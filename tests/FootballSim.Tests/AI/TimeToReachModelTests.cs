@@ -313,7 +313,7 @@ public sealed class TimeToReachModelTests
         var engine = new MatchSimulationEngine(scenario);
         FootballerState player = engine.Players[0];
         float reach = BallContactRules.ReachRadius(
-            player.Attributes.ReachRadius, isGoalkeeper: false, isDiving: false,
+            player.Attributes.ReachRadius, keeperHandling: false, isDiving: false,
             requestingTackle: false, receivingOrDribbling: true);
 
         ReachEstimate predicted = TimeToReachModel.ToPoint(

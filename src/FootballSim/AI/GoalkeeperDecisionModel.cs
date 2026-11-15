@@ -3,6 +3,7 @@ using System.Numerics;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
+using FootballSim.Rules;
 
 namespace FootballSim.AI;
 
@@ -74,19 +75,29 @@ public readonly record struct GoalkeeperShot(
     bool CanIntercept,
     float InterceptSeconds,
     Vector3 InterceptPoint,
-    float ClosestApproachMeters = 0f)
+    float ClosestApproachMeters = 0f,
+    GoalkeeperHandlingReason HandlingBlocked = GoalkeeperHandlingReason.Allowed)
 {
     /// <summary>A shot nobody has seen yet, or one that is not going in.</summary>
     public static GoalkeeperShot None => default;
+
+    /// <summary>
+    /// A6.6: the save the keeper may actually make — the body can reach the interception point <b>and</b>
+    /// the law allows him to handle the ball there. A shot can be physically reachable and still not
+    /// saveable (a keeper caught outside his own area, or a ball he may not handle at all).
+    /// </summary>
+    public bool CanSave => CanIntercept && HandlingBlocked == GoalkeeperHandlingReason.Allowed;
 
     /// <summary>Compact text form for a probe or a failure message.</summary>
     public string Describe() => !IsOnTarget
         ? "not on target"
         : $"on target in {GoalLineSeconds:F2}s at z {GoalLinePoint.Z:F1}, nearest approach" +
           $" {ClosestApproachMeters:F1} m" +
-          (CanIntercept
+          (CanSave
               ? $", interceptable in {InterceptSeconds:F2}s at ({InterceptPoint.X:F1}, {InterceptPoint.Z:F1})"
-              : ", out of reach");
+              : CanIntercept
+                  ? $", reachable but not handleable ({HandlingBlocked})"
+                  : ", out of reach");
 }
 
 /// <summary>
@@ -115,8 +126,12 @@ public readonly record struct GoalkeeperShot(
 /// </summary>
 public static class GoalkeeperDecisionModel
 {
-    /// <summary>Highest point a keeper can handle the ball at, in metres (the standing save limit).</summary>
-    public const float HandlingHeightMeters = 2.42f;
+    /// <summary>
+    /// Highest point a keeper can handle the ball at, in metres (the standing save limit). A6.6: it is the
+    /// execution's own contact height (<see cref="BallContactRules.KeeperContactHeight"/>) rather than a
+    /// second copy, so the claim filter and the contact that resolves it cannot disagree.
+    /// </summary>
+    public const float HandlingHeightMeters = BallContactRules.KeeperContactHeight;
 
     /// <summary>
     /// How far the keeper looks ahead when deciding whether a sweep is a race he can win, in seconds. Shorter
@@ -251,6 +266,21 @@ public static class GoalkeeperDecisionModel
 
         bool canIntercept = distance <= DiveReachMeters(obs, interceptSeconds);
 
+        // A6.6: reach is not permission. The dive is a hand save, so it exists only where the keeper may
+        // use his hands — his own penalty area, and not a ball he is barred from handling (the back-pass
+        // clause, or a ball nobody has touched since his own release).
+        GoalkeeperHandlingReason handlingBlocked = GoalkeeperHandlingReason.Allowed;
+        if (canIntercept)
+        {
+            handlingBlocked = GoalkeeperLawModel.EvaluateHandling(
+                pitch,
+                -obs.AttackingDirectionX * pitch.HalfLength,
+                obs.SelfId,
+                obs.SelfTeam,
+                interceptPoint,
+                obs.BallLastPlay).Reason;
+        }
+
         return new GoalkeeperShot(
             IsOnTarget: true,
             GoalLineSeconds: seconds,
@@ -258,14 +288,18 @@ public static class GoalkeeperDecisionModel
             CanIntercept: canIntercept,
             InterceptSeconds: canIntercept ? interceptSeconds : float.MaxValue,
             InterceptPoint: canIntercept ? interceptPoint : Vector3.Zero,
-            ClosestApproachMeters: distance);
+            ClosestApproachMeters: distance,
+            HandlingBlocked: handlingBlocked);
     }
 
     /// <summary>
     /// How far from where he stands the keeper's dive can put his hands, in metres: the launch
     /// (<see cref="BallContactRules.KeeperDiveLaunchSpeed"/>, scaled by reflexes) for the time available, plus the
     /// diving contact reach. The launch speed is the execution's own constant — the save capability is modelled
-    /// once and the AI reads it, rather than the AI assuming a sprint it never gets.
+    /// once and the AI reads it, rather than the AI assuming a sprint it never gets. This is the reach of a dive
+    /// that is <i>allowed</i>: whether the hands may be used at that point is
+    /// <see cref="GoalkeeperLawModel.EvaluateHandling"/>'s answer (A6.6), reported as
+    /// <see cref="GoalkeeperShot.HandlingBlocked"/>.
     /// </summary>
     public static float DiveReachMeters(in FootballerObservation obs, float seconds)
     {
@@ -274,7 +308,7 @@ public static class GoalkeeperDecisionModel
         float launch = BallContactRules.KeeperDiveLaunchSpeed * reflex * time;
         float reach = BallContactRules.ReachRadius(
             obs.SelfAttributes.ReachRadius,
-            isGoalkeeper: true,
+            keeperHandling: true,
             isDiving: true,
             requestingTackle: false,
             receivingOrDribbling: true);

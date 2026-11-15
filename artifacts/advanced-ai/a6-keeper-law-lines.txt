@@ -1,0 +1,31 @@
+=== A6.3 defensive line evidence: 4 seeds x 14400 s ===
+Simulation version : ai34-rs1
+Profiles           : home Possession / Positional Play (marks 2, man-share 0.65) | away Direct Counterattack (marks 1, man-share 0.39)
+Units              : metres, attack-relative (own goal line = -52, opponent's = +52).
+                     spread = |actual line depth - band depth| over the players on the line;
+                     shift  = band depth - the line's mean formation-anchor depth.
+
+Seed 20260818: FT in 868858 ticks | score 11-2 | handovers 1856
+
+Seed 20268737: FT in 868702 ticks | score 5-6 | handovers 1817
+
+Seed 20276656: FT in 868540 ticks | score 8-4 | handovers 1884
+
+Seed 20284575: FT in 868532 ticks | score 5-3 | handovers 1807
+
+=== Totals over 4 seeds (4 completed, 579091 defending samples) ===
+Band depth         : mean -20.2 m | mean ball -0.3 m | mean anchors -16.3 m
+Shift from anchors : mean -3.9 m | mean absolute 5.0 m (the depth the same players would have held before A6.3)
+Line target spread : mean 1.20 m | worst tick mean 3.00 m @ tick 12 | 577981 samples with a line
+Local exceptions   : 725066 at the band | 189595 ball-side (+3 m) | 640264 far-side (-2 m) | 98299 clamped by the band's range
+Body-vs-band gap   : mean 3.71 m | worst 63.34 m (physical lag: the target moves before the player can arrive)
+Keeper context     : mean reach 17.7 m from mean depth -49.1 m
+Field position     : mean shift -+0.0 m | moved >0.5 m in 94.6% of samples
+Passer pressure    : mean 0.46 | mean shift -0.3 m | moved >0.5 m in 66.8%
+Ball cap           : pulled the line back in 14.2% of samples | mean shift -1.00 m
+Credible runs      : capped the line in 15.1% of samples | mean shift -0.71 m
+Keeper coverage    : capped the line in 12.9% of samples | mean shift -0.61 m
+Markers            : mean 0.59 per defending sample (style caps 2/1)
+Handovers          : 7364 total | mean slots 1.1 m -> 0.6 m
+Observation match  : every line player saw the placed band
+RESULT: bands placed, shared and observed

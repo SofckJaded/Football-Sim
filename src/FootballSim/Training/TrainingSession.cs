@@ -126,6 +126,7 @@ public sealed class TrainingSession
         Ball.HeldReleaseDelaySeconds = 0f;
         Ball.LastTouchedByPlayerId = null;
         Ball.LastTouchedByTeam = null;
+        Ball.LastPlay = BallLastPlay.None;
         _possession.Reset();
 
         foreach (TrainingActorSpec actor in _aiActors)

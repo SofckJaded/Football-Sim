@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using FootballSim.Core;
 using FootballSim.Physics;
+using FootballSim.Rules;
 
 namespace FootballSim.Locomotion;
 
@@ -111,22 +112,33 @@ public static class BallContactRules
     /// <summary>How long a dive lasts (and its cooldown), in seconds.</summary>
     public const float KeeperDiveSeconds = 0.55f;
 
-    /// <summary>Planar reach for the player's current action, in metres.</summary>
+    /// <summary>
+    /// Planar reach for the player's current action, in metres.
+    ///
+    /// A6.6: <paramref name="keeperHandling"/> is the keeper's <i>lawful</i> handling privilege, not his
+    /// role. A keeper outside his own penalty area, or going for a ball he may not handle (a team-mate's
+    /// deliberate kick, his own release), must be passed <c>false</c> so he reaches like an outfielder —
+    /// <see cref="GoalkeeperLawModel.EvaluateHandling"/> is the one thing that answers the question.
+    /// </summary>
     public static float ReachRadius(
         float baseReachRadius,
-        bool isGoalkeeper,
+        bool keeperHandling,
         bool isDiving,
         bool requestingTackle,
         bool receivingOrDribbling) =>
-        isGoalkeeper
+        keeperHandling
             ? baseReachRadius * (isDiving ? 1.55f : 1.12f)
             : requestingTackle
                 ? baseReachRadius * 1.60f
                 : baseReachRadius * (receivingOrDribbling ? 1.65f : 1.10f);
 
-    /// <summary>Highest ball height (relative to the player's feet) the player can play.</summary>
-    public static float MaxContactHeight(bool isGoalkeeper, bool jumpingOrHeading) =>
-        isGoalkeeper
+    /// <summary>
+    /// Highest ball height (relative to the player's feet) the player can play.
+    /// <paramref name="keeperHandling"/> carries the same meaning as in <see cref="ReachRadius"/>: the
+    /// 2.42 m handling height belongs to a keeper's hands, so it exists only where the law allows them.
+    /// </summary>
+    public static float MaxContactHeight(bool keeperHandling, bool jumpingOrHeading) =>
+        keeperHandling
             ? KeeperContactHeight
             : jumpingOrHeading
                 ? HeaderContactHeight
@@ -142,9 +154,11 @@ public static class BallContactRules
     /// <summary>
     /// True when a non-keeper can physically play a ball at this planar direction: execution refuses
     /// a ball that is mostly behind the player unless it was played by their own team or by them.
+    /// A keeper's exemption is his hands, so it follows <paramref name="keeperHandling"/> and not his
+    /// role (A6.6).
     /// </summary>
-    public static bool IsFacingTheBall(float facingDot, bool receivingOrDribbling, bool isGoalkeeper) =>
-        facingDot >= -0.55f || receivingOrDribbling || isGoalkeeper;
+    public static bool IsFacingTheBall(float facingDot, bool receivingOrDribbling, bool keeperHandling) =>
+        facingDot >= -0.55f || receivingOrDribbling || keeperHandling;
 }
 
 public sealed class FootballerExecutionSystem
@@ -615,19 +629,26 @@ public sealed class FootballerExecutionSystem
             Vector2 toBallXZ = new(ball.Position.X - p.Position.X, ball.Position.Z - p.Position.Z);
             float planarDist = toBallXZ.Length();
 
+            // A6.6: the keeper's handling privileges are a law, not a role. Outside his own penalty area, or
+            // for a ball he may not handle (a team-mate's deliberate kick, his own release), he is an outfield
+            // player: the same reach, the same contact height, the same body-orientation rule and the same
+            // claim priority. The old code gave the keeper's 1.12 x reach and 2.42 m handling height wherever
+            // he stood, which is exactly the handling offence the law forbids.
+            bool keeperMayHandle = p.Role == TacticalRole.Goalkeeper && KeeperMayHandle(p, ball);
+
             // Mild reception reach extension when receiving a pass from a teammate or controlling the ball (Section 3.2)
             bool isReceivingOrDribbling = BallContactRules.IsReceivingOrDribbling(
                 ball.LastTouchedByTeam, ball.LastTouchedByPlayerId, p.Team, p.Id);
 
             float effectiveReach = BallContactRules.ReachRadius(
                 p.Attributes.ReachRadius,
-                p.Role == TacticalRole.Goalkeeper,
+                keeperMayHandle,
                 p.IsDiving,
                 p.LastCommand.RequestTackle,
                 isReceivingOrDribbling);
 
             float maxVerticalReach = BallContactRules.MaxContactHeight(
-                p.Role == TacticalRole.Goalkeeper,
+                keeperMayHandle,
                 p.IsJumping || p.LastCommand.KickType == KickIntentType.Header);
 
             p.ControlQuality01 = 0f;
@@ -654,7 +675,7 @@ public sealed class FootballerExecutionSystem
                 ? Vector2.Dot(toBallXZ / planarDist, p.FacingXZ)
                 : 1.0f;
 
-            if (!BallContactRules.IsFacingTheBall(facingAlignment, isReceivingOrDribbling, p.Role == TacticalRole.Goalkeeper))
+            if (!BallContactRules.IsFacingTheBall(facingAlignment, isReceivingOrDribbling, keeperMayHandle))
             {
                 NoteAttempt(p, ContactRejectionReason.FacingAway, wantedContact);
                 continue;
@@ -674,7 +695,7 @@ public sealed class FootballerExecutionSystem
 
             bool wantsImmediateStrike = p.LastCommand.KickType != KickIntentType.None ||
                                         p.LastCommand.RequestTackle ||
-                                        p.Role == TacticalRole.Goalkeeper;
+                                        keeperMayHandle;
             if (!wantsImmediateStrike && p.DribbleTouchTimer > 0f && ball.LastTouchedByPlayerId == p.Id)
                 continue;
 
@@ -690,7 +711,7 @@ public sealed class FootballerExecutionSystem
 
             float challengeScore = control
                 + (p.LastCommand.RequestTackle ? 0.65f : 0f)
-                + (p.Role == TacticalRole.Goalkeeper ? 0.35f : 0f)
+                + (keeperMayHandle ? 0.35f : 0f)
                 + (ball.LastTouchedByPlayerId == p.Id ? 0.12f : 0f)
                 + shieldAdjustment
                 + rng.NextRange(-0.02f, 0.02f);
@@ -856,15 +877,15 @@ public sealed class FootballerExecutionSystem
         // Audit F12: a save requires a ball actually travelling toward the keeper's own goal and
         // inside the keeper's own penalty area. The old check accepted any fast ball with an
         // opposing last touch, so a keeper could "save" a rebound or a back-pass moving away.
-        if (player.Role == TacticalRole.Goalkeeper && ball.LastTouchedByTeam != player.Team && ball.Velocity.Length() > 6.5f)
+        // A6.6: the handling permission itself is the law's (GoalkeeperLawModel), not a last-touch team
+        // test. That is what lets a deflected team-mate ball be caught while a deliberate back-pass is
+        // still refused, and it is the same verdict the keeper's own decision used.
+        if (player.Role == TacticalRole.Goalkeeper && KeeperMayHandle(player, ball) && ball.Velocity.Length() > 6.5f)
         {
             float ownGoalX = player.Position.X >= 0f ? _pitch.HalfLength : -_pitch.HalfLength;
             bool movingTowardOwnGoal = ownGoalX > 0f ? ball.Velocity.X > 0f : ball.Velocity.X < 0f;
-            bool insideOwnPenaltyArea =
-                MathF.Abs(ball.Position.X - ownGoalX) <= _pitch.PenaltyAreaLength &&
-                MathF.Abs(ball.Position.Z) <= _pitch.PenaltyAreaWidth * 0.5f;
 
-            if (movingTowardOwnGoal && insideOwnPenaltyArea)
+            if (movingTowardOwnGoal)
             {
                 float shotSpeed = ball.Velocity.Length();
                 if (shotSpeed < 17.5f * player.Attributes.GoalkeepingReflex01)
@@ -1293,12 +1314,33 @@ public sealed class FootballerExecutionSystem
         int? intendedReceiverId = null,
         bool isParry = false)
     {
+        // A6.6: the ball's play history moves with its last touch, so a law that distinguishes a
+        // deliberate kick from a deflection (the keeper's back-pass restriction) reads the same fact the
+        // ownership model does. One write per contact, in the one place every contact passes through.
+        ball.LastPlay = new BallLastPlay(kind, intent, player.Id, player.Team);
+
         ContactEvents.Add(new BallContactEvent(_currentTick, kind, player.Id, player.Team, ball.Position)
         {
             Intent = intent,
             IntendedReceiverId = intendedReceiverId,
             IsParry = isParry
         });
+    }
+
+    /// <summary>
+    /// A6.6: whether this keeper may use his hands for this ball right now.
+    ///
+    /// The execution layer knows the ball's play history but not the half being played, so — exactly like
+    /// the F12 save gate this replaces — it reads the keeper's own goal from the side of the pitch he
+    /// stands on. A keeper is stationed at his own goal; if a fixture ever put one in the other half the
+    /// verdict would come out <see cref="GoalkeeperHandlingReason.OutsideOwnPenaltyArea"/>, which is the
+    /// conservative answer rather than the permissive one.
+    /// </summary>
+    private bool KeeperMayHandle(FootballerState keeper, BallState ball)
+    {
+        float ownGoalX = keeper.Position.X >= 0f ? _pitch.HalfLength : -_pitch.HalfLength;
+        return GoalkeeperLawModel.EvaluateHandling(
+            _pitch, ownGoalX, keeper.Id, keeper.Team, ball.Position, ball.LastPlay).MayUseHands;
     }
 
     private static float WrapAngle(float radians)

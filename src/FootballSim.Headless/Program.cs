@@ -877,8 +877,9 @@ public static class Program
 
         var homeProfile = TeamTacticalProfile.PossessionControl;
         var awayProfile = TeamTacticalProfile.DirectCounterattack;
-
-        Console.WriteLine($"=== A6.5 goalkeeper trajectory evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s ===");
+        var pitch = new PitchDimensions();
+        Console.WriteLine($"=== A6.6 goalkeeper trajectory and handling-law evidence: {seedCount} seeds x" +
+                          $" {halfSeconds * 2f:F0} s ===");
         Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
         Console.WriteLine($"Sweep race         : horizon {GoalkeeperDecisionModel.SweepRaceHorizonSeconds:F1} s," +
                           $" margin {GoalkeeperDecisionModel.SweepRaceMarginSeconds:F2} s," +
@@ -886,6 +887,9 @@ public static class Program
                           $" handling height {GoalkeeperDecisionModel.HandlingHeightMeters:F2} m");
         Console.WriteLine($"Shot decision      : horizon {GoalkeeperDecisionModel.ShotHorizonSeconds:F2} s," +
                           $" mouth slack {GoalkeeperDecisionModel.GoalMouthSlackMeters:F1} m");
+        Console.WriteLine($"Handling law       : own penalty area {pitch.PenaltyAreaLength:F1} m x" +
+                          $" {pitch.PenaltyAreaWidth:F2} m (Law 12: no deliberate team-mate kick, no second" +
+                          " handling after release)");
         Console.WriteLine($"Trajectory         : {BallTrajectoryEstimate.MaxSamples} samples every" +
                           $" {1f / BallTrajectoryEstimate.SampleStepSeconds:F0} per second, real solver");
 
@@ -894,9 +898,12 @@ public static class Program
         var raceKeeperSeconds = new double[answers];
         var raceOpponentSeconds = new double[answers];
         var raceCounts = new int[answers];
+        int handlingReasons = Enum.GetValues(typeof(GoalkeeperHandlingReason)).Length;
+        var handlingSamples = new int[handlingReasons];
         int shotsSeen = 0;
         int shotsDived = 0;
         int shotsDeclined = 0;
+        int shotsBlockedByLaw = 0;
         double interceptSecondsSum = 0d;
         int matchesPlayed = 0;
         int samples = 0;
@@ -932,6 +939,10 @@ public static class Program
                     int playerId = player.Id;
                     samples++;
 
+                    int handlingIndex = (int)keeper.LastHandling.Reason;
+                    if (handlingIndex >= 0 && handlingIndex < handlingReasons)
+                        handlingSamples[handlingIndex]++;
+
                     GoalkeeperRace race = keeper.LastSweep;
                     GoalkeeperRaceReason reason = keeper.SweepEvaluated
                         ? race.Reason
@@ -963,10 +974,14 @@ public static class Program
                         if (onTarget)
                         {
                             shotsSeen++;
-                            if (shot.CanIntercept)
+                            if (shot.CanSave)
                             {
                                 shotsDived++;
                                 interceptSecondsSum += shot.InterceptSeconds;
+                            }
+                            else if (shot.CanIntercept)
+                            {
+                                shotsBlockedByLaw++;
                             }
                             else
                             {
@@ -1020,13 +1035,26 @@ public static class Program
         }
 
         Console.WriteLine($"Sweep verdicts     : {sweepEpisodes} episodes, {sweepsTaken} taken, {sweepsDeclined} declined");
+
+        int handsBarred = 0;
+        var barredByReason = new List<string>();
+        foreach (GoalkeeperHandlingReason reason in Enum.GetValues(typeof(GoalkeeperHandlingReason)))
+        {
+            int count = handlingSamples[(int)reason];
+            if (count == 0) continue;
+            if (reason != GoalkeeperHandlingReason.Allowed) handsBarred += count;
+            barredByReason.Add($"{reason} {count}");
+        }
+
+        Console.WriteLine($"Handling law       : {handsBarred} of {samples} keeper samples barred from the hands" +
+                          $" ({100.0 * handsBarred / Math.Max(1, samples):F1} %) | {string.Join(", ", barredByReason)}");
         Console.WriteLine($"Shots on target    : {shotsSeen} | dived for {shotsDived} (mean intercept" +
                           $" {(shotsDived == 0 ? 0d : interceptSecondsSum / shotsDived):F2} s) | declined as out of reach" +
-                          $" {shotsDeclined}");
+                          $" {shotsDeclined} | declined as unhandleable {shotsBlockedByLaw}");
 
         bool ok = matchesPlayed == seedCount && sweepEpisodes > 0;
         Console.WriteLine(ok
-            ? "RESULT: sweeps and dives decided on the ball's real trajectory"
+            ? "RESULT: sweeps and dives decided on the ball's real trajectory, handling gated on the law"
             : "RESULT: incomplete, or no keeper decision was ever evaluated");
         return ok;
     }

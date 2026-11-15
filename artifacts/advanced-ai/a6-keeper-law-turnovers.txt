@@ -1,0 +1,29 @@
+=== A6.4 turnover response evidence: 4 seeds x 14400 s ===
+Simulation version : ai34-rs1
+Profiles           : home Possession / Positional Play (pressing 0.70, window 4.5 s) | away Direct Counterattack (pressing 0.35, window 2.0 s)
+Response window    : 6.0 s after the loss, held for 30 ticks
+
+Seed 20260818: FT in 868858 ticks | score 11-2
+  Home  choices: counter-press 920 | delay/recover 2572 | retreat 1967
+  Away  choices: counter-press   0 | delay/recover 2340 | retreat 2115
+
+Seed 20268737: FT in 868702 ticks | score 5-6
+  Home  choices: counter-press 896 | delay/recover 2559 | retreat 1999
+  Away  choices: counter-press   0 | delay/recover 2324 | retreat 2045
+
+Seed 20276656: FT in 868540 ticks | score 8-4
+  Home  choices: counter-press 991 | delay/recover 2579 | retreat 2013
+  Away  choices: counter-press   0 | delay/recover 2297 | retreat 2074
+
+Seed 20284575: FT in 868532 ticks | score 5-3
+  Home  choices: counter-press 940 | delay/recover 2578 | retreat 1942
+  Away  choices: counter-press   0 | delay/recover 2311 | retreat 2096
+
+=== Totals over 4 seeds (4 completed, 579108 team-samples) ===
+Transition samples : 174991/579108 (30.2 % of live ticks carried a turnover answer)
+Counter-press window: open on 24.2 % of sampled ticks
+no transition :  69.8 % of samples (404117 ticks)
+counter-press :   2.0 % of samples (11587 ticks) | local 0.74 security 0.62 constraint 0.37 escape 0.39 | line shift +5.00 m, 0.54 markers
+delay/recover :  13.8 % of samples (80045 ticks) | local 0.58 security 0.65 constraint 0.31 escape 0.53 | line shift +0.00 m, 0.60 markers
+retreat       :  14.4 % of samples (83359 ticks) | local 0.20 security 0.71 constraint 0.22 escape 0.78 | line shift -5.00 m, 0.49 markers
+RESULT: turnovers answered, inputs and consequences measured

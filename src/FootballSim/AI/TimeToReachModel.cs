@@ -41,7 +41,7 @@ public readonly record struct ReachKinematics(
         player.Stamina01,
         BallContactRules.ReachRadius(
             player.Attributes.ReachRadius,
-            isGoalkeeper: player.Role == TacticalRole.Goalkeeper,
+            keeperHandling: player.Role == TacticalRole.Goalkeeper,
             isDiving: player.IsDiving,
             requestingTackle: false,
             receivingOrDribbling: true));
@@ -64,7 +64,7 @@ public readonly record struct ReachKinematics(
             Balance01: 1f,
             Stamina01: 1f,
             BallContactRules.ReachRadius(
-                neutral.ReachRadius, isGoalkeeper: false, isDiving: false,
+                neutral.ReachRadius, keeperHandling: false, isDiving: false,
                 requestingTackle: false, receivingOrDribbling: true));
     }
 
@@ -98,7 +98,7 @@ public readonly record struct ReachKinematics(
         obs.Stamina01,
         BallContactRules.ReachRadius(
             obs.SelfAttributes.ReachRadius,
-            isGoalkeeper: obs.SelfRole == TacticalRole.Goalkeeper,
+            keeperHandling: obs.SelfRole == TacticalRole.Goalkeeper,
             isDiving: false,
             requestingTackle: false,
             receivingOrDribbling: true));
