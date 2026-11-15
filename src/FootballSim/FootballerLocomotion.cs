@@ -100,6 +100,17 @@ public static class BallContactRules
         (lastTouchedByTeam == playerTeam && lastTouchedByPlayerId != playerId) ||
         lastTouchedByPlayerId == playerId;
 
+    /// <summary>
+    /// Speed a diving goalkeeper is launched at, in metres per second (before reflex scaling). A dive is a burst
+    /// from standing, not a sprint: it replaces the current velocity immediately and lasts
+    /// <see cref="KeeperDiveSeconds"/>. It is public because the AI's save decision must estimate the same
+    /// capability (A6.5) instead of a running reach the dive does not use.
+    /// </summary>
+    public const float KeeperDiveLaunchSpeed = 7.2f;
+
+    /// <summary>How long a dive lasts (and its cooldown), in seconds.</summary>
+    public const float KeeperDiveSeconds = 0.55f;
+
     /// <summary>Planar reach for the player's current action, in metres.</summary>
     public static float ReachRadius(
         float baseReachRadius,
@@ -399,8 +410,9 @@ public sealed class FootballerExecutionSystem
             Vector2 diveXZ = new(cmd.KeeperDiveDirection.X, cmd.KeeperDiveDirection.Z);
             if (diveXZ.LengthSquared() > 1e-4f)
             {
-                currentVelXZ = Vector2.Normalize(diveXZ) * (7.2f * p.Attributes.GoalkeepingReflex01);
-                p.DribbleTouchTimer = 0.55f;
+                currentVelXZ = Vector2.Normalize(diveXZ) * (BallContactRules.KeeperDiveLaunchSpeed
+                                                            * p.Attributes.GoalkeepingReflex01);
+                p.DribbleTouchTimer = BallContactRules.KeeperDiveSeconds;
                 p.IsDiving = true;
             }
         }

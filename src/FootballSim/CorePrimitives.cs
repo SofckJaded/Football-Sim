@@ -387,12 +387,22 @@ public enum TeamId
 /// existing owners of movement consume it: the defensive line's band moves up or down (inside the A6.3 caps),
 /// the marking mix gains or loses a man, the presser's standoff becomes contact / jockey / shepherd, and the
 /// second man is licensed only when the team chose to press. Trajectories differ from version 31.</item>
+/// <item><c>AiBehaviour 33</c> — A6.5: the keeper decides against the ball's <b>real trajectory</b> instead of
+/// two straight-line guesses. <see cref="AI.BallTrajectoryEstimate"/> rolls the authorised ball state through the
+/// <b>same</b> <see cref="Physics.BallPhysicsSolver"/> the match uses — a sampled copy of the real path, not a
+/// second set of equations — and <see cref="AI.GoalkeeperDecisionModel"/> asks it both of the keeper's questions:
+/// the <b>sweep</b> is a race between the keeper and the nearest believed opponent to the same point of that
+/// path (first, or within a stated margin, commits; clearly beaten declines with a reason), and the <b>dive</b>
+/// exists only for a ball that is genuinely going in and only when the interception point is reachable inside the
+/// flight time, so an out-of-reach shot is not dived for. A shot that is on target is a shot, not a loose ball:
+/// the keeper does not fall through to a sweep when the dive is declined. Trajectories differ from version
+/// 32.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 32;
+    public const int AiBehaviour = 33;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

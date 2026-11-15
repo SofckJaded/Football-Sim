@@ -1,0 +1,21 @@
+﻿=== A6.5 goalkeeper trajectory evidence: 4 seeds x 7200 s ===
+Simulation version : ai33-rs1
+Sweep race         : horizon 2.0 s, margin 0.35 s, commit range 12.5 m, handling height 2.42 m
+Shot decision      : horizon 0.90 s, mouth slack 0.6 m
+Trajectory         : 32 samples every 15 per second, real solver
+
+Seed 20260818: FT in 434120 ticks | score 4-3 | 72354 keeper samples
+
+Seed 20268737: FT in 434172 ticks | score 4-1 | 144716 keeper samples
+
+Seed 20276656: FT in 434186 ticks | score 4-2 | 217082 keeper samples
+
+Seed 20284575: FT in 434172 ticks | score 3-2 | 289444 keeper samples
+
+=== Totals over 4 seeds (4 completed, 289444 keeper samples) ===
+  KeeperFirst         :   144 episodes | keeper 0.81 s vs opponent unreachable
+  Contested           :   102 episodes | keeper 1.43 s vs opponent 0.47 s
+  KeeperCannotReach   :   199 episodes
+Sweep verdicts     : 445 episodes, 246 taken, 199 declined
+Shots on target    : 204 | dived for 108 (mean intercept 0.20 s) | declined as out of reach 96
+RESULT: sweeps and dives decided on the ball's real trajectory

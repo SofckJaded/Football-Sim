@@ -50,6 +50,9 @@ public static class Program
             case "--turnovers":
                 return RunTurnoverEvidence(args) ? 0 : 1;
 
+            case "--keepers":
+                return RunKeeperEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
@@ -62,6 +65,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --deliveries [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --lines [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --turnovers [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --keepers [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -71,7 +75,7 @@ public static class Program
 
     /// <summary>
     /// Runs one advanced-AI scenario fixture. This exists so a behaviour can be reproduced from the
-    /// command line without writing a test — the same <see cref="ScenarioLibrary"/> the suite uses.
+    /// command line without writing a test â€” the same <see cref="ScenarioLibrary"/> the suite uses.
     /// </summary>
     private static int RunScenarioCommand(string[] args)
     {
@@ -98,7 +102,7 @@ public static class Program
 
         ScenarioRunResult result = ScenarioRunner.Run(definition.Build(), ticks, traceDecisions: true);
 
-        Console.WriteLine($"=== Scenario '{definition.Key}' — {ticks} tick budget ===");
+        Console.WriteLine($"=== Scenario '{definition.Key}' â€” {ticks} tick budget ===");
         Console.WriteLine($"Intent            : {definition.Intent}");
         Console.WriteLine(result.Describe());
         Console.WriteLine($"Possession        : {result.Possession.State} | team {result.Possession.PossessionTeam} " +
@@ -213,16 +217,16 @@ public static class Program
     /// A5.5 knew how many deliveries were *executed* (the match report prints that), and that number is why
     /// the milestone was not ticked: zero crosses in a full match cannot distinguish "the cross is never
     /// offered" from "the cross is offered and always loses". This probe exists to tell those two apart. It
-    /// reads the carrier's own candidate table after each decision — no simulation state, no extra behaviour —
+    /// reads the carrier's own candidate table after each decision â€” no simulation state, no extra behaviour â€”
     /// and reports, per delivery family:
     ///
     /// <list type="bullet">
-    /// <item><b>offered</b> — live decision ticks where the family appeared in the carrier's action set;</item>
-    /// <item><b>chosen</b> — how many separate selections the family won (a new choice, not a held one);</item>
-    /// <item><b>executed</b> — balls the execution layer actually struck, from its own contacts;</item>
-    /// <item><b>margin</b> — how far the family's best score was from the best non-delivery action on the
+    /// <item><b>offered</b> â€” live decision ticks where the family appeared in the carrier's action set;</item>
+    /// <item><b>chosen</b> â€” how many separate selections the family won (a new choice, not a held one);</item>
+    /// <item><b>executed</b> â€” balls the execution layer actually struck, from its own contacts;</item>
+    /// <item><b>margin</b> â€” how far the family's best score was from the best non-delivery action on the
     ///   same tick (positive = the delivery lost by that much, negative = it was in front);</item>
-    /// <item><b>p / gain / loss</b> — the winning delivery's own value terms, so a lost offer says which of
+    /// <item><b>p / gain / loss</b> â€” the winning delivery's own value terms, so a lost offer says which of
     ///   the three levers is off instead of being a bare number.</item>
     /// </list>
     ///
@@ -454,14 +458,14 @@ public static class Program
     /// The milestone's claim is not "the line is a number" but "the line is one number the whole line holds,
     /// and four picture facts move it". This probe measures each half of that on live matches:
     /// <list type="bullet">
-    /// <item><b>spread</b> — mean and maximum distance of a line player's actual depth from the band's, per
+    /// <item><b>spread</b> â€” mean and maximum distance of a line player's actual depth from the band's, per
     ///   defending sample. A shared band is only shared if this is small.</item>
-    /// <item><b>shift from the anchors</b> — band depth minus the line's mean formation-anchor depth, which is
+    /// <item><b>shift from the anchors</b> â€” band depth minus the line's mean formation-anchor depth, which is
     ///   the depth the same players would have held before this milestone. It quantifies the behaviour change
     ///   instead of leaving it to the scoreline.</item>
-    /// <item><b>terms</b> — how often each input (field position, passer pressure, a credible run, keeper
+    /// <item><b>terms</b> â€” how often each input (field position, passer pressure, a credible run, keeper
     ///   coverage) moved the band and by how much, so a lever that is inert in real play is visible here.</item>
-    /// <item><b>style</b> — the markers each profile's zone/man mix asks for, and the handovers it made.</item>
+    /// <item><b>style</b> â€” the markers each profile's zone/man mix asks for, and the handovers it made.</item>
     /// </list>
     ///
     /// Denominators: a sample is one live tick of one team defending with a valid band, taken every
@@ -533,7 +537,7 @@ public static class Program
 
                 // The interval reverses the attacking frame: anchors written before it are in the old frame,
                 // so the two are not comparable for the tick or two it takes the shape to be rewritten. Not a
-                // behaviour, a measurement artifact — skip those samples rather than report them as a spread.
+                // behaviour, a measurement artifact â€” skip those samples rather than report them as a spread.
                 if (engine.Rules.Period != period)
                 {
                     period = engine.Rules.Period;
@@ -644,7 +648,7 @@ public static class Program
         Console.WriteLine($"=== Totals over {seedCount} seeds ({matchesPlayed} completed, {samples} defending samples) ===");
         if (samples == 0)
         {
-            Console.WriteLine("No defending sample produced a band — nothing to measure.");
+            Console.WriteLine("No defending sample produced a band â€” nothing to measure.");
             return false;
         }
 
@@ -691,8 +695,8 @@ public static class Program
     /// was, and what it did to the line and the marking mix.
     ///
     /// Denominator: one live tick of one team, sampled every <see cref="TurnoverSampleInterval"/> ticks. A
-    /// sample is "in a transition" when the team has a turnover answer at all — the first
-    /// <see cref="TurnoverResponseModel.ResponseWindowSeconds"/> seconds after the ball was lost — and the
+    /// sample is "in a transition" when the team has a turnover answer at all â€” the first
+    /// <see cref="TurnoverResponseModel.ResponseWindowSeconds"/> seconds after the ball was lost â€” and the
     /// answer in force is the one that tick. The aggregates are the same fact the players' observations carry,
     /// not a re-derived guess. Choice counts are episodes: a new count every time the published answer
     /// changes, so "the side never counter-pressed" is distinguishable from "it counter-pressed and gave it
@@ -853,6 +857,187 @@ public static class Program
     /// <summary>How often the turnover probe samples each team, in ticks (0.2 s).</summary>
     private const int TurnoverSampleInterval = 12;
 
+    /// <summary>
+    /// A6.5 evidence: what the keepers did with the ball's real trajectory.
+    ///
+    /// Denominator: one live tick of one team's keeper, sampled every <see cref="KeeperSampleInterval"/> ticks. A
+    /// <b>sweep episode</b> is counted when the sweep race's verdict changes (a new answer, not a repeated tick),
+    /// so the numbers are decisions rather than durations; a <b>shot</b> is counted when a new shot on target is
+    /// first seen and when the keeper first decides about it. The reasons come from the model itself
+    /// (<see cref="GoalkeeperRaceReason"/>), so the artifact cannot drift from the decision.
+    /// </summary>
+    private static bool RunKeeperEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 900f;
+
+        var homeProfile = TeamTacticalProfile.PossessionControl;
+        var awayProfile = TeamTacticalProfile.DirectCounterattack;
+
+        Console.WriteLine($"=== A6.5 goalkeeper trajectory evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Sweep race         : horizon {GoalkeeperDecisionModel.SweepRaceHorizonSeconds:F1} s," +
+                          $" margin {GoalkeeperDecisionModel.SweepRaceMarginSeconds:F2} s," +
+                          $" commit range {GoalkeeperDecisionModel.SweepCommitRangeMeters:F1} m," +
+                          $" handling height {GoalkeeperDecisionModel.HandlingHeightMeters:F2} m");
+        Console.WriteLine($"Shot decision      : horizon {GoalkeeperDecisionModel.ShotHorizonSeconds:F2} s," +
+                          $" mouth slack {GoalkeeperDecisionModel.GoalMouthSlackMeters:F1} m");
+        Console.WriteLine($"Trajectory         : {BallTrajectoryEstimate.MaxSamples} samples every" +
+                          $" {1f / BallTrajectoryEstimate.SampleStepSeconds:F0} per second, real solver");
+
+        int answers = Enum.GetValues(typeof(GoalkeeperRaceReason)).Length;
+        var raceEpisodes = new int[answers];
+        var raceKeeperSeconds = new double[answers];
+        var raceOpponentSeconds = new double[answers];
+        var raceCounts = new int[answers];
+        int shotsSeen = 0;
+        int shotsDived = 0;
+        int shotsDeclined = 0;
+        double interceptSecondsSum = 0d;
+        int matchesPlayed = 0;
+        int samples = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = homeProfile,
+                AwayProfile = awayProfile
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+            var previousReason = new Dictionary<int, GoalkeeperRaceReason>();
+            var previousShot = new Dictionary<int, bool>();
+
+            for (int tick = 0; tick < maxTicks; tick++)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+                if (tick % KeeperSampleInterval != 0) continue;
+
+                foreach (FootballerState player in engine.Players)
+                {
+                    if (player.Role != TacticalRole.Goalkeeper || !player.IsActiveOnPitch) continue;
+                    if (engine.GetController(player.Id) is not GoalkeeperController keeper) continue;
+                    int playerId = player.Id;
+                    samples++;
+
+                    GoalkeeperRace race = keeper.LastSweep;
+                    GoalkeeperRaceReason reason = keeper.SweepEvaluated
+                        ? race.Reason
+                        : GoalkeeperRaceReason.NoTrajectory;
+                    bool evaluated = keeper.SweepEvaluated;
+                    if (evaluated &&
+                        (!previousReason.TryGetValue(playerId, out GoalkeeperRaceReason seen) || seen != reason))
+                    {
+                        previousReason[playerId] = reason;
+                        int index = (int)reason;
+                        if (index >= 0 && index < answers)
+                        {
+                            raceEpisodes[index]++;
+                            if (race.Reason is GoalkeeperRaceReason.KeeperFirst or GoalkeeperRaceReason.Contested
+                                or GoalkeeperRaceReason.OpponentFirst)
+                            {
+                                raceKeeperSeconds[index] += race.KeeperSeconds;
+                                raceOpponentSeconds[index] += race.OpponentSeconds;
+                                raceCounts[index]++;
+                            }
+                        }
+                    }
+
+                    GoalkeeperShot shot = keeper.LastShot;
+                    bool onTarget = keeper.ShotEvaluated && shot.IsOnTarget;
+                    if (!previousShot.TryGetValue(playerId, out bool wasOnTarget) || wasOnTarget != onTarget)
+                    {
+                        previousShot[playerId] = onTarget;
+                        if (onTarget)
+                        {
+                            shotsSeen++;
+                            if (shot.CanIntercept)
+                            {
+                                shotsDived++;
+                                interceptSecondsSum += shot.InterceptSeconds;
+                            }
+                            else
+                            {
+                                shotsDeclined++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matchesPlayed++;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks | " +
+                              $"score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} | {samples} keeper samples");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matchesPlayed} completed, {samples} keeper samples) ===");
+        if (matchesPlayed == 0 || samples == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        int sweepEpisodes = 0;
+        int sweepsTaken = 0;
+        int sweepsDeclined = 0;
+
+        foreach (GoalkeeperRaceReason reason in Enum.GetValues(typeof(GoalkeeperRaceReason)))
+        {
+            int index = (int)reason;
+            int count = raceEpisodes[index];
+            if (count == 0) continue;
+
+            sweepEpisodes += count;
+            if (reason is GoalkeeperRaceReason.KeeperFirst or GoalkeeperRaceReason.Contested) sweepsTaken += count;
+            if (reason is GoalkeeperRaceReason.OpponentFirst or GoalkeeperRaceReason.OutOfRange
+                or GoalkeeperRaceReason.OutsideArea or GoalkeeperRaceReason.NotTheOpponentsBall
+                or GoalkeeperRaceReason.KeeperCannotReach)
+            {
+                sweepsDeclined += count;
+            }
+
+            string times = raceCounts[index] == 0
+                ? string.Empty
+                : $" | keeper {DescribeKeeperSeconds(raceKeeperSeconds[index] / raceCounts[index])}" +
+                  $" vs opponent {DescribeKeeperSeconds(raceOpponentSeconds[index] / raceCounts[index])}";
+            Console.WriteLine($"  {reason,-20}: {count,5} episodes{times}");
+        }
+
+        Console.WriteLine($"Sweep verdicts     : {sweepEpisodes} episodes, {sweepsTaken} taken, {sweepsDeclined} declined");
+        Console.WriteLine($"Shots on target    : {shotsSeen} | dived for {shotsDived} (mean intercept" +
+                          $" {(shotsDived == 0 ? 0d : interceptSecondsSum / shotsDived):F2} s) | declined as out of reach" +
+                          $" {shotsDeclined}");
+
+        bool ok = matchesPlayed == seedCount && sweepEpisodes > 0;
+        Console.WriteLine(ok
+            ? "RESULT: sweeps and dives decided on the ball's real trajectory"
+            : "RESULT: incomplete, or no keeper decision was ever evaluated");
+        return ok;
+    }
+
+    /// <summary>How often the keeper probe samples each keeper, in ticks (0.2 s).</summary>
+    private const int KeeperSampleInterval = 12;
+
+    /// <summary>A race time, or "unreachable" for the model's "nobody can get there" value.</summary>
+    private static string DescribeKeeperSeconds(double seconds) =>
+        seconds >= float.MaxValue * 0.5d ? "unreachable" : $"{seconds:F2} s";
+
     private static void Accumulate(
         int[] offered, int[] chosen, int[] executed, float[] marginSum, float[] marginWorst, int[] marginTicks,
         float[] probabilitySum, float[] gainSum, float[] lossSum, int[] termsTicks,
@@ -967,7 +1152,7 @@ public static class Program
 
         Console.WriteLine($"=== {playersPerTeam}v{playersPerTeam} Headless Match in {sw.ElapsedMilliseconds} ms ===");
         Console.WriteLine($"Simulation version: {SimulationVersion.Tag} (seed {seed})");
-        Console.WriteLine($"Status            : {(completed ? "FULL TIME" : $"INCOMPLETE — tick cap {maxTicks} reached")}" +
+        Console.WriteLine($"Status            : {(completed ? "FULL TIME" : $"INCOMPLETE â€” tick cap {maxTicks} reached")}" +
                           $" | phase {engine.Rules.Phase} | period {engine.Rules.Period}");
         Console.WriteLine($"Tick / Clock      : tick {engine.CurrentTick} | clock {engine.Rules.MatchClockSeconds:F1}s of {halfDurationSeconds * 2f:F0}s");
         Console.WriteLine($"Final Score       : Home ({config.HomeProfile.Name}) {a.HomeGoals} - {a.AwayGoals} Away ({config.AwayProfile.Name})");
@@ -1002,7 +1187,7 @@ public static class Program
     private static bool RunTacticalComparisonBatch()
     {
         Console.WriteLine("=== Phase 6 & 9 Multi-Seed Tactical Differentiation Batch (Possession vs Direct Counter) ===");
-        // AGENTS §2.2: every recorded artifact states the simulation version, and only same-version numbers
+        // AGENTS Â§2.2: every recorded artifact states the simulation version, and only same-version numbers
         // are comparable. The match and perf modes already do; the gate artifact did not until A6.1.
         Console.WriteLine($"Simulation version: {SimulationVersion.Tag}");
         const float halfSeconds = 120f;

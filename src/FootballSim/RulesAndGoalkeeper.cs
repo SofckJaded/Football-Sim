@@ -22,25 +22,35 @@ public sealed class GoalkeeperController : IFootballerController
 {
     private const float MaxReceivableSpeed = 8.0f;
 
-    /// <summary>How far ahead the keeper looks when deciding whether a sweep is a race it can win.</summary>
-    private const float SweepRaceHorizonSeconds = 2.0f;
-
-    /// <summary>
-    /// How much later than the nearest opponent the keeper still accepts. A sweep is worth committing
-    /// to when the keeper is genuinely first, or so close that the opponent's touch is contested; it is
-    /// not worth leaving the line when the opponent is clearly there before them.
-    /// </summary>
-    private const float SweepRaceMarginSeconds = 0.35f;
-
     private readonly PitchDimensions _pitch;
     private readonly PassPlanner _passPlanner;
+
+    /// <summary>
+    /// A6.5: the keeper's own prediction of the ball's real future path. One reusable estimate, so a sweep
+    /// race and a dive answer the same question from the same trajectory instead of two linear guesses.
+    /// </summary>
+    private readonly BallTrajectoryEstimate _trajectory;
+
     private string _debugSummary = "GK:Positioning";
 
     public GoalkeeperController(PitchDimensions pitch)
     {
         _pitch = pitch;
         _passPlanner = new PassPlanner(pitch);
+        _trajectory = new BallTrajectoryEstimate(pitch: pitch);
     }
+
+    /// <summary>Last sweep race the keeper evaluated (A6.5), for tests and probes.</summary>
+    public GoalkeeperRace LastSweep { get; private set; }
+
+    /// <summary>Last shot this keeper evaluated (A6.5), for tests and probes.</summary>
+    public GoalkeeperShot LastShot { get; private set; }
+
+    /// <summary>True when this decision actually ran the sweep race (A6.5). A probe needs it to tell "declined" from "not asked".</summary>
+    public bool SweepEvaluated { get; private set; }
+
+    /// <summary>True when this decision actually evaluated a shot (A6.5).</summary>
+    public bool ShotEvaluated { get; private set; }
 
     public ControllerSourceType SourceType => ControllerSourceType.AI;
     public string GetDebugSummary() => _debugSummary;
@@ -53,7 +63,13 @@ public sealed class GoalkeeperController : IFootballerController
         float ownGoalX = -obs.AttackingDirectionX * _pitch.HalfLength;
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
-        Vector2 ballVelXZ = new(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z);
+
+        // A6.5: the prediction is per decision, never carried over from last tick's question.
+        _trajectory.Invalidate();
+        LastSweep = default;
+        LastShot = GoalkeeperShot.None;
+        SweepEvaluated = false;
+        ShotEvaluated = false;
 
         float distToBall = Vector2.Distance(selfXZ, ballXZ);
         float verticalDelta = obs.PerceivedBallPosition.Y - obs.SelfPosition.Y;
@@ -71,52 +87,46 @@ public sealed class GoalkeeperController : IFootballerController
         // Audit F12: decision and execution must agree on reach. The keeper can only handle the ball
         // inside its physical standing reach (ReachRadius * 1.12 ≈ 0.84 m) and below its handling
         // height — the old gate used the wider approach radius (≈1.24 m), so the keeper would start
-        // distribution movement while still unable to touch the ball.
-        const float keeperHandlingHeight = 2.42f;
+        // distribution movement while still unable to touch the ball. The height is A6.5's constant, so
+        // the hand-off to distribution and the claim filter cannot disagree.
         bool ballWithinHandlingReach = distToBall <= obs.SelfAttributes.ReachRadius * 1.12f
                                        && verticalDelta >= -0.05f
-                                       && verticalDelta <= keeperHandlingHeight;
+                                       && verticalDelta <= GoalkeeperDecisionModel.HandlingHeightMeters;
         if (obs.AvailableToKick && ballWithinHandlingReach)
         {
             State = GoalkeeperState.Distribution;
             return DecideDistributionOrSave(obs, ownGoalX);
         }
 
-        // 1. Incoming Fast Shot Detection -> Dive along the goal line only when shot is close (< 0.45s away)
+        // 1. A shot on target, decided on the ball's real trajectory (A6.5). The old gate extrapolated the
+        // flight in a straight line and dived at a fixed plane inside the goal line whether or not the body
+        // could get there; now the crossing time and the reachable interception point come from one estimate,
+        // and a shot the keeper cannot reach is deliberately not dived for.
         float speedTowardGoal = -obs.PerceivedBallVelocity.X * obs.AttackingDirectionX;
+        bool shotOnTarget = false;
         if (speedTowardGoal > 11.0f)
         {
-            // Audit F12: only a ball that is still approaching along X can be a future threat, and it
-            // must arrive below the crossbar. The old code used |ballX - keeperX|, so a ball that had
-            // already passed the keeper still looked like a future shot.
-            float velocityX = obs.PerceivedBallVelocity.X;
-            float timeToPlane = MathF.Abs(velocityX) > 1e-3f
-                ? (obs.SelfPosition.X - obs.PerceivedBallPosition.X) / velocityX
-                : float.MaxValue;
+            _trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
+                GoalkeeperDecisionModel.ShotHorizonSeconds);
 
-            if (timeToPlane > 0.02f && timeToPlane < 0.48f)
+            GoalkeeperShot shot = GoalkeeperDecisionModel.EvaluateShot(obs, _trajectory, _pitch);
+            LastShot = shot;
+            ShotEvaluated = true;
+            shotOnTarget = shot.IsOnTarget;
+            if (shot.IsOnTarget && shot.CanIntercept)
             {
-                float predictedZ = obs.PerceivedBallPosition.Z + obs.PerceivedBallVelocity.Z * timeToPlane;
-                float predictedY = obs.PerceivedBallPosition.Y + obs.PerceivedBallVelocity.Y * timeToPlane;
-                if (MathF.Abs(predictedZ) <= _pitch.HalfGoalWidth + 0.6f &&
-                    predictedY <= _pitch.GoalHeight + 0.35f)
-                {
-                    Vector3 interceptPoint = new(
-                        ownGoalX + obs.AttackingDirectionX * 0.9f,
-                        0.11f,
-                        Math.Clamp(predictedZ, -_pitch.HalfGoalWidth + 0.3f, _pitch.HalfGoalWidth - 0.3f));
-                    Vector3 diveVec = interceptPoint - obs.SelfPosition;
-                    Vector2 diveXZ = new(diveVec.X, diveVec.Z);
-                    float lateralOffset = diveXZ.Length();
-                    if (lateralOffset > 1e-4f) diveXZ /= lateralOffset;
+                Vector3 interceptPoint = shot.InterceptPoint;
+                Vector3 diveVec = interceptPoint - obs.SelfPosition;
+                Vector2 diveXZ = new(diveVec.X, diveVec.Z);
+                float lateralOffset = diveXZ.Length();
+                if (lateralOffset > 1e-4f) diveXZ /= lateralOffset;
 
-                    State = GoalkeeperState.Saving;
-                    _debugSummary = $"GK:DiveSave(z={predictedZ:F1}m)";
-                    return new FootballerCommand(
-                        diveXZ, new Vector2(obs.AttackingDirectionX, 0f), true, false, false, false,
-                        lateralOffset > 0.85f && lateralOffset < 2.6f, diveVec,
-                        KickIntentType.None, Vector3.UnitX, 0f, 0f);
-                }
+                State = GoalkeeperState.Saving;
+                _debugSummary = $"GK:DiveSave(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)";
+                return new FootballerCommand(
+                    diveXZ, new Vector2(obs.AttackingDirectionX, 0f), true, false, false, false,
+                    lateralOffset > 0.85f && lateralOffset < 2.6f, diveVec,
+                    KickIntentType.None, Vector3.UnitX, 0f, 0f);
             }
         }
 
@@ -125,22 +135,35 @@ public sealed class GoalkeeperController : IFootballerController
         // keeper's own parry) must be played with the feet or left to a defender — never charged
         // down and tackled toward its own goal.
         //
-        // A2.1: a sweep is a race, not a radius. The keeper used to charge out at anything inside
-        // 12.5 m, which is how they get rounded in races they were never going to win; the reach model
-        // now has to say the keeper can get there before the nearest opponent.
+        // A2.1/A6.5: a sweep is a race over the ball's real trajectory, not a radius and not a
+        // constant-velocity meeting. The reach model now has to say the keeper can be at the ball's actual
+        // future position first (or contested-first), and an opponent clearly there before him declines it.
         bool opponentHasBall = obs.PossessingTeam != obs.SelfTeam;
         bool ballInBox = MathF.Abs(ballXZ.X - ownGoalX) < _pitch.PenaltyAreaLength &&
-                         MathF.Abs(ballXZ.Y) < _pitch.PenaltyAreaWidth * 0.45f;
-        if (opponentHasBall && ballInBox && distToBall < 12.5f &&
-            CanWinSweepRace(obs, ballXZ, ballVelXZ))
+                         MathF.Abs(ballXZ.Y) < _pitch.PenaltyAreaWidth
+                             * GoalkeeperDecisionModel.SweepAreaWidthFactor;
+
+        // A6.5: a shot that is on target is a shot, not a loose ball. Falling through to the sweep when the dive
+        // was declined would have the keeper charge a moving shot he had just decided he could not reach.
+        if (!shotOnTarget && opponentHasBall && ballInBox &&
+            distToBall < GoalkeeperDecisionModel.SweepCommitRangeMeters)
         {
-            // Audit F09: when the keeper is exactly over the ball this vector is zero; a bare
-            // Vector2.Normalize produced NaN and the command carried it into the locomotion step.
-            Vector2 dirToBall = SimMath.SafeNormalize(ballXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
-            _debugSummary = "GK:Rush1v1Sweep";
-            return new FootballerCommand(
-                dirToBall, dirToBall, true, false, distToBall < 1.3f, false, false, Vector3.Zero,
-                KickIntentType.None, Vector3.UnitX, 0f, 0f);
+            _trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
+                GoalkeeperDecisionModel.SweepRaceHorizonSeconds);
+
+            GoalkeeperRace race = GoalkeeperDecisionModel.EvaluateSweep(obs, _trajectory, _pitch);
+            LastSweep = race;
+            SweepEvaluated = true;
+
+            if (race.ShouldGo)
+            {
+                Vector2 meetXZ = new(race.MeetingPoint.X, race.MeetingPoint.Z);
+                Vector2 dirToBall = SimMath.SafeNormalize(meetXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
+                _debugSummary = $"GK:Rush1v1Sweep({race.Reason})";
+                return new FootballerCommand(
+                    dirToBall, dirToBall, true, false, distToBall < 1.3f, false, false, Vector3.Zero,
+                    KickIntentType.None, Vector3.UnitX, 0f, 0f);
+            }
         }
 
         // 3. Tight Angle-Bisecting Arc Positioning
@@ -161,33 +184,6 @@ public sealed class GoalkeeperController : IFootballerController
         return new FootballerCommand(
             moveDir, dirGoalToBall, moveDist > 2.0f, false, false, false, false, Vector3.Zero,
             KickIntentType.None, Vector3.UnitX, 0f, 0f);
-    }
-
-    /// <summary>
-    /// True when the reach model says this keeper can play the ball before (or close enough to)
-    /// the nearest opponent who can. An opponent nobody has eyes on cannot be raced against — the
-    /// keeper does not get to use positions the observation never carried (A2.2).
-    /// </summary>
-    private bool CanWinSweepRace(in FootballerObservation obs, Vector2 ballXZ, Vector2 ballVelXZ)
-    {
-        ReachEstimate keeperArrival = TimeToReachModel.ToMovingPoint(
-            ReachKinematics.FromObservation(obs), ballXZ, ballVelXZ, SweepRaceHorizonSeconds);
-        if (!keeperArrival.Reachable) return false;
-
-        float fastestOpponent = float.MaxValue;
-        foreach (var entity in obs.VisiblePlayers)
-        {
-            if (entity.Team == obs.SelfTeam) continue;
-
-            ReachEstimate opponentArrival = TimeToReachModel.ToMovingPoint(
-                ReachKinematics.FromEntity(entity),
-                ballXZ, ballVelXZ, SweepRaceHorizonSeconds);
-
-            float arrival = opponentArrival.Reachable ? opponentArrival.Seconds : float.MaxValue;
-            if (arrival < fastestOpponent) fastestOpponent = arrival;
-        }
-
-        return keeperArrival.Seconds <= fastestOpponent + SweepRaceMarginSeconds;
     }
 
     /// <summary>
