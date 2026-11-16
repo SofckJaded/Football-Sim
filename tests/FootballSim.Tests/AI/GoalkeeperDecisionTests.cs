@@ -63,23 +63,27 @@ public sealed class GoalkeeperDecisionTests
     }
 
     /// <summary>
-    /// An infeasible sweep is declined with a stated reason: the ball is outside the area, or simply further
-    /// than the keeper will travel for a race he has to sprint to, or it is not the opponents' ball at all.
-    /// Evaluated on the model directly, because the controller never even asks the question in those cases.
+    /// An infeasible sweep is declined with a stated reason: the point the keeper would meet the ball at is
+    /// outside his area (so his hands are no use there), or it is more ground than the horizon allows, or it is
+    /// not the opponents' ball at all, or there is no prediction to race on. Evaluated on the model directly,
+    /// because the controller's own gates are the cheap half of the question.
+    ///
+    /// A6.5b: the reported reason for "outside the area" is now the <b>meeting point's</b>, so the fixture is a
+    /// keeper who is himself up the pitch — a sweeper-keeper's ordinary error, and the one the law is about.
     /// </summary>
     [Fact]
     public void InfeasibleSweeps_AreDeclinedWithAReason()
     {
-        // Outside the penalty area: 20 m from the goal line the area is 16.5 m deep.
-        GoalkeeperRace outsideRace = ModelSweep(RollingInward(position: new Vector3(-30f, 0.11f, 3f)));
+        GoalkeeperRace outsideRace = ModelSweep(
+            Stationary(position: new Vector3(-33f, 0.11f, 2f)), keeperXZ: new Vector2(-30f, 0f));
         Assert.False(outsideRace.ShouldGo);
         Assert.Equal(GoalkeeperRaceReason.OutsideArea, outsideRace.Reason);
 
-        // Inside the area but beyond the keeper's commit range.
+        // Inside the area but 20 m away: no horizon puts him there in time.
         GoalkeeperRace farRace = ModelSweep(
-            RollingInward(position: new Vector3(-37f, 0.11f, 3f)), keeperXZ: new Vector2(-52f, 0f));
+            Stationary(position: new Vector3(-38f, 0.11f, 15f)), keeperXZ: new Vector2(-52f, 0f));
         Assert.False(farRace.ShouldGo);
-        Assert.Equal(GoalkeeperRaceReason.OutOfRange, farRace.Reason);
+        Assert.Equal(GoalkeeperRaceReason.KeeperCannotReach, farRace.Reason);
 
         // A friendly loose ball is never charged: the keeper's own back-pass is played with the feet.
         GoalkeeperRace friendly = ModelSweep(RollingInward(), possessingTeam: TeamId.Home);
@@ -90,6 +94,46 @@ public sealed class GoalkeeperDecisionTests
         GoalkeeperRace unpredicted = ModelSweep(RollingInward(), buildTrajectory: false);
         Assert.False(unpredicted.ShouldGo);
         Assert.Equal(GoalkeeperRaceReason.NoTrajectory, unpredicted.Reason);
+    }
+
+    /// <summary>
+    /// A6.5b: the sweep's gates are the <b>meeting point's</b>, not the ball's current position. The same ball,
+    /// the same keeper, only its direction differing: rolling in, the point he would meet it at is inside his
+    /// area and he takes the race; rolling away, every point he could meet it at is outside the area, and the
+    /// law says his hands are useless there, so he stays home.
+    ///
+    /// The ball starts 22.5 m from the goal line, which the old gate tested directly — so this is exactly the
+    /// ball a keeper could not sweep before, even though he would meet it 15 m out.
+    /// </summary>
+    [Fact]
+    public void TheSweepIsDecidedAtTheMeetingPoint_NotAtTheBallsCurrentPosition()
+    {
+        // A keeper 7.5 m off his line, with a ball rolling back toward him and his goal.
+        var keeper = new Vector2(-45f, 0f);
+        var incoming = new BallState
+        {
+            Position = new Vector3(-33f, 0.11f, 0f),
+            PreviousPosition = new Vector3(-33f, 0.11f, 0f),
+            Velocity = new Vector3(-4f, 0f, 0f)
+        };
+
+        GoalkeeperRace toward = ModelSweep(incoming, keeperXZ: keeper);
+        Assert.True(toward.ShouldGo, $"a ball rolling into the area was declined: {toward.Describe()}");
+        Assert.Equal(GoalkeeperRaceReason.KeeperFirst, toward.Reason);
+        Assert.True(MathF.Abs(toward.MeetingPoint.X + Pitch.HalfLength) < Pitch.PenaltyAreaLength,
+            $"the meeting point {toward.MeetingPoint} is outside the area in depth");
+
+        // The same ball rolling the other way: the keeper cannot be at any point of its path, and every point he
+        // could reach is behind the area line anyway.
+        var away = new BallState
+        {
+            Position = new Vector3(-33f, 0.11f, 0f),
+            PreviousPosition = new Vector3(-33f, 0.11f, 0f),
+            Velocity = new Vector3(4f, 0f, 0f)
+        };
+
+        GoalkeeperRace outbound = ModelSweep(away, keeperXZ: keeper);
+        Assert.False(outbound.ShouldGo, $"a ball rolling out of the area was swept: {outbound.Describe()}");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -183,9 +227,14 @@ public sealed class GoalkeeperDecisionTests
     }
 
     /// <summary>
-    /// A6.6: the handling gate is the same one the execution layer applies. A ball at 1.8 m is above the
-    /// keeper's feet and inside his hands — an opponent's ball he plays, a team-mate's deliberate kick he
-    /// must leave alone (his feet cannot reach it), which is exactly the "played with the feet" rule.
+    /// A6.6: the handling gate is the same one the execution layer applies. A ball at 1.8 m is above the keeper's
+    /// feet and inside his hands — an opponent's ball he plays, a team-mate's deliberate kick he must leave alone
+    /// (his feet cannot reach it), which is exactly the "played with the feet" rule.
+    ///
+    /// A6.5b restated the first half: with the claim in place, "plays it" now means he goes and gathers it, so
+    /// the observable is the claim's answer rather than a kick. The second half is unchanged — the same ball,
+    /// the same height, and the hands are barred — and the claim must decline for the law's reason, not merely
+    /// fail to execute.
     /// </summary>
     [Fact]
     public void ABackPassAtHandlingHeight_IsNotGathered()
@@ -197,7 +246,10 @@ public sealed class GoalkeeperDecisionTests
         FootballerCommand opponentsBall = controller.Decide(
             Observe(keeperState, ball, TeamId.Away), dt: 1f / 60f);
         Assert.True(controller.LastHandling.MayUseHands, controller.LastHandling.Describe());
-        Assert.NotEqual(KickIntentType.None, opponentsBall.KickType);
+        Assert.True(controller.LastClaim.ShouldAttack,
+            $"the keeper declined his own ball: {controller.LastClaim.Describe()}");
+        Assert.Equal(GoalkeeperClaimMode.Gather, controller.LastClaim.Mode);
+        Assert.Equal(KickIntentType.None, opponentsBall.KickType);
 
         var backPass = new BallLastPlay(BallContactKind.Kick, KickIntentType.GroundPass, MateId, TeamId.Home);
         FootballerCommand matesBall = controller.Decide(
@@ -205,6 +257,8 @@ public sealed class GoalkeeperDecisionTests
 
         Assert.False(controller.LastHandling.MayUseHands);
         Assert.Equal(GoalkeeperHandlingReason.TeamMateDeliberateKick, controller.LastHandling.Reason);
+        Assert.Equal(GoalkeeperClaimReason.HandsBarred, controller.LastClaim.Reason);
+        Assert.False(controller.LastClaim.ShouldAttack, controller.LastClaim.Describe());
         Assert.Equal(KickIntentType.None, matesBall.KickType);
     }
 
@@ -244,6 +298,9 @@ public sealed class GoalkeeperDecisionTests
         PreviousPosition = position,
         Velocity = velocity
     };
+
+    /// <summary>A ball that is not going anywhere: for the fixtures about where it <i>is</i>.</summary>
+    private static BallState Stationary(Vector3 position) => ShotFrom(position, Vector3.Zero);
 
     private static FootballerState Keeper(Vector3 position) => new()
     {
@@ -342,7 +399,7 @@ public sealed class GoalkeeperDecisionTests
         var trajectory = new BallTrajectoryEstimate(pitch: Pitch);
         if (buildTrajectory)
         {
-            trajectory.TryBuild(ball, GoalkeeperDecisionModel.SweepRaceHorizonSeconds);
+            trajectory.TryBuild(ball, GoalkeeperDecisionModel.TrajectoryHorizonSeconds);
         }
 
         return GoalkeeperDecisionModel.EvaluateSweep(observation, trajectory, Pitch);

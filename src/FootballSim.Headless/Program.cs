@@ -878,20 +878,31 @@ public static class Program
         var homeProfile = TeamTacticalProfile.PossessionControl;
         var awayProfile = TeamTacticalProfile.DirectCounterattack;
         var pitch = new PitchDimensions();
-        Console.WriteLine($"=== A6.6 goalkeeper trajectory and handling-law evidence: {seedCount} seeds x" +
+        Console.WriteLine($"=== A6.5b goalkeeper decisions evidence: {seedCount} seeds x" +
                           $" {halfSeconds * 2f:F0} s ===");
         Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
-        Console.WriteLine($"Sweep race         : horizon {GoalkeeperDecisionModel.SweepRaceHorizonSeconds:F1} s," +
-                          $" margin {GoalkeeperDecisionModel.SweepRaceMarginSeconds:F2} s," +
+        Console.WriteLine($"Trajectory         : horizon {GoalkeeperDecisionModel.TrajectoryHorizonSeconds:F1} s," +
+                          $" {BallTrajectoryEstimate.MaxSamples} samples every" +
+                          $" {1f / BallTrajectoryEstimate.SampleStepSeconds:F0} per second, real solver," +
+                          $" built within {GoalkeeperDecisionModel.TrajectoryBuildRangeMeters:F0} m of the goal line");
+        Console.WriteLine($"Sweep race         : margin {GoalkeeperDecisionModel.SweepRaceMarginSeconds:F2} s," +
                           $" commit range {GoalkeeperDecisionModel.SweepCommitRangeMeters:F1} m," +
-                          $" handling height {GoalkeeperDecisionModel.HandlingHeightMeters:F2} m");
+                          $" handling height {GoalkeeperDecisionModel.HandlingHeightMeters:F2} m," +
+                          " gates at the meeting point (own penalty area, Law 12)");
+        Console.WriteLine($"Claim/punch        : airborne above {GoalkeeperDecisionModel.ClaimAirborneHeightMeters:F2} m," +
+                          $" commit range {GoalkeeperDecisionModel.ClaimCommitRangeMeters:F1} m," +
+                          $" hold limit {BallContactRules.KeeperCatchSpeedLimit:F1} m/s x reflex");
         Console.WriteLine($"Shot decision      : horizon {GoalkeeperDecisionModel.ShotHorizonSeconds:F2} s," +
                           $" mouth slack {GoalkeeperDecisionModel.GoalMouthSlackMeters:F1} m");
         Console.WriteLine($"Handling law       : own penalty area {pitch.PenaltyAreaLength:F1} m x" +
                           $" {pitch.PenaltyAreaWidth:F2} m (Law 12: no deliberate team-mate kick, no second" +
                           " handling after release)");
-        Console.WriteLine($"Trajectory         : {BallTrajectoryEstimate.MaxSamples} samples every" +
-                          $" {1f / BallTrajectoryEstimate.SampleStepSeconds:F0} per second, real solver");
+        Console.WriteLine($"Support duty       : {GoalkeeperSupportModel.SupportDepthShare:P0} of the goal-to-ball" +
+                          $" distance in possession, {GoalkeeperSupportModel.MinSupportDepthMeters:F1}" +
+                          $"-{GoalkeeperSupportModel.MaxSupportDepthMeters:F0} m; defending" +
+                          $" {GoalkeeperSupportModel.DefensiveDepthShare:P0}," +
+                          $" {GoalkeeperSupportModel.MinDefensiveDepthMeters:F1}" +
+                          $"-{GoalkeeperSupportModel.MaxDefensiveDepthMeters:F1} m");
 
         int answers = Enum.GetValues(typeof(GoalkeeperRaceReason)).Length;
         var raceEpisodes = new int[answers];
@@ -905,6 +916,27 @@ public static class Program
         int shotsDeclined = 0;
         int shotsBlockedByLaw = 0;
         double interceptSecondsSum = 0d;
+
+        // A6.5b: deliveries claimed, punched and left alone, and what the keeper did with the ball in his hands.
+        int claimReasons = Enum.GetValues(typeof(GoalkeeperClaimReason)).Length;
+        var claimReasonEpisodes = new int[claimReasons];
+        int claimsAttacked = 0;
+        int claimsGathered = 0;
+        int claimsPunched = 0;
+        int claimsDeclined = 0;
+        double claimKeeperSecondsSum = 0d;
+        double claimAttackerSecondsSum = 0d;
+        double claimArrivalSpeedSum = 0d;
+        int claimDecisionCount = 0;
+        int distributionCounts = Enum.GetValues(typeof(GoalkeeperDistributionKind)).Length;
+        var distributionKinds = new int[distributionCounts];
+        double distributionCompletionSum = 0d;
+        double distributionDistanceSum = 0d;
+        int distributionPriced = 0;
+        var lineSamples = new int[2];
+        var standoffSum = new double[2];
+        var standoffMax = new float[2];
+
         int matchesPlayed = 0;
         int samples = 0;
 
@@ -925,23 +957,60 @@ public static class Program
 
             var previousReason = new Dictionary<int, GoalkeeperRaceReason>();
             var previousShot = new Dictionary<int, bool>();
+            var previousClaim = new Dictionary<int, (GoalkeeperClaimReason Reason, GoalkeeperClaimMode Mode)>();
+            var previousDistribution = new Dictionary<int, GoalkeeperDistributionKind>();
 
             for (int tick = 0; tick < maxTicks; tick++)
             {
                 engine.StepTick();
                 if (engine.Rules.Phase == MatchPhase.FullTime) break;
-                if (tick % KeeperSampleInterval != 0) continue;
+
+                // The sample gate is for the standing counters (verdicts, hands, standoff). A distribution is a
+                // one-tick decision, so it is counted on every tick — otherwise a 0.2 s sampling interval misses
+                // almost all of them, which is exactly what the first run of this probe did.
+                bool sampled = tick % KeeperSampleInterval == 0;
 
                 foreach (FootballerState player in engine.Players)
                 {
                     if (player.Role != TacticalRole.Goalkeeper || !player.IsActiveOnPitch) continue;
                     if (engine.GetController(player.Id) is not GoalkeeperController keeper) continue;
                     int playerId = player.Id;
+
+                    // Distribution is counted on every tick (it is a one-tick decision); everything below it is
+                    // a standing state that the 0.2 s sample describes well.
+                    GoalkeeperDistribution distribution = keeper.LastDistribution;
+                    bool distributing = distribution.Kind != GoalkeeperDistributionKind.None;
+                    bool wasDistributing = previousDistribution.TryGetValue(playerId, out GoalkeeperDistributionKind was)
+                                           && was != GoalkeeperDistributionKind.None;
+                    previousDistribution[playerId] = distribution.Kind;
+                    if (distributing && !wasDistributing)
+                    {
+                        int kind = (int)distribution.Kind;
+                        if (kind >= 0 && kind < distributionCounts) distributionKinds[kind]++;
+                        if (distribution.Kind != GoalkeeperDistributionKind.SafeBall)
+                        {
+                            distributionPriced++;
+                            distributionCompletionSum += distribution.Completion01;
+                            distributionDistanceSum += distribution.DistanceMeters;
+                        }
+                    }
+
+                    if (!sampled) continue;
                     samples++;
 
                     int handlingIndex = (int)keeper.LastHandling.Reason;
                     if (handlingIndex >= 0 && handlingIndex < handlingReasons)
                         handlingSamples[handlingIndex]++;
+
+                    // A6.5b support duty: how far off his own line he actually stands, split by whose ball it is
+                    // (the possession snapshot's own answer, not a second possession model).
+                    float ownGoalX = player.Position.X < 0f ? -pitch.HalfLength : pitch.HalfLength;
+                    float standoff = MathF.Abs(player.Position.X - ownGoalX);
+                    TeamId? possessor = engine.Possession.PossessionTeam;
+                    int standoffBucket = possessor == player.Team ? 1 : 0;
+                    lineSamples[standoffBucket]++;
+                    standoffSum[standoffBucket] += standoff;
+                    if (standoff > standoffMax[standoffBucket]) standoffMax[standoffBucket] = standoff;
 
                     GoalkeeperRace race = keeper.LastSweep;
                     GoalkeeperRaceReason reason = keeper.SweepEvaluated
@@ -962,6 +1031,35 @@ public static class Program
                                 raceKeeperSeconds[index] += race.KeeperSeconds;
                                 raceOpponentSeconds[index] += race.OpponentSeconds;
                                 raceCounts[index]++;
+                            }
+                        }
+                    }
+
+                    if (keeper.ClaimEvaluated)
+                    {
+                        GoalkeeperClaim claim = keeper.LastClaim;
+                        var state = (claim.Reason, claim.Mode);
+                        if (!previousClaim.TryGetValue(playerId, out (GoalkeeperClaimReason Reason,
+                                GoalkeeperClaimMode Mode) seenClaim) || seenClaim != state)
+                        {
+                            previousClaim[playerId] = state;
+                            int index = (int)claim.Reason;
+                            if (index >= 0 && index < claimReasons) claimReasonEpisodes[index]++;
+                            if (claim.ShouldAttack)
+                            {
+                                claimsAttacked++;
+                                if (claim.WillHold) claimsGathered++;
+                                else claimsPunched++;
+                                claimKeeperSecondsSum += claim.KeeperSeconds;
+                                claimAttackerSecondsSum += claim.AttackerSeconds < float.MaxValue
+                                    ? claim.AttackerSeconds
+                                    : claim.KeeperSeconds;
+                                claimArrivalSpeedSum += claim.ArrivalSpeedMps;
+                                claimDecisionCount++;
+                            }
+                            else if (claim.Reason == GoalkeeperClaimReason.OpponentFirst)
+                            {
+                                claimsDeclined++;
                             }
                         }
                     }
@@ -1052,12 +1150,49 @@ public static class Program
                           $" {(shotsDived == 0 ? 0d : interceptSecondsSum / shotsDived):F2} s) | declined as out of reach" +
                           $" {shotsDeclined} | declined as unhandleable {shotsBlockedByLaw}");
 
+        // A6.5b: the delivery decision.
+        var claimLines = new List<string>();
+        int claimEpisodes = 0;
+        foreach (GoalkeeperClaimReason reason in Enum.GetValues(typeof(GoalkeeperClaimReason)))
+        {
+            int count = claimReasonEpisodes[(int)reason];
+            if (count == 0) continue;
+            claimEpisodes += count;
+            claimLines.Add($"{reason} {count}");
+        }
+
+        Console.WriteLine($"Deliveries         : {claimEpisodes} episodes | attacked {claimsAttacked}" +
+                          $" (gather {claimsGathered}, punch {claimsPunched}) | declined {claimsDeclined}" +
+                          (claimDecisionCount == 0
+                              ? string.Empty
+                              : $" | mean keeper {claimKeeperSecondsSum / claimDecisionCount:F2} s vs attacker" +
+                                $" {claimAttackerSecondsSum / claimDecisionCount:F2} s, ball" +
+                                $" {claimArrivalSpeedSum / claimDecisionCount:F1} m/s"));
+        if (claimLines.Count > 0) Console.WriteLine($"  by reason        : {string.Join(", ", claimLines)}");
+
+        // A6.5b: the distribution.
+        int ground = distributionKinds[(int)GoalkeeperDistributionKind.Ground];
+        int raised = distributionKinds[(int)GoalkeeperDistributionKind.Raised];
+        int safe = distributionKinds[(int)GoalkeeperDistributionKind.SafeBall];
+        Console.WriteLine($"Distribution       : {ground} ground, {raised} raised, {safe} safe-ball (last resort)" +
+                          (distributionPriced == 0
+                              ? string.Empty
+                              : $" | priced at p {distributionCompletionSum / distributionPriced:F2} over" +
+                                $" {distributionDistanceSum / distributionPriced:F1} m mean"));
+
+        Console.WriteLine($"Keeper standoff    : in possession {StandoffReport(standoffSum[1], lineSamples[1], standoffMax[1])}" +
+                          $" | defending {StandoffReport(standoffSum[0], lineSamples[0], standoffMax[0])}");
+
         bool ok = matchesPlayed == seedCount && sweepEpisodes > 0;
         Console.WriteLine(ok
-            ? "RESULT: sweeps and dives decided on the ball's real trajectory, handling gated on the law"
+            ? "RESULT: races, dives, deliveries and distribution decided on the ball's real trajectory"
             : "RESULT: incomplete, or no keeper decision was ever evaluated");
         return ok;
     }
+
+    /// <summary>Mean and deepest standoff off the keeper's own goal line for one possession phase.</summary>
+    private static string StandoffReport(double sum, int count, float worst) =>
+        count == 0 ? "n/a" : $"{sum / count:F1} m mean, {worst:F1} m deepest ({count} samples)";
 
     /// <summary>How often the keeper probe samples each keeper, in ticks (0.2 s).</summary>
     private const int KeeperSampleInterval = 12;

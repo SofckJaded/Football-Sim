@@ -113,6 +113,22 @@ public static class BallContactRules
     public const float KeeperDiveSeconds = 0.55f;
 
     /// <summary>
+    /// Fastest ball a keeper can hold, in m/s before reflex scaling. Anything quicker is a parry — a punch —
+    /// because the ball goes through the hands.
+    ///
+    /// A6.5b: it is a constant here, beside the rest of the keeper's physical capability, because two callers now
+    /// need the same number: the execution (which catches) and the keeper's own claim decision (which has to
+    /// predict whether a delivery will be gathered or punched). Before this the 17.5 existed only inside the save
+    /// branch, so the AI could not know what the contact would do.
+    /// </summary>
+    public const float KeeperCatchSpeedLimit = 17.5f;
+
+    /// <summary>The pace this keeper can hold a ball at, in m/s: <see cref="KeeperCatchSpeedLimit"/> scaled by
+    /// reflexes. One owner for the execution and the AI's claim prediction (A6.5b).</summary>
+    public static float KeeperCatchSpeed(float reflex01) =>
+        KeeperCatchSpeedLimit * Math.Clamp(reflex01, 0.1f, 1f);
+
+    /// <summary>
     /// Planar reach for the player's current action, in metres.
     ///
     /// A6.6: <paramref name="keeperHandling"/> is the keeper's <i>lawful</i> handling privilege, not his
@@ -888,7 +904,7 @@ public sealed class FootballerExecutionSystem
             if (movingTowardOwnGoal)
             {
                 float shotSpeed = ball.Velocity.Length();
-                if (shotSpeed < 17.5f * player.Attributes.GoalkeepingReflex01)
+                if (shotSpeed < BallContactRules.KeeperCatchSpeed(player.Attributes.GoalkeepingReflex01))
                 {
                     // Clean Catch — audit F03: the ball is authoritatively held in the hands, not a
                     // loose ball nudged 0.42 m in front. It follows the keeper, is excluded from
@@ -929,6 +945,63 @@ public sealed class FootballerExecutionSystem
                 }
                 return;
             }
+        }
+
+        // A6.5b: the claim. A keeper whose hands are legal gathers a ball he meets in the air, whether or not
+        // the ball is travelling toward his own goal.
+        //
+        // Why it is separate from the save above: the save exists for a shot, and it is gated on the ball moving
+        // at his goal at pace. A cross dropping onto the penalty spot has almost no horizontal velocity by the
+        // time it arrives, so the save branch never saw it and the keeper "controlled" it with a foot — which is
+        // to say no keeper in this simulation could claim a cross. The missing physical action was the handling
+        // itself, not the decision to go for the ball (which A6.5b's GoalkeeperClaim decides).
+        //
+        // The height band is the contact model's own: above the torso a keeper's body cannot play the ball, and
+        // below the handling height he must use his hands. A ball he can hold is caught; one arriving faster than
+        // he can hold is punched clear, away from his own goal so the punch can never become an own goal (F02).
+        if (player.Role == TacticalRole.Goalkeeper && KeeperMayHandle(player, ball) &&
+            ball.Position.Y - player.Position.Y > BallContactRules.TorsoContactHeight)
+        {
+            float ownGoalX = player.Position.X >= 0f ? _pitch.HalfLength : -_pitch.HalfLength;
+            float arrivalSpeed = ball.Velocity.Length();
+
+            if (arrivalSpeed < BallContactRules.KeeperCatchSpeed(player.Attributes.GoalkeepingReflex01))
+            {
+                ball.Position = HeldBallPosition(player);
+                ball.PreviousPosition = ball.Position;
+                ball.Velocity = Vector3.Zero;
+                ball.AngularVelocity = Vector3.Zero;
+                ball.HeldByPlayerId = player.Id;
+                ball.HeldReleaseDelaySeconds = 0.55f;
+                ball.LastTouchedByPlayerId = player.Id;
+                ball.LastTouchedByTeam = player.Team;
+                player.KickRecoveryTimer = 0.15f;
+                player.DribbleTouchTimer = 0f;
+                player.LastExecutionDiagnostic = "GK:CrossClaim";
+                EmitContact(player, BallContactKind.Save, ball);
+            }
+            else
+            {
+                // A punch, not a parry: the ball goes upfield and wide rather than back along its own path. A
+                // cross arriving at 20 m/s did not come at the goal, so "back where it came from" is a ball
+                // across his own face.
+                Vector2 outward = new(-MathF.Sign(ownGoalX), 0f);
+                float sideSign = ball.Position.Z >= 0f ? 1f : -1f;
+                Vector2 punchDir = SimMath.SafeNormalize(
+                    outward + new Vector2(0f, sideSign * 0.85f), player.FacingXZ);
+
+                float punchSpeed = Math.Clamp(arrivalSpeed * 0.45f, 6.0f, 12.0f);
+                ball.Velocity = new Vector3(punchDir.X * punchSpeed, 1.4f, punchDir.Y * punchSpeed);
+                ball.AngularVelocity = new Vector3(punchDir.Y * 6f, 0f, -punchDir.X * 6f);
+
+                ball.LastTouchedByPlayerId = player.Id;
+                ball.LastTouchedByTeam = player.Team;
+                player.KickRecoveryTimer = 0.45f;
+                player.LastExecutionDiagnostic = "GK:PunchClear";
+                EmitContact(player, BallContactKind.Save, ball, isParry: true);
+            }
+
+            return;
         }
 
         float pressure01 = 0f;

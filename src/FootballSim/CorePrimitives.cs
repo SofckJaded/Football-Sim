@@ -411,7 +411,7 @@ public enum TeamId
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 34;
+    public const int AiBehaviour = 35;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

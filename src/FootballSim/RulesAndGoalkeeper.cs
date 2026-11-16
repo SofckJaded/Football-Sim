@@ -15,19 +15,73 @@ public enum GoalkeeperState
     Saving,
     HoldingBall,
     Distribution,
-    Recovering
+    Recovering,
+
+    /// <summary>A6.5b: leaving the line to meet a delivery in the air (a claim or a punch).</summary>
+    Claiming
+}
+
+/// <summary>
+/// A6.5b: which family a keeper's distribution took, and what it was priced at. Published per decision so the
+/// <c>--keepers</c> probe can say whether the keeper's first ball is still the unpriced hoof it used to be.
+/// </summary>
+public enum GoalkeeperDistributionKind
+{
+    /// <summary>No distribution was decided this tick.</summary>
+    None = 0,
+
+    /// <summary>A planned ground pass to a priced receiver.</summary>
+    Ground = 1,
+
+    /// <summary>A raised ball, offered only where the ground route could not reach the receiver.</summary>
+    Raised = 2,
+
+    /// <summary>The last-resort ball down the line: no receiver was worth playing.</summary>
+    SafeBall = 3
+}
+
+/// <summary>One keeper distribution: the family, the receiver, the completion it was priced at, and how far.</summary>
+public readonly record struct GoalkeeperDistribution(
+    GoalkeeperDistributionKind Kind,
+    int ReceiverId,
+    float Completion01,
+    float DistanceMeters)
+{
+    /// <summary>No distribution this decision.</summary>
+    public static GoalkeeperDistribution None => default;
+
+    /// <summary>Compact text form for a probe or a failure message.</summary>
+    public string Describe() => Kind == GoalkeeperDistributionKind.None
+        ? "none"
+        : $"{Kind} to #{ReceiverId} p {Completion01:F2} at {DistanceMeters:F0} m";
 }
 
 public sealed class GoalkeeperController : IFootballerController
 {
     private const float MaxReceivableSpeed = 8.0f;
 
+    /// <summary>Closest team-mate a distribution is played to, in metres.</summary>
+    private const float MinDistributionMeters = 4.0f;
+
+    /// <summary>Furthest team-mate a distribution is played to, in metres.</summary>
+    private const float MaxDistributionMeters = 46.0f;
+
+    /// <summary>
+    /// How much the profile's own distribution style moves the value of a long ball, in scale units
+    /// (A6.5b). The value model is greedy about where the ball ends up, not about how it gets there, so a
+    /// side that wants to play out from the back (or to go long) states that here rather than in a filter.
+    /// </summary>
+    private const float DistributionStyleBias01 = 0.18f;
+
     private readonly PitchDimensions _pitch;
     private readonly PassPlanner _passPlanner;
+    private readonly PassSuccessModel _passSuccess;
+    private readonly ReceptionValueModel _receptionValue;
 
     /// <summary>
     /// A6.5: the keeper's own prediction of the ball's real future path. One reusable estimate, so a sweep
-    /// race and a dive answer the same question from the same trajectory instead of two linear guesses.
+    /// race, a claim and a dive answer the same question from the same trajectory instead of linear guesses.
+    /// A6.5b: one build per decision, at the model's one horizon, for every question that needs it.
     /// </summary>
     private readonly BallTrajectoryEstimate _trajectory;
 
@@ -37,6 +91,8 @@ public sealed class GoalkeeperController : IFootballerController
     {
         _pitch = pitch;
         _passPlanner = new PassPlanner(pitch);
+        _passSuccess = new PassSuccessModel(_passPlanner);
+        _receptionValue = new ReceptionValueModel(pitch);
         _trajectory = new BallTrajectoryEstimate(pitch: pitch);
     }
 
@@ -45,6 +101,9 @@ public sealed class GoalkeeperController : IFootballerController
 
     /// <summary>Last shot this keeper evaluated (A6.5), for tests and probes.</summary>
     public GoalkeeperShot LastShot { get; private set; }
+
+    /// <summary>Last delivery this keeper evaluated (A6.5b), for tests and probes.</summary>
+    public GoalkeeperClaim LastClaim { get; private set; } = GoalkeeperClaim.None;
 
     /// <summary>
     /// A6.6: the law's answer for the ball this keeper is looking at, published per decision so a probe can
@@ -58,6 +117,12 @@ public sealed class GoalkeeperController : IFootballerController
     /// <summary>True when this decision actually evaluated a shot (A6.5).</summary>
     public bool ShotEvaluated { get; private set; }
 
+    /// <summary>True when this decision actually evaluated a delivery (A6.5b).</summary>
+    public bool ClaimEvaluated { get; private set; }
+
+    /// <summary>A6.5b: the distribution this decision chose, and what it was priced at, for tests and probes.</summary>
+    public GoalkeeperDistribution LastDistribution { get; private set; } = GoalkeeperDistribution.None;
+
     public ControllerSourceType SourceType => ControllerSourceType.AI;
     public string GetDebugSummary() => _debugSummary;
 
@@ -70,12 +135,15 @@ public sealed class GoalkeeperController : IFootballerController
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
 
-        // A6.5: the prediction is per decision, never carried over from last tick's question.
+        // A6.5/A6.5b: the prediction is per decision, never carried over from last tick's question.
         _trajectory.Invalidate();
         LastSweep = default;
         LastShot = GoalkeeperShot.None;
+        LastClaim = GoalkeeperClaim.None;
+        LastDistribution = GoalkeeperDistribution.None;
         SweepEvaluated = false;
         ShotEvaluated = false;
+        ClaimEvaluated = false;
 
         float distToBall = Vector2.Distance(selfXZ, ballXZ);
         float verticalDelta = obs.PerceivedBallPosition.Y - obs.SelfPosition.Y;
@@ -97,6 +165,76 @@ public sealed class GoalkeeperController : IFootballerController
 
         State = obs.AvailableToKick ? GoalkeeperState.Positioning : GoalkeeperState.Recovering;
 
+        // A6.5b: one trajectory per decision, behind one cheap gate. Every trajectory question the keeper
+        // asks — the shot's crossing, the claim's meeting point, the sweep's race — reads these samples, so
+        // the answers cannot disagree and the solver runs once. The gate is what keeps this affordable: a
+        // shot at his goal, an airborne ball in his own defensive area (a delivery, his team's or theirs), or
+        // an opponent's ball close enough that it can reach the box inside the horizon.
+        float ballSpeedTowardGoal = -obs.PerceivedBallVelocity.X * obs.AttackingDirectionX;
+        bool nearOwnGoal =
+            MathF.Abs(ballXZ.X - ownGoalX) <= GoalkeeperDecisionModel.TrajectoryBuildRangeMeters;
+        bool trajectoryReady = false;
+        if (ballSpeedTowardGoal > 11.0f ||
+            (nearOwnGoal &&
+             (obs.PossessingTeam != obs.SelfTeam ||
+              obs.PerceivedBallPosition.Y >= GoalkeeperDecisionModel.ClaimAirborneHeightMeters)))
+        {
+            trajectoryReady = _trajectory.TryBuild(
+                obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
+                GoalkeeperDecisionModel.TrajectoryHorizonSeconds);
+        }
+
+        // 1. A shot on target, decided on the ball's real trajectory (A6.5). The old gate extrapolated the
+        // flight in a straight line and dived at a fixed plane inside the goal line whether or not the body
+        // could get there; now the crossing time and the reachable interception point come from one estimate,
+        // and a shot the keeper cannot reach is deliberately not dived for. A6.6: a physically reachable shot
+        // the keeper may not handle (the interception point outside his own area) is not dived for either.
+        if (ballSpeedTowardGoal > 11.0f && trajectoryReady)
+        {
+            GoalkeeperShot shot = GoalkeeperDecisionModel.EvaluateShot(obs, _trajectory, _pitch);
+            LastShot = shot;
+            ShotEvaluated = true;
+            if (shot.IsOnTarget && shot.CanSave)
+            {
+                Vector3 interceptPoint = shot.InterceptPoint;
+                Vector3 diveVec = interceptPoint - obs.SelfPosition;
+                Vector2 diveXZ = new(diveVec.X, diveVec.Z);
+                float lateralOffset = diveXZ.Length();
+                if (lateralOffset > 1e-4f) diveXZ /= lateralOffset;
+
+                State = GoalkeeperState.Saving;
+                _debugSummary = $"GK:DiveSave(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)";
+                return new FootballerCommand(
+                    diveXZ, new Vector2(obs.AttackingDirectionX, 0f), true, false, false, false,
+                    lateralOffset > 0.85f && lateralOffset < 2.6f, diveVec,
+                    KickIntentType.None, Vector3.UnitX, 0f, 0f);
+            }
+
+            // A6.5: a shot that is on target is a shot, not a loose ball. Falling through to the sweep when the
+            // dive was declined would have the keeper charge a moving shot he had just decided he could not
+            // reach.
+            if (shot.IsOnTarget) return DecidePositioning(obs, ownGoalX);
+        }
+
+        // 2. A delivery in the air (A6.5b). The sweep's gates were written for a ball already inside the box,
+        // so a cross on its way there was never even considered; this asks about the point the ball is going
+        // to, and it owns the answer it produces — a delivery he has decided not to claim is not a loose ball
+        // to sweep a tick later.
+        if (trajectoryReady &&
+            obs.PerceivedBallPosition.Y >= GoalkeeperDecisionModel.ClaimAirborneHeightMeters)
+        {
+            GoalkeeperClaim claim = GoalkeeperDecisionModel.EvaluateClaim(obs, _trajectory, _pitch);
+            LastClaim = claim;
+            ClaimEvaluated = true;
+
+            if (claim.ShouldAttack) return DecideClaim(obs, claim);
+            if (claim.Reason is GoalkeeperClaimReason.KeeperFirst or GoalkeeperClaimReason.Contested
+                or GoalkeeperClaimReason.OpponentFirst or GoalkeeperClaimReason.KeeperCannotReach)
+            {
+                return DecidePositioning(obs, ownGoalX);
+            }
+        }
+
         // Audit F12: decision and execution must agree on reach. The keeper can only handle the ball
         // inside the reach and below the height the execution layer accepts — the old gate used the wider
         // approach radius (≈1.24 m), so the keeper would start distribution movement while still unable to
@@ -114,60 +252,14 @@ public sealed class GoalkeeperController : IFootballerController
             return DecideDistributionOrSave(obs, ownGoalX);
         }
 
-        // 1. A shot on target, decided on the ball's real trajectory (A6.5). The old gate extrapolated the
-        // flight in a straight line and dived at a fixed plane inside the goal line whether or not the body
-        // could get there; now the crossing time and the reachable interception point come from one estimate,
-        // and a shot the keeper cannot reach is deliberately not dived for. A6.6: a physically reachable shot
-        // the keeper may not handle (the interception point outside his own area) is not dived for either.
-        float speedTowardGoal = -obs.PerceivedBallVelocity.X * obs.AttackingDirectionX;
-        bool shotOnTarget = false;
-        if (speedTowardGoal > 11.0f)
+        // 3. Sweep or 1v1 block (A6.5/A6.5b). Audit F03: only ever sweep an opponent's ball. A friendly loose
+        // ball (a back-pass, or the keeper's own parry) must be played with the feet or left to a defender —
+        // never charged down and tackled toward its own goal. The race itself, and whether the ball is loose or
+        // controlled, is the model's answer now: A6.5b moved its gates from the ball's current position to the
+        // point the keeper would meet it at, so a ball rolling in from the corner and a 1v1 at the edge of the
+        // box are decided like any other race.
+        if (trajectoryReady && obs.PossessingTeam != obs.SelfTeam)
         {
-            _trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
-                GoalkeeperDecisionModel.ShotHorizonSeconds);
-
-            GoalkeeperShot shot = GoalkeeperDecisionModel.EvaluateShot(obs, _trajectory, _pitch);
-            LastShot = shot;
-            ShotEvaluated = true;
-            shotOnTarget = shot.IsOnTarget;
-            if (shot.IsOnTarget && shot.CanSave)
-            {
-                Vector3 interceptPoint = shot.InterceptPoint;
-                Vector3 diveVec = interceptPoint - obs.SelfPosition;
-                Vector2 diveXZ = new(diveVec.X, diveVec.Z);
-                float lateralOffset = diveXZ.Length();
-                if (lateralOffset > 1e-4f) diveXZ /= lateralOffset;
-
-                State = GoalkeeperState.Saving;
-                _debugSummary = $"GK:DiveSave(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)";
-                return new FootballerCommand(
-                    diveXZ, new Vector2(obs.AttackingDirectionX, 0f), true, false, false, false,
-                    lateralOffset > 0.85f && lateralOffset < 2.6f, diveVec,
-                    KickIntentType.None, Vector3.UnitX, 0f, 0f);
-            }
-        }
-
-        // 2. 1v1 Rush / Sweeping inside Penalty Area.
-        // Audit F03: only ever sweep an opponent's ball. A friendly loose ball (a back-pass, or the
-        // keeper's own parry) must be played with the feet or left to a defender — never charged
-        // down and tackled toward its own goal.
-        //
-        // A2.1/A6.5: a sweep is a race over the ball's real trajectory, not a radius and not a
-        // constant-velocity meeting. The reach model now has to say the keeper can be at the ball's actual
-        // future position first (or contested-first), and an opponent clearly there before him declines it.
-        bool opponentHasBall = obs.PossessingTeam != obs.SelfTeam;
-        bool ballInBox = MathF.Abs(ballXZ.X - ownGoalX) < _pitch.PenaltyAreaLength &&
-                         MathF.Abs(ballXZ.Y) < _pitch.PenaltyAreaWidth
-                             * GoalkeeperDecisionModel.SweepAreaWidthFactor;
-
-        // A6.5: a shot that is on target is a shot, not a loose ball. Falling through to the sweep when the dive
-        // was declined would have the keeper charge a moving shot he had just decided he could not reach.
-        if (!shotOnTarget && opponentHasBall && ballInBox &&
-            distToBall < GoalkeeperDecisionModel.SweepCommitRangeMeters)
-        {
-            _trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
-                GoalkeeperDecisionModel.SweepRaceHorizonSeconds);
-
             GoalkeeperRace race = GoalkeeperDecisionModel.EvaluateSweep(obs, _trajectory, _pitch);
             LastSweep = race;
             SweepEvaluated = true;
@@ -176,28 +268,71 @@ public sealed class GoalkeeperController : IFootballerController
             {
                 Vector2 meetXZ = new(race.MeetingPoint.X, race.MeetingPoint.Z);
                 Vector2 dirToBall = SimMath.SafeNormalize(meetXZ - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
-                _debugSummary = $"GK:Rush1v1Sweep({race.Reason})";
+                _debugSummary = race.Mode == GoalkeeperRaceMode.Block
+                    ? $"GK:Block1v1({race.Reason})"
+                    : $"GK:Rush1v1Sweep({race.Reason})";
                 return new FootballerCommand(
                     dirToBall, dirToBall, true, false, distToBall < 1.3f, false, false, Vector3.Zero,
                     KickIntentType.None, Vector3.UnitX, 0f, 0f);
             }
         }
 
-        // 3. Tight Angle-Bisecting Arc Positioning
+        // 4. Positioning: the shot-blocking angle while defending, and the support depth while his team has
+        // the ball (A6.5b's buildup duty).
+        return DecidePositioning(obs, ownGoalX);
+    }
+
+    /// <summary>
+    /// A6.5b: go and take the delivery. The command is the same whether the contact will be a catch or a
+    /// punch — he has to be at the ball either way — and the mode says which, because "went for the cross"
+    /// is not an answer a probe can use.
+    /// </summary>
+    private FootballerCommand DecideClaim(in FootballerObservation obs, in GoalkeeperClaim claim)
+    {
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 meetXZ = new(claim.MeetPoint.X, claim.MeetPoint.Z);
+        Vector2 toMeet = meetXZ - selfXZ;
+        Vector2 dir = SimMath.SafeNormalize(toMeet, new Vector2(obs.AttackingDirectionX, 0f));
+
+        State = GoalkeeperState.Claiming;
+        _debugSummary = $"GK:{(claim.WillHold ? "ClaimCross" : "PunchClear")}({claim.Reason}," +
+                        $"{claim.ArrivalSpeedMps:F1}m/s in {claim.KeeperSeconds:F2}s)";
+
+        return new FootballerCommand(
+            dir, dir, toMeet.Length() > 1.5f, false, false, false, false, Vector3.Zero,
+            KickIntentType.None, Vector3.UnitX, 0f, 0f);
+    }
+
+    /// <summary>
+    /// The shot-blocking angle while defending and the support depth while his team has the ball (A6.5b).
+    /// One rule, two standoffs: an angle to a ball the opponent may shoot from, or a position behind his
+    /// team-mates that makes him a real outlet. <see cref="GoalkeeperSupportModel"/> owns the depth.
+    /// </summary>
+    private FootballerCommand DecidePositioning(in FootballerObservation obs, float ownGoalX)
+    {
+        State = GoalkeeperState.Positioning;
+
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
         Vector2 goalCenter = new(ownGoalX, 0f);
         Vector2 goalToBall = ballXZ - goalCenter;
         float distGoalToBall = goalToBall.Length();
         Vector2 dirGoalToBall = SimMath.SafeNormalize(goalToBall, new Vector2(obs.AttackingDirectionX, 0f));
 
-        float standoff = Math.Clamp(distGoalToBall * 0.10f, 1.1f, 4.2f);
+        bool teamHasBall = obs.PossessingTeam == obs.SelfTeam;
+        float standoff = GoalkeeperSupportModel.StandoffMeters(distGoalToBall, teamHasBall);
         Vector2 idealSpot = goalCenter + dirGoalToBall * standoff;
-        idealSpot.Y = Math.Clamp(idealSpot.Y, -_pitch.HalfGoalWidth * 0.78f, _pitch.HalfGoalWidth * 0.78f);
+
+        // The keeper stays in front of his goal in both phases: the angle can point wide, but his job is to be
+        // between the ball and the goal, so a wide ball does not take him with it.
+        float lateral = _pitch.HalfGoalWidth * 0.78f;
+        idealSpot.Y = Math.Clamp(idealSpot.Y, -lateral, lateral);
 
         Vector2 move = idealSpot - selfXZ;
         float moveDist = move.Length();
         Vector2 moveDir = moveDist > 0.15f ? (move / moveDist) * Math.Clamp(moveDist / 1.8f, 0.45f, 1.0f) : Vector2.Zero;
 
-        _debugSummary = "GK:AngleBisect";
+        _debugSummary = teamHasBall ? "GK:Support" : "GK:AngleBisect";
         return new FootballerCommand(
             moveDir, dirGoalToBall, moveDist > 2.0f, false, false, false, false, Vector3.Zero,
             KickIntentType.None, Vector3.UnitX, 0f, 0f);
@@ -227,61 +362,158 @@ public sealed class GoalkeeperController : IFootballerController
         return DecideDistributionOrSave(obs, ownGoalX);
     }
 
+    /// <summary>
+    /// A6.5b: the keeper's distribution is <b>priced</b>, not ranked by a heuristic.
+    ///
+    /// What it replaces (A4.9 left it open): every team-mate within 6–42 m was scored by
+    /// <c>laneClearance × 2 − distance × (profile ? 0.8 : −0.4)</c>, the lane threshold was a bare 0.45, and if
+    /// nothing cleared it the keeper hoofed a fixed 0.72-power lofted ball down the line with no receiver at all.
+    /// The first ball a team plays is the one that decides whether it plays out, and it was the only ball in the
+    /// match that had no success estimate.
+    ///
+    /// Now every candidate is the carrier's own chain: <see cref="PassPlanner"/> plans the ball,
+    /// <see cref="PassSuccessModel"/> estimates the completion, <see cref="ReceptionValueModel"/> values what
+    /// the receiver gets, and <see cref="ActionValueScale"/> composes them into
+    /// <c>p × reception − (1 − p) × loss</c> — the same scale, in the same units, as every other pass in the
+    /// match. A raised ball is only priced where the ground route cannot reach the receiver at all, and it is
+    /// priced on its own flight (<see cref="PassSuccessModel.EstimateLofted"/>). The profile's own style enters
+    /// as a stated preference on the length of the ball, so a short-distribution side still plays out.
+    ///
+    /// The alternatives are the *clearance*, priced at <see cref="ActionValueScale.ClearanceBaseValue"/> on the
+    /// same scale, so "no outlet good enough" is a real answer rather than a failed search; the wide safe ball
+    /// survives only as the last resort when no delivery can be planned at all.
+    /// </summary>
     private FootballerCommand DecideDistributionOrSave(in FootballerObservation obs, float ownGoalX)
     {
         State = GoalkeeperState.Distribution;
-        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
 
-        // Always look for best open teammate (FullBack, CenterBack, or Midfielder) before kicking long
-        PerceivedEntity? bestMate = null;
-        float bestScore = -999f;
+        // What losing the ball here costs, on the same scale every other pass uses: this is the keeper's own
+        // goal, so it is the most expensive place on the pitch to give it away.
+        float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
+        float bestScore = ActionValueScale.ClearanceBaseValue;
+        FootballerCommand bestCommand = default;
+        string bestLabel = string.Empty;
+        int bestMateId = 0;
+        float bestCompletion = 0f;
+        float bestDistance = 0f;
+        GoalkeeperDistributionKind bestKind = GoalkeeperDistributionKind.None;
 
-        foreach (var mate in obs.VisiblePlayers)
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
         {
-            if (mate.Team != obs.SelfTeam) continue;
+            PerceivedEntity mate = obs.VisiblePlayers[index];
+            if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+
             Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
-            float d = Vector2.Distance(selfXZ, mateXZ);
-            if (d is < 6.0f or > 42.0f) continue;
+            float distance = Vector2.Distance(ballXZ, mateXZ);
+            if (distance < MinDistributionMeters || distance > MaxDistributionMeters) continue;
 
-            float clearance = TacticalUtilityAiController.EvaluateLaneClearance(selfXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
-            if (clearance < 0.45f) continue;
+            float preference = DistributionPreference(obs, distance);
 
-            float score = clearance * 2.0f - (d / 45.0f) * (obs.TeamProfile.ShortGoalkeeperDistribution ? 0.8f : -0.4f);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestMate = mate;
-            }
-        }
+            Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
+            PassPlan plan = _passPlanner.PlanGroundPass(
+                ballXZ, mate.PlayerId, mateXZ, mateVelocityXZ, MaxReceivableSpeed);
 
-        if (bestMate.HasValue)
-        {
-            Vector2 mateXZ = new(bestMate.Value.EstimatedPosition.X, bestMate.Value.EstimatedPosition.Z);
-            Vector2 mateVelocityXZ = new(bestMate.Value.EstimatedVelocity.X, bestMate.Value.EstimatedVelocity.Z);
-            Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
-
-            // Audit F01: keeper distribution uses the same planner, so it is aimed at where the
-            // teammate will be when the ball arrives rather than at the teammate's current spot.
-            var plan = _passPlanner.PlanGroundPass(ballXZ, bestMate.Value.PlayerId, mateXZ, mateVelocityXZ, MaxReceivableSpeed);
-
-            // Audit F03/F12: validate the outgoing route against the keeper's own goal. A
-            // distribution that would run through its own goal mouth is never a safe outlet.
+            // Audit F03/F12: a distribution that would run through the keeper's own goal mouth is never a
+            // safe outlet, however well it is priced.
             if (plan.Feasible && !AimCrossesOwnGoal(ballXZ, plan.AimDirectionXZ, ownGoalX))
             {
-                _debugSummary = $"GK:PassTo#{bestMate.Value.PlayerId}";
-                return new FootballerCommand(
-                    plan.AimDirectionXZ, plan.AimDirectionXZ, false, false, false, false, false, Vector3.Zero,
-                    KickIntentType.GroundPass,
-                    new Vector3(plan.AimDirectionXZ.X, 0f, plan.AimDirectionXZ.Y), plan.Power01, 0f)
+                float lane = TacticalUtilityAiController.EvaluateLaneClearance(
+                    ballXZ, plan.TargetXZ, obs.VisiblePlayers, obs.SelfTeam);
+                PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, plan, lane);
+                float reception = _receptionValue.Evaluate(
+                    obs, mate.PlayerId, plan.TargetXZ, terms.DefenderPressure01).Value;
+                float score = ActionValueScale.ExpectedValue(terms.CompletionProbability01, reception, loss)
+                              + preference;
+
+                if (score > bestScore)
                 {
-                    IntendedReceiverId = bestMate.Value.PlayerId
-                };
+                    bestScore = score;
+                    bestMateId = mate.PlayerId;
+                    bestLabel = $"Ground {terms.CompletionProbability01:F2}";
+                    bestCompletion = terms.CompletionProbability01;
+                    bestDistance = distance;
+                    bestKind = GoalkeeperDistributionKind.Ground;
+                    bestCommand = BuildPassCommand(
+                        plan.AimDirectionXZ, plan.Power01, KickIntentType.GroundPass, mate.PlayerId);
+                }
+
+                continue;
+            }
+
+            // The ground route cannot reach him: price the raised ball on its own flight. A raised ball into a
+            // receiver the defender can also reach is expensive, which is the model doing its job.
+            LoftedPassTerms raised = _passSuccess.EstimateLofted(obs, mate, distance, 1f);
+            if (!raised.Feasible) continue;
+
+            Vector2 aim = SimMath.SafeNormalize(raised.LandingXZ - ballXZ,
+                new Vector2(obs.AttackingDirectionX, 0f));
+            if (AimCrossesOwnGoal(ballXZ, aim, ownGoalX)) continue;
+
+            float raisedReception = _receptionValue.Evaluate(
+                obs, mate.PlayerId, raised.LandingXZ, raised.LandingPressure01).Value;
+            float raisedScore = ActionValueScale.ExpectedValue(
+                raised.CompletionProbability01, raisedReception, loss) + preference;
+
+            if (raisedScore > bestScore)
+            {
+                bestScore = raisedScore;
+                bestMateId = mate.PlayerId;
+                bestLabel = $"Raised {raised.CompletionProbability01:F2}";
+                bestCompletion = raised.CompletionProbability01;
+                bestDistance = raised.DistanceMeters;
+                bestKind = GoalkeeperDistributionKind.Raised;
+                bestCommand = BuildPassCommand(aim, raised.Power01, KickIntentType.LoftedPass, mate.PlayerId);
             }
         }
 
+        if (bestMateId != 0)
+        {
+            LastDistribution = new GoalkeeperDistribution(bestKind, bestMateId, bestCompletion, bestDistance);
+            _debugSummary = $"GK:PassTo#{bestMateId}({bestLabel})";
+            return bestCommand;
+        }
+
+        return SafeDistribution(obs, ownGoalX);
+    }
+
+    /// <summary>
+    /// The profile's distribution style as a stated preference on the length of the ball (A6.5b): a side that
+    /// plays out from the back values a shorter outlet, a direct side values the ground gained. It is a
+    /// preference, not a filter — a short side still goes long when nothing short is playable.
+    /// </summary>
+    private static float DistributionPreference(in FootballerObservation obs, float distanceMeters)
+    {
+        float reach = Math.Clamp(distanceMeters / MaxDistributionMeters, 0f, 1f);
+        return obs.TeamProfile.ShortGoalkeeperDistribution
+            ? -DistributionStyleBias01 * reach
+            : DistributionStyleBias01 * reach;
+    }
+
+    private static FootballerCommand BuildPassCommand(
+        Vector2 aimDirection, float power01, KickIntentType kickType, int receiverId) =>
+        new(aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
+            kickType, new Vector3(aimDirection.X, 0f, aimDirection.Y), power01, 0f)
+        {
+            IntendedReceiverId = receiverId
+        };
+
+    /// <summary>
+    /// Last resort: no team-mate could be given a ball that is worth playing, so the keeper gets it away from
+    /// his own goal down the line. Deliberately plain — a keeper must release the ball, and the six-second rule
+    /// that would otherwise punish holding it is not modelled (A6.6's law-model limitations).
+    /// </summary>
+    private FootballerCommand SafeDistribution(in FootballerObservation obs, float ownGoalX)
+    {
         Vector2 wideAim = SimMath.SafeNormalize(
             new Vector2(obs.AttackingDirectionX, obs.SelfPosition.Z >= 0f ? 0.35f : -0.35f),
             new Vector2(obs.AttackingDirectionX, 0f));
+
+        // A ball aimed at his own goal mouth is not a release, whatever else is true.
+        if (AimCrossesOwnGoal(new Vector2(obs.SelfPosition.X, obs.SelfPosition.Z), wideAim, ownGoalX))
+            wideAim = new Vector2(obs.AttackingDirectionX, 0f);
+
+        LastDistribution = new GoalkeeperDistribution(GoalkeeperDistributionKind.SafeBall, 0, 0f, 0f);
         _debugSummary = "GK:SafeDistribution";
         return new FootballerCommand(
             wideAim, wideAim, false, false, false, false, false, Vector3.Zero,

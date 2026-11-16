@@ -174,6 +174,10 @@ public sealed class GoalkeeperLawTests
     /// hands reach 2.42 m and he plays it; half a metre past the area line his reach is an outfielder's
     /// 1.45 m, so execution refuses it as a ball too high. A keeper does not get keeper privileges where
     /// the law does not grant them.
+    ///
+    /// A6.5b restated the inside half: the keeper <b>gathers</b> the ball with his hands now, because the claim
+    /// exists. What this fixture proves is the reach and the height (the ball is played inside the area and
+    /// refused outside it), not the contact type — a keeper who can reach a 2 m ball catches it.
     /// </summary>
     [Fact]
     public void AHighBallInsideTheArea_IsPlayable_ButOutsideItIsABallTooHigh()
@@ -197,8 +201,9 @@ public sealed class GoalkeeperLawTests
         insideExecution.UpdateLocomotionAndContacts(
             new[] { insideKeeper }, insideBall, new SeededRandom(1), Dt);
 
-        Assert.Single(insideExecution.ContactEvents);
-        Assert.Equal(BallContactKind.Kick, insideExecution.ContactEvents[0].Kind);
+        BallContactEvent played = Assert.Single(insideExecution.ContactEvents);
+        Assert.Equal(BallContactKind.Save, played.Kind);
+        Assert.Equal(insideKeeper.Id, insideBall.HeldByPlayerId);
 
         FootballerState outsideKeeper = Keeper(new Vector3(HomeGoalX + Pitch.PenaltyAreaLength + 0.5f, 0f, 0f));
         outsideKeeper.LastCommand = wantsIt;
@@ -309,6 +314,80 @@ public sealed class GoalkeeperLawTests
         Assert.Null(ball.HeldByPlayerId);
         Assert.DoesNotContain(execution.ContactEvents, c => c.Kind == BallContactKind.Save);
         Assert.Contains(execution.ContactEvents, c => c.Kind == BallContactKind.Collection);
+    }
+
+    /// <summary>
+    /// A6.5b: the missing physical action behind the claim. The same ball at chest-and-a-half height, inside his
+    /// area, with two different play histories: an opponent's cross is gathered — the hands are the only contact
+    /// that reaches it — while the identical ball a team-mate deliberately kicked back to him cannot be played at
+    /// all, because his hands are barred and his feet do not reach 1.9 m. Before this the keeper "controlled" a
+    /// dropping cross with a foot, which is to say no keeper could claim one.
+    /// </summary>
+    [Fact]
+    public void ADroppingCross_IsGathered_ButADeliberateBackPassIsNotPlayable()
+    {
+        static BallState AirBall() => new()
+        {
+            Position = new Vector3(-51.5f, 1.9f, 0f),
+            PreviousPosition = new Vector3(-51.5f, 1.9f, 0f),
+            Velocity = Vector3.Zero
+        };
+
+        FootballerState keeper = Keeper(new Vector3(-51.9f, 0f, 0f));
+        BallState cross = AirBall();
+        cross.LastTouchedByTeam = TeamId.Away;
+        cross.LastTouchedByPlayerId = OpponentId;
+        cross.LastPlay = new BallLastPlay(BallContactKind.Kick, KickIntentType.Cross, OpponentId, TeamId.Away);
+
+        var crossExecution = new FootballerExecutionSystem(Pitch);
+        crossExecution.UpdateLocomotionAndContacts(new[] { keeper }, cross, new SeededRandom(1), Dt);
+
+        Assert.Equal(keeper.Id, cross.HeldByPlayerId);
+        Assert.True(cross.HeldReleaseDelaySeconds > 0f, "a claim must be held, not tapped");
+        Assert.Equal("GK:CrossClaim", keeper.LastExecutionDiagnostic);
+        Assert.Contains(crossExecution.ContactEvents, c => c.Kind == BallContactKind.Save && !c.IsParry);
+
+        FootballerState backPassKeeper = Keeper(new Vector3(-51.9f, 0f, 0f));
+        BallState backPass = AirBall();
+        backPass.LastTouchedByTeam = TeamId.Home;
+        backPass.LastTouchedByPlayerId = MateId;
+        backPass.LastPlay = new BallLastPlay(BallContactKind.Kick, KickIntentType.GroundPass, MateId, TeamId.Home);
+
+        var backPassExecution = new FootballerExecutionSystem(Pitch);
+        backPassExecution.UpdateLocomotionAndContacts(new[] { backPassKeeper }, backPass, new SeededRandom(1), Dt);
+
+        Assert.Null(backPass.HeldByPlayerId);
+        Assert.Empty(backPassExecution.ContactEvents);
+        Assert.DoesNotContain("CrossClaim", backPassKeeper.LastExecutionDiagnostic);
+    }
+
+    /// <summary>
+    /// The other half of the claim: a ball arriving faster than the keeper can hold is punched clear, and the
+    /// punch goes <b>away from his own goal</b> — a cross that never came at the goal cannot be parried "back
+    /// where it came from" without crossing his own face (F02's rule, applied to a delivery).
+    /// </summary>
+    [Fact]
+    public void AFastBallAtHandHeight_IsPunchedClear_NotCaught()
+    {
+        FootballerState keeper = Keeper(new Vector3(-51.9f, 0f, 0f));
+        var ball = new BallState
+        {
+            Position = new Vector3(-51.5f, 1.8f, 0f),
+            PreviousPosition = new Vector3(-51.5f, 1.8f, 0f),
+            Velocity = new Vector3(0f, 0f, 20f), // across his own face, at twice the pace he can hold
+            LastTouchedByTeam = TeamId.Away,
+            LastTouchedByPlayerId = OpponentId,
+            LastPlay = new BallLastPlay(BallContactKind.Kick, KickIntentType.Cross, OpponentId, TeamId.Away)
+        };
+
+        var execution = new FootballerExecutionSystem(Pitch);
+        execution.UpdateLocomotionAndContacts(new[] { keeper }, ball, new SeededRandom(1), Dt);
+
+        Assert.Null(ball.HeldByPlayerId);
+        Assert.Equal("GK:PunchClear", keeper.LastExecutionDiagnostic);
+        Assert.Contains(execution.ContactEvents, c => c.Kind == BallContactKind.Save && c.IsParry);
+        Assert.True(ball.Velocity.X > 0f,
+            $"the punch sent the ball toward the keeper's own goal (velX={ball.Velocity.X:F2})");
     }
 
     // ---------------------------------------------------------------------------------------------

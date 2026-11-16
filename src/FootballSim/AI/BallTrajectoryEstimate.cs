@@ -193,6 +193,26 @@ public sealed class BallTrajectoryEstimate
     }
 
     /// <summary>
+    /// Sampled velocity at one sample: the finite difference of the neighbouring positions. A6.5b needs it
+    /// because "will he hold it or punch it" is decided by the pace the ball carries when it arrives, and that
+    /// pace has to come from the same path the arrival was compared against.
+    /// </summary>
+    public Vector3 VelocityAt(int index)
+    {
+        if (_count == 0) return Vector3.Zero;
+
+        int i = Math.Clamp(index, 0, _count - 1);
+        if (i == 0)
+        {
+            float first = _times[0];
+            return first > 1e-5f ? (_positions[0] - _origin) / first : _originVelocity;
+        }
+
+        float span = _times[i] - _times[i - 1];
+        return span > 1e-5f ? (_positions[i] - _positions[i - 1]) / span : Vector3.Zero;
+    }
+
+    /// <summary>
     /// The time at which a player could first be at one of the samples: the earliest sample he can reach by the
     /// time the ball is there, ignoring any sample whose ball height is above <paramref name="maxHeight"/>.
     ///
@@ -205,10 +225,39 @@ public sealed class BallTrajectoryEstimate
         float horizonSeconds,
         float maxHeight,
         out float meetSeconds,
-        out Vector3 meetPoint)
+        out Vector3 meetPoint) =>
+        TryMeet(player, horizonSeconds, maxHeight, out meetSeconds, out meetPoint, out _);
+
+    /// <summary>
+    /// <see cref="TryMeet(in ReachKinematics, float, float, out float, out Vector3)"/> plus the index of the
+    /// sample that was met, so a caller can also read the ball's pace there (<see cref="VelocityAt"/>).
+    /// </summary>
+    public bool TryMeet(
+        in ReachKinematics player,
+        float horizonSeconds,
+        float maxHeight,
+        out float meetSeconds,
+        out Vector3 meetPoint,
+        out int meetIndex) =>
+        TryMeet(player, horizonSeconds, float.MinValue, maxHeight, out meetSeconds, out meetPoint, out meetIndex);
+
+    /// <summary>
+    /// The same query inside a <b>height band</b>: A6.5b needs "which samples could this keeper play with his
+    /// hands?", and the hands' band has a floor (a ball below the torso is a foot or a chest, not a catch) as
+    /// well as a ceiling. Both bounds are absolute ball heights.
+    /// </summary>
+    public bool TryMeet(
+        in ReachKinematics player,
+        float horizonSeconds,
+        float minHeight,
+        float maxHeight,
+        out float meetSeconds,
+        out Vector3 meetPoint,
+        out int meetIndex)
     {
         meetSeconds = 0f;
         meetPoint = default;
+        meetIndex = 0;
 
         float sprintCap = MathF.Max(0.5f, TimeToReachModel.SpeedCap(player, sprint: true));
         float reach = MathF.Max(0.05f, player.ReachRadius);
@@ -219,7 +268,7 @@ public sealed class BallTrajectoryEstimate
             if (time > horizonSeconds) break;
 
             Vector3 point = _positions[i];
-            if (point.Y > maxHeight) continue;
+            if (point.Y > maxHeight || point.Y < minHeight) continue;
 
             float planar = MathF.Max(0f,
                 Vector2.Distance(player.PositionXZ, new Vector2(point.X, point.Z)) - reach);
@@ -231,6 +280,7 @@ public sealed class BallTrajectoryEstimate
 
             meetSeconds = time;
             meetPoint = point;
+            meetIndex = i;
             return true;
         }
 
