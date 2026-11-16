@@ -435,19 +435,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         Math.Clamp(point.X, -pitch.HalfLength + 1f, pitch.HalfLength - 1f),
         Math.Clamp(point.Y, -pitch.HalfWidth + 1f, pitch.HalfWidth - 1f));
 
-    private float ComputeOffsideLineProjX(in FootballerObservation obs)
-    {
-        var oppCoords = new List<float>();
-        foreach (var p in obs.VisiblePlayers)
-        {
-            if (p.Team == obs.SelfTeam) continue;
-            oppCoords.Add(p.EstimatedPosition.X * obs.AttackingDirectionX);
-        }
-        oppCoords.Sort();
-        float secondLastOpponentProj = oppCoords.Count >= 2 ? oppCoords[^2] : _pitch.HalfLength;
-        float ballProj = obs.PerceivedBallPosition.X * obs.AttackingDirectionX;
-        return MathF.Max(0f, MathF.Max(secondLastOpponentProj, ballProj));
-    }
+    /// <summary>
+    /// The believed offside line, from this player's own picture of the opponents. A5.4's one margin is
+    /// applied by the callers; the line itself is <see cref="OffsideTactics.BelievedLineProjX"/>, shared with
+    /// the keeper's distribution since A6.B9 so the two cannot disagree about the same receiver.
+    /// </summary>
+    private float ComputeOffsideLineProjX(in FootballerObservation obs) =>
+        OffsideTactics.BelievedLineProjX(obs, _pitch.HalfLength);
 
     private FootballerCommand EvaluateSetPieceRestart(in FootballerObservation obs, Vector3 oppGoalCenter)
     {

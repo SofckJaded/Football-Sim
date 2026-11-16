@@ -40,6 +40,7 @@ namespace FootballSim.AI;
 /// </summary>
 public sealed class RunCandidateGenerator
 {
+
     /// <summary>
     /// Most paths one duty can offer before configuration truncation. Four kinds is the widest duty
     /// (a depth runner: in behind, pin, late box arrival, blind-side arrival).
@@ -96,8 +97,24 @@ public sealed class RunCandidateGenerator
     /// <summary>How far inside the carrier an underlap aims, in metres.</summary>
     public const float UnderlapAheadMeters = 5f;
 
-    /// <summary>How far inside the touchline an underlap arrives, in metres.</summary>
+    /// <summary>
+    /// How far inside the <b>carrier's own lane</b> an underlap arrives, in metres. Measured from the
+    /// carrier rather than from the touchline: an underlap is the run between him and the middle of the
+    /// pitch, so the target has to be inside him by this much. The old `Max(12, |z| - 12)` floor got this
+    /// wrong: for a carrier 8-12 m from the centre it placed the "inside" run at |z| = 12, i.e. outside him
+    /// (A6.B10).
+    /// </summary>
     public const float UnderlapInsideMeters = 12f;
+
+    /// <summary>
+    /// How close to the centre line an underlap may arrive, in metres. The inside offset is measured from
+    /// the carrier, but it is not allowed to run him through the middle: a carrier only nine metres wide
+    /// would otherwise be underlapped 9 m inside, dead centre, and that turned the reference match into a
+    /// 13-7 with the keeper beaten out of position (measured at `ai37` while restating this geometry).
+    /// Three metres is a stated floor, not a derived number: it keeps the run a lane inside him rather
+    /// than a second central midfielder.
+    /// </summary>
+    public const float UnderlapMinInsideMeters = 3f;
 
     /// <summary>How far goal-side of the ball a recycle support falls back, in metres.</summary>
     public const float RecycleDropMeters = 8f;
@@ -458,7 +475,10 @@ public sealed class RunCandidateGenerator
                 if (MathF.Abs(carrierXZ.Y) < 8f) return false;
 
                 float side = MathF.Sign(carrierXZ.Y >= 0f ? 1f : -1f);
-                float insideZ = MathF.Max(UnderlapInsideMeters, MathF.Abs(carrierXZ.Y) - UnderlapInsideMeters);
+                // The meeting point is inside the carrier by up to the offset, floored so it stays a lane
+                // in beside him instead of a central run. The old `Max(12, |z| - 12)` floor could put the
+                // "inside" point outside a carrier who was only 8-12 m wide (A6.B10).
+                float insideZ = MathF.Max(MathF.Abs(carrierXZ.Y) - UnderlapInsideMeters, UnderlapMinInsideMeters);
                 insideZ = MathF.Min(insideZ, halfWidth - 6f) * side;
                 float runProj = MathF.Min(maxAttackingProj, carrierProj + UnderlapAheadMeters);
                 meet = new Vector2(attackDirX * runProj, insideZ);

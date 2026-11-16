@@ -1,3 +1,4 @@
+using System;
 using FootballSim.Core;
 
 namespace FootballSim.AI;
@@ -68,4 +69,47 @@ public static class OffsideTactics
 
     /// <summary>The furthest attack-relative projection a new point may be given before release.</summary>
     public static float MaxAttackingProjection(float offsideLineProjX) => offsideLineProjX - MarginMeters;
+
+    /// <summary>
+    /// The offside line as <b>this player's picture</b> puts it: the second-last believed opponent's
+    /// projection along the attacking direction, raised to the ball's own projection (a player can never be
+    /// offside behind the ball), and never behind the own goal line.
+    ///
+    /// One implementation for every pass-giver, because they must agree about the same receiver: the carrier
+    /// (A5.4), and since A6.B9 the keeper's distribution, which had no offside gate at all and could give away
+    /// an indirect free kick in his own half. `fallbackProjX` is the permissive answer used when fewer than
+    /// two opponents are believed (the caller passes its pitch's half length), matching the rule the AI has
+    /// always used rather than inventing a tighter one from a picture this method cannot trust.
+    /// </summary>
+    public static float BelievedLineProjX(in FootballerObservation obs, float fallbackProjX)
+    {
+        float secondLastOpponentProj = fallbackProjX;
+        float best = float.NegativeInfinity;
+        float secondBest = float.NegativeInfinity;
+        int believed = 0;
+
+        // Two largest projections without sorting: no allocation, and the order is the arithmetic's.
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[i];
+            if (entity.Team == obs.SelfTeam) continue;
+
+            float proj = entity.EstimatedPosition.X * obs.AttackingDirectionX;
+            believed++;
+            if (proj > best)
+            {
+                secondBest = best;
+                best = proj;
+            }
+            else if (proj > secondBest)
+            {
+                secondBest = proj;
+            }
+        }
+
+        if (believed >= 2 && float.IsFinite(secondBest)) secondLastOpponentProj = secondBest;
+
+        float ballProj = obs.PerceivedBallPosition.X * obs.AttackingDirectionX;
+        return MathF.Max(0f, MathF.Max(secondLastOpponentProj, ballProj));
+    }
 }

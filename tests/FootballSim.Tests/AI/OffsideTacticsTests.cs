@@ -106,6 +106,37 @@ public sealed class OffsideTacticsTests
             "the tactical margin must be wider than the law's snapshot tolerance, or it is not a margin");
     }
 
+    /// <summary>
+    /// A6.B9: the believed line is one implementation for every pass-giver — the carrier's pass gate and, since
+    /// this batch, the keeper's distribution, which had no offside gate at all. The rule is the one the AI has
+    /// always used: the second-last believed opponent, raised to the ball's own projection (a player can never
+    /// be offside behind the ball), floored at the halfway line (Law 11 has no offside in your own half), and
+    /// permissive when fewer than two opponents are believed.
+    /// </summary>
+    [Fact]
+    public void TheBelievedLine_IsTheSecondLastOpponent_FlooredAtTheHalfwayLine()
+    {
+        // Three defenders believed: the second-last of them is the line.
+        Assert.Equal(20f, OffsideTactics.BelievedLineProjX(
+            LineObservation(attackDirectionX: 1f, ballX: -30f, 10f, 20f, 30f), Pitch.HalfLength));
+
+        // The ball itself can be the line: a receiver behind the ball is never offside.
+        Assert.Equal(40f, OffsideTactics.BelievedLineProjX(
+            LineObservation(attackDirectionX: 1f, ballX: 40f, 10f, 20f, 30f), Pitch.HalfLength));
+
+        // Fewer than two opponents believed: the permissive fallback, not an invented tighter line.
+        Assert.Equal(Pitch.HalfLength, OffsideTactics.BelievedLineProjX(
+            LineObservation(attackDirectionX: 1f, ballX: -30f, 20f), Pitch.HalfLength));
+
+        // A defence so deep that the second-last man is in the attacker's own half: the line stops at halfway.
+        Assert.Equal(0f, OffsideTactics.BelievedLineProjX(
+            LineObservation(attackDirectionX: 1f, ballX: -30f, -20f, -10f), Pitch.HalfLength));
+
+        // The away side's picture mirrors the home one.
+        Assert.Equal(10f, OffsideTactics.BelievedLineProjX(
+            LineObservation(attackDirectionX: -1f, ballX: 30f, -10f, -20f), Pitch.HalfLength));
+    }
+
     // ---- after release: the line stops mattering -------------------------------------------------
 
     [Fact]
@@ -406,6 +437,48 @@ public sealed class OffsideTacticsTests
     private static IEnumerable<CandidateRejection> EnumerableRejections(CandidateGenerator generator)
     {
         for (int i = 0; i < generator.RejectionCount; i++) yield return generator.GetRejection(i);
+    }
+
+    /// <summary>One player's picture: the ball at a stated X and one believed opponent per X (A6.B9).</summary>
+    private static FootballerObservation LineObservation(float attackDirectionX, float ballX, params float[] opponentX)
+    {
+        var visible = new List<PerceivedEntity>();
+        for (int i = 0; i < opponentX.Length; i++)
+        {
+            visible.Add(new PerceivedEntity(
+                20 + i, TeamId.Away, TacticalRole.CenterBack,
+                new Vector3(opponentX[i], 0f, 0f), Vector3.Zero, 1f));
+        }
+
+        return new FootballerObservation
+        {
+            SelfId = MateId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Striker,
+            SelfPosition = Vector3.Zero,
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(attackDirectionX, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(ballX, 0.11f, 0f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = Vector3.Zero,
+            AttackingDirectionX = attackDirectionX,
+            MatchTimeSeconds = 5f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 300,
+            VisiblePlayers = visible,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = PlayerTendencyProfile.ForRole(TacticalRole.Striker),
+            SelfAttributes = new PlayerAttributes()
+        };
     }
 
     private static RunPath AdoptInBehind(RunCandidateGenerator generator, in FootballerObservation obs, float lineProjX)

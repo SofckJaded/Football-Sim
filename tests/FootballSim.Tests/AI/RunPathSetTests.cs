@@ -129,6 +129,50 @@ public sealed class RunPathSetTests
         return string.Join(",", kinds);
     }
 
+    /// <summary>
+    /// A6.B10: an underlap arrives <b>inside the carrier</b>, whatever side of the pitch he is on and however
+    /// wide he already is. The old geometry floor was `Max(12, |z| - 12)`, which for the 8-12 m band it is
+    /// generated in put the "inside" run at |z| = 12 — outside a carrier at 9 m, i.e. an overlap with a
+    /// different name. The target is now inside him by <see cref="RunCandidateGenerator.UnderlapInsideMeters"/>
+    /// and floored at the centre line, never at a fixed lateral lane.
+    /// </summary>
+    [Theory]
+    [InlineData(9f)]
+    [InlineData(10f)]
+    [InlineData(12f)]
+    [InlineData(20f)]
+    [InlineData(30f)]
+    [InlineData(-20f)]
+    public void AnUnderlapArrivesInsideTheCarrier(float carrierZ)
+    {
+        var carrier = Entity(8, TeamId.Home, TacticalRole.Winger, 10f, carrierZ);
+        var marker = Entity(25, TeamId.Away, TacticalRole.FullBack, 16f, carrierZ + 3f);
+
+        FootballerObservation obs = Observation(
+            TacticalJob.Overlap,
+            TacticalRole.FullBack,
+            selfXZ: new Vector2(2f, carrierZ - 8f),
+            dutyAnchorXZ: new Vector2(6f, carrierZ - 2f),
+            ballXZ: new Vector2(10f, carrierZ),
+            carrierId: 8,
+            new List<PerceivedEntity> { carrier, marker },
+            security: new RestDefence(3, 1f, 0.2f, 0.2f, 0.1f, 0.7f));
+
+        var generator = new RunCandidateGenerator(Pitch);
+        Generate(generator, obs, lineProjX: 40f);
+
+        RunPath underlap = PathOfKind(generator, RunKind.Underlap);
+        float carrierLateral = MathF.Abs(carrierZ);
+        float meetLateral = MathF.Abs(underlap.MeetXZ.Y);
+
+        Assert.True(meetLateral < carrierLateral,
+            $"an underlap from a carrier {carrierZ:F0} m out met at z={underlap.MeetXZ.Y:F1} — outside him");
+        Assert.True(meetLateral <= carrierLateral - 2f,
+            $"an underlap met only {carrierLateral - meetLateral:F1} m inside the carrier");
+        Assert.True(underlap.MeetXZ.Y * carrierZ >= 0f,
+            "the underlap crossed to the other side of the pitch instead of running inside him");
+    }
+
     // ---- the duty's vocabulary ------------------------------------------------------------------
 
     public static TheoryData<TacticalJob> ReceivingDuties() => new()

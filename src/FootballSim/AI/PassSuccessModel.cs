@@ -105,6 +105,7 @@ public readonly record struct PassArrivalPromise(
 /// </summary>
 public sealed class PassSuccessModel
 {
+
     /// <summary>Assumed top pace of an opponent closing a lane (the default sprint speed).</summary>
     public const float OpponentSprintSpeed = 8.4f;
 
@@ -609,6 +610,10 @@ public sealed class PassSuccessModel
     /// "hard rejection for a clearly blocked ground pass" the plan requires: it is a physical test
     /// (sampled flight against each opponent's predicted run, plus a reaction-and-step estimate), not a
     /// probability threshold, so an open lane is never rejected for being merely average.
+    ///
+    /// The line tested is the <b>segment</b> from the ball to the receiver, not the infinite line through
+    /// them (A6.B8): an opponent behind the passer, or past the receiver, is not somewhere the ball
+    /// travels and cannot block it.
     /// </summary>
     public bool IsLaneBlocked(in PassPlan plan, in FootballerObservation obs) =>
         IsLaneBlocked(
@@ -671,6 +676,18 @@ public sealed class PassSuccessModel
             float perpendicular = MathF.Abs(signedPerpendicular);
             float projectionRaw = Vector2.Dot(relative, direction);
 
+            // The lane is the segment between the ball and the receiver, not the infinite line through
+            // them. A defender *behind* the ball (the man chasing the carrier) or one standing *past* the
+            // receiver is not on the ball's path at all: the ball never travels through him, so neither
+            // test below may call it a block. Before this guard the step-in test used the perpendicular
+            // distance alone, so a chaser 1.5 m behind the passer and 0.4 m off the line hard-rejected
+            // every forward ball, and a defender eight metres past the receiver did the same (A6.B8).
+            if (projectionRaw < -LaneContactReachMeters ||
+                projectionRaw > length + LaneContactReachMeters)
+            {
+                continue;
+            }
+
             // Cheap reachability bound *before* the dense sampling: an opponent further from the ball's
             // line than the fastest close he can produce — a full sprint plus the turn allowance the
             // step-in rule below grants — cannot be on the ball within the flight, so sampling him is
@@ -693,11 +710,14 @@ public sealed class PassSuccessModel
             }
 
             // 2. They can also see the pass and step into the lane. Compare what the step actually
-            //    needs with what they can produce before the ball has gone by.
-            float gap = perpendicular - LaneContactReachMeters;
+            //    needs with what they can produce before the ball has gone by. The gap is measured to the
+            //    nearest point of the *segment*, not to the infinite line, so a defender who could only
+            //    reach the line behind the passer or beyond the receiver is not counted.
+            float projection = Math.Clamp(projectionRaw, 0f, length);
+            Vector2 pointOnLane = fromXZ + direction * projection;
+            float gap = Vector2.Distance(opponentXZ, pointOnLane) - LaneContactReachMeters;
             if (gap <= 0f) return true;
 
-            float projection = Math.Clamp(projectionRaw, 0f, length);
             float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
             float available = timeToPoint - OpponentReactionSeconds;
             if (available <= 0f) continue;

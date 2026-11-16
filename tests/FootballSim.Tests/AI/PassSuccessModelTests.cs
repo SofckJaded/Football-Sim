@@ -204,6 +204,55 @@ public sealed class PassSuccessModelTests
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // The lane is a segment, not an infinite line (A6.B8)
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A6.B8: a defender <b>behind the ball</b> is not between the passer and the receiver — the ball moves
+    /// away from him — so he cannot block the pass. The step-in test used the perpendicular distance to the
+    /// infinite line, so a chaser 1.5 m behind the passer and 0.4 m off that line hard-rejected every
+    /// forward ball: a carrier being tracked from behind could not pass forward at all.
+    /// </summary>
+    [Fact]
+    public void ADefenderBehindThePasser_DoesNotBlockTheLane()
+    {
+        PassPlan plan = ManualPlan(new Vector2(22f, 0f), power01: 0.8f, flightSeconds: 1.5f);
+        PerceivedEntity receiver = Mate(MateId, new Vector2(22f, 0f));
+        PerceivedEntity chaser = Opponent(14, new Vector2(BallXZ.X - 1.5f, BallXZ.Y + 0.4f));
+
+        Assert.False(LaneBlocked(plan, receiver, chaser),
+            "a chaser behind the passer was treated as a block on a forward ball");
+    }
+
+    /// <summary>
+    /// A6.B8, the other end of the same defect: a defender standing <b>past the receiver</b> is not on the
+    /// ball's path either. Recorded in `docs/KNOWN_ISSUES.md` since A5.4 with a defender eight metres beyond
+    /// the receiver; it is the same missing extent test.
+    /// </summary>
+    [Fact]
+    public void ADefenderBeyondTheReceiver_DoesNotBlockTheLane()
+    {
+        PassPlan plan = ManualPlan(new Vector2(22f, 0f), power01: 0.8f, flightSeconds: 1.5f);
+        PerceivedEntity receiver = Mate(MateId, new Vector2(22f, 0f));
+        PerceivedEntity beyond = Opponent(14, new Vector2(30f, 0.2f));
+
+        Assert.False(LaneBlocked(plan, receiver, beyond),
+            "a defender eight metres past the receiver was treated as a block");
+    }
+
+    /// <summary>The control for the two cases above: a defender on the segment still blocks it.</summary>
+    [Fact]
+    public void ADefenderOnTheLane_StillBlocksThePass()
+    {
+        PassPlan plan = ManualPlan(new Vector2(22f, 0f), power01: 0.8f, flightSeconds: 1.5f);
+        PerceivedEntity receiver = Mate(MateId, new Vector2(22f, 0f));
+        PerceivedEntity onTheLine = Opponent(14, new Vector2(11f, 0.5f));
+
+        Assert.True(LaneBlocked(plan, receiver, onTheLine),
+            "a defender standing on the pass line was not seen");
+    }
+
     /// <summary>
     /// A ball aimed ahead of a moving receiver is a bet on a run nobody has committed to (A4.10), so it
     /// must price below the same ball played to a receiver who is already on the target point. Before the
@@ -315,6 +364,11 @@ public sealed class PassSuccessModelTests
     // ---------------------------------------------------------------------------------------------
 
     private static PassSuccessModel Model => new(Planner);
+
+    /// <summary>Runs the hard lane test for one plan against the receiver and one defender (A6.B8).</summary>
+    private static bool LaneBlocked(PassPlan plan, params PerceivedEntity[] visible) =>
+        Model.IsLaneBlocked(
+            BallXZ, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, visible, TeamId.Home);
 
     private static PassPlan ManualPlan(Vector2 targetXZ, float power01, float flightSeconds) => new(
         Feasible: true,

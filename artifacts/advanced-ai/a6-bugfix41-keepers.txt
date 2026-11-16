@@ -1,0 +1,32 @@
+=== A6.5b goalkeeper decisions evidence: 4 seeds x 1800 s ===
+Simulation version : ai37-rs1
+Trajectory         : horizon 2.0 s, 32 samples every 15 per second, real solver, built within 30 m of the goal line
+Sweep race         : margin 0.35 s, commit range 12.5 m, handling height 2.42 m, gates at the meeting point (own penalty area, Law 12)
+Claim/punch        : airborne above 0.75 m, commit range 15.0 m, hold limit 17.5 m/s x reflex
+Shot decision      : horizon 0.90 s, mouth slack 0.6 m
+Handling law       : own penalty area 16.5 m x 40.32 m (Law 12: no deliberate team-mate kick, no second handling after release)
+Support duty       : 20% of the goal-to-ball distance in possession, 2.5-16 m; defending 10%, 1.1-4.2 m
+
+Seed 20260818: FT in 108028 ticks | score 0-0 | 18006 keeper samples
+
+Seed 20268737: FT in 108092 ticks | score 0-0 | 36022 keeper samples
+
+Seed 20276656: FT in 108060 ticks | score 0-0 | 54032 keeper samples
+
+Seed 20284575: FT in 108200 ticks | score 1-1 | 72066 keeper samples
+
+=== Totals over 4 seeds (4 completed, 72066 keeper samples) ===
+  OutsideArea         :     5 episodes
+  KeeperFirst         :    41 episodes | keeper 1.61 s vs opponent unreachable
+  Contested           :    16 episodes | keeper 1.53 s vs opponent 1.36 s
+  OpponentFirst       :   125 episodes | keeper 1.74 s vs opponent 0.35 s
+  OutOfRange          :    96 episodes
+  KeeperCannotReach   :   200 episodes
+Sweep verdicts     : 483 episodes, 57 taken, 426 declined
+Handling law       : 68645 of 72066 keeper samples barred from the hands (95.3 %) | Allowed 3421, OutsideOwnPenaltyArea 67854, TeamMateDeliberateKick 661, SecondHandling 130
+Shots on target    : 67 | dived for 36 (mean intercept 0.20 s) | declined as out of reach 31 | declined as unhandleable 0
+Deliveries         : 42 episodes | attacked 17 (gather 4, punch 13) | declined 1 | mean keeper 0.49 s vs attacker 0.49 s, ball 20.7 m/s
+  by reason        : KeeperCannotReach 24, KeeperFirst 17, OpponentFirst 1
+Distribution       : 56 ground, 0 raised, 4 safe-ball (last resort) | priced at p 0.91 over 14.6 m mean
+Keeper standoff    : in possession 9.7 m mean, 17.9 m deepest (35959 samples) | defending 4.7 m mean, 17.7 m deepest (36107 samples)
+RESULT: races, dives, deliveries and distribution decided on the ball's real trajectory

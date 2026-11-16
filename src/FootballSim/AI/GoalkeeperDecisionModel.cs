@@ -541,6 +541,13 @@ public static class GoalkeeperDecisionModel
             return GoalkeeperShot.None;
         }
 
+        // A6.B11 was tried here and deliberately reverted: filtering the nearest approach to the samples inside
+        // the keeper's standing hand height is not a correction, it is a regression. An on-target ball is
+        // descending, so it enters the hands' band before the line even when the sample the prediction picks is
+        // above it, and the execution resolves the live contact after the ball has come down. Measured over
+        // 4 x 1800 s: with the filter, 7 of 77 on-target shots were dived for and the reference match finished
+        // **13-7**; without it, 36 of 67 and **2-1**. The dive is a planar decision by design until a
+        // dive-specific height model exists (A9.2's ablation).
         bool canIntercept = distance <= DiveReachMeters(obs, interceptSeconds);
 
         // A6.5b: a save happens before the ball has crossed the line. The estimate is sampled every 1/15 s, so a

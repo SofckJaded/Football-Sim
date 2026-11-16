@@ -160,6 +160,11 @@ public sealed class BallTrajectoryEstimate
     /// <summary>
     /// The closest approach of the ball's path to a point within a horizon: how near the ball comes, when, and
     /// where. This is the question a dive asks — how far does the body have to go, and how long does it have.
+    ///
+    /// The answer is deliberately <b>planar</b>: a shot that is descending enters the keeper's hands' band
+    /// before the line, so the height of the sample nearest in the ground plane is not the question a dive
+    /// asks (A6.B11 measured a height-filtered version and it cost 29 saves in 4 x 1800 s; see
+    /// <see cref="GoalkeeperDecisionModel"/>).
     /// </summary>
     public bool TryNearestApproach(
         Vector2 fromXZ,

@@ -396,6 +396,14 @@ public sealed class GoalkeeperController : IFootballerController
         State = GoalkeeperState.Distribution;
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
 
+        // A6.B9: the keeper's distribution is a pass like any other, so it keeps the same offside margin the
+        // carrier's target gate keeps — every other ball in the match already does, and this one alone could
+        // give away an indirect free kick in the keeper's own half. A goal kick is the one restart Law 11
+        // exempts the receiver from, so there the gate is off (infinity never rejects).
+        float offsideLineProjX = obs.CurrentMatchPhase == MatchPhase.GoalKick
+            ? float.PositiveInfinity
+            : OffsideTactics.BelievedLineProjX(obs, _pitch.HalfLength);
+
         // What losing the ball here costs, on the same scale every other pass uses: this is the keeper's own
         // goal, so it is the most expensive place on the pitch to give it away.
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
@@ -411,6 +419,13 @@ public sealed class GoalkeeperController : IFootballerController
         {
             PerceivedEntity mate = obs.VisiblePlayers[index];
             if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) continue;
+
+            // An offside receiver is not an outlet, whatever the ball is worth.
+            if (mate.EstimatedPosition.X * obs.AttackingDirectionX >
+                offsideLineProjX - OffsideTactics.MarginMeters)
+            {
+                continue;
+            }
 
             Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
             float distance = Vector2.Distance(ballXZ, mateXZ);

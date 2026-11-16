@@ -418,12 +418,19 @@ public enum TeamId
 /// presser and a handover move their duty counts instead of duplicating them; the defensive-line own-goal
 /// floor can no longer put the line upfield of a ball on its own byline; and the penalty spot is validated
 /// inside the penalty area. Trajectories differ from version 35.</item>
+/// <item><c>AiBehaviour 37</c> — audit bugfix batch 41: the pass lane is the <b>segment</b> between the ball
+/// and the receiver, so a chaser behind the passer or a defender past the receiver no longer hard-rejects an
+/// open forward ball (A6.B8); the keeper's distribution keeps the same offside margin every other pass keeps,
+/// except from a goal kick (A6.B9, latent: the distributions the value scale chooses are short and cannot be
+/// offside); and an underlap arrives <b>inside the carrier</b> by up to 12 m, floored 3 m from the centre
+/// line, instead of at a fixed |z| = 12 m lane that could be outside him (A6.B10). A6.B11 (a height-aware
+/// dive) was implemented, measured as a regression and reverted. Trajectories differ from version 36.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 36;
+    public const int AiBehaviour = 37;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
