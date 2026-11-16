@@ -1,0 +1,31 @@
+﻿=== A6.5b goalkeeper decisions evidence: 4 seeds x 1800 s ===
+Simulation version : ai35-rs1
+Trajectory         : horizon 2.0 s, 32 samples every 15 per second, real solver, built within 30 m of the goal line
+Sweep race         : margin 0.35 s, commit range 12.5 m, handling height 2.42 m, gates at the meeting point (own penalty area, Law 12)
+Claim/punch        : airborne above 0.75 m, commit range 15.0 m, hold limit 17.5 m/s x reflex
+Shot decision      : horizon 0.90 s, mouth slack 0.6 m
+Handling law       : own penalty area 16.5 m x 40.32 m (Law 12: no deliberate team-mate kick, no second handling after release)
+Support duty       : 20% of the goal-to-ball distance in possession, 2.5-16 m; defending 10%, 1.1-4.2 m
+
+Seed 20260818: FT in 108172 ticks | score 0-0 | 18030 keeper samples
+
+Seed 20268737: FT in 108154 ticks | score 1-0 | 36056 keeper samples
+
+Seed 20276656: FT in 108086 ticks | score 2-1 | 54072 keeper samples
+
+Seed 20284575: FT in 108186 ticks | score 1-0 | 72104 keeper samples
+
+=== Totals over 4 seeds (4 completed, 72104 keeper samples) ===
+  KeeperFirst         :    32 episodes | keeper 1.59 s vs opponent unreachable
+  Contested           :     7 episodes | keeper 1.51 s vs opponent 1.31 s
+  OpponentFirst       :   117 episodes | keeper 1.72 s vs opponent 0.24 s
+  OutOfRange          :    83 episodes
+  KeeperCannotReach   :   179 episodes
+Sweep verdicts     : 418 episodes, 39 taken, 379 declined
+Handling law       : 68069 of 72104 keeper samples barred from the hands (94.4 %) | Allowed 4035, OutsideOwnPenaltyArea 67168, TeamMateDeliberateKick 718, SecondHandling 183
+Shots on target    : 54 | dived for 27 (mean intercept 0.22 s) | declined as out of reach 27 | declined as unhandleable 0
+Deliveries         : 61 episodes | attacked 27 (gather 4, punch 23) | declined 0 | mean keeper 0.31 s vs attacker 0.41 s, ball 21.5 m/s
+  by reason        : KeeperCannotReach 34, KeeperFirst 26, Contested 1
+Distribution       : 58 ground, 0 raised, 2 safe-ball (last resort) | priced at p 0.90 over 16.2 m mean
+Keeper standoff    : in possession 9.3 m mean, 17.8 m deepest (35952 samples) | defending 4.7 m mean, 17.7 m deepest (36152 samples)
+RESULT: races, dives, deliveries and distribution decided on the ball's real trajectory
