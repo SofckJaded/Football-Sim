@@ -908,6 +908,70 @@ public sealed class AuditRegressionTests
     }
 
     /// <summary>
+    /// Law 15: a throw-in cannot score directly. The throw-in is also offside-exempt, so it is the
+    /// one restart where the two law rules overlap; the exemption used to return before the
+    /// second-touch requirement was armed, and a throw straight into the goal was awarded as a goal.
+    /// </summary>
+    [Theory]
+    [InlineData(53f, MatchPhase.GoalKick)]
+    [InlineData(-53f, MatchPhase.CornerKick)]
+    public void F14_ThrowInStraightIntoTheGoal_IsNotAGoal(float goalX, MatchPhase expectedRestart)
+    {
+        var (rules, players, ball, taker) = RestartScenario(MatchPhase.ThrowIn);
+
+        TakeStampedRestart(rules, taker, players, ball, tick: 2, KickIntentType.LoftedPass);
+        Assert.True(rules.AwaitingSecondTouchForGoal,
+            "the throw-in did not arm the second-touch requirement");
+
+        // The throw itself crosses the goal line without another player touching it.
+        ball.Position = new Vector3(goalX, 0.5f, 0f);
+        ball.Velocity = Vector3.Zero;
+        ball.LastTouchedByPlayerId = taker.Id;
+        ball.LastTouchedByTeam = taker.Team;
+        rules.StepRules(players, ball, 2700f, Dt);
+
+        Assert.Equal(0, rules.HomeScore);
+        Assert.Equal(0, rules.AwayScore);
+        Assert.Equal(expectedRestart, rules.Phase);
+        Assert.Equal(TeamId.Away, rules.RestartTeam);
+        Assert.Contains(rules.Events, e => e.Details.Contains("indirect restart"));
+    }
+
+    /// <summary>
+    /// The same law from the other side: an opponent who intercepts the restart's first touch is in
+    /// open play. The throw-in's direct-goal restriction is the thrower's, so the interceptor's own
+    /// kick must not be treated as a second touch of that restart.
+    /// </summary>
+    [Fact]
+    public void F14_AnInterceptedThrowIn_DoesNotArmTheThrowersSecondTouch()
+    {
+        var (rules, players, ball, _) = RestartScenario(MatchPhase.ThrowIn);
+        FootballerState interceptor = players.First(p => p.Team == TeamId.Away);
+
+        ball.Velocity = new Vector3(-12f, 0f, 0f);
+        ball.LastTouchedByPlayerId = interceptor.Id;
+        ball.LastTouchedByTeam = interceptor.Team;
+        var contacts = new List<BallContactEvent>
+        {
+            new(2, BallContactKind.Kick, interceptor.Id, interceptor.Team, ball.Position)
+            {
+                Intent = KickIntentType.Clearance
+            }
+        };
+        RestartKind pending = rules.ActiveRestart;
+        Assert.Equal(RestartKind.ThrowIn, pending);
+        rules.StampRestartOrigin(contacts);
+
+        Assert.Equal(RestartKind.None, contacts[0].RestartOrigin);
+        Assert.Equal(RestartKind.None, rules.ActiveRestart);
+        rules.StepRules(players, ball, 2700f, Dt, contacts);
+
+        Assert.False(rules.AwaitingSecondTouchForGoal,
+            "an opponent's interception was treated as the throw-in team's first touch");
+        Assert.Equal(MatchPhase.FirstHalf, rules.Phase);
+    }
+
+    /// <summary>
     /// Audit F14: an offside offence is restarted with an INDIRECT free kick, so a ball kicked
     /// straight into the goal from it is a goal kick, not a goal.
     /// </summary>

@@ -432,9 +432,23 @@ public sealed class TeamJobCoordinator
         {
             TacticalJob responderJob = inPossession ? TacticalJob.BallResponder : TacticalJob.Presser;
             Vector2 responderTarget = inPossession ? referenceXZ : ballXZ;
+
+            // The responder may be taking over a job the keep loop already counted (a marker elected
+            // to press, or a presser re-elected). Re-assigning him must move the count from his old
+            // duty to the new one, not add a second copy: the marker cap would otherwise think a
+            // threat is still covered when the only man covering him has just stepped out to press.
+            bool responderWasCounted = taken.Contains(responder.Id);
+            TeamJobAssignment prior = default;
+            bool responderMovedJob = responderWasCounted &&
+                                     _assignments.TryGetValue(responder.Id, out prior) &&
+                                     prior.Job != responderJob;
+            if (responderMovedJob)
+                counts[prior.Job] = Math.Max(0, counts.GetValueOrDefault(prior.Job) - 1);
+
             Assign(responder, responderJob, new Vector3(responderTarget.X, 0f, responderTarget.Y), null,
                 inPossession ? "Collect the pass" : "Press the ball", tick);
-            counts[responderJob] = counts.GetValueOrDefault(responderJob) + 1;
+            if (!responderWasCounted || responderMovedJob)
+                counts[responderJob] = counts.GetValueOrDefault(responderJob) + 1;
             taken.Add(responder.Id);
             available.RemoveAll(p => p.Id == responder.Id);
         }
@@ -1036,7 +1050,10 @@ public sealed class TeamJobCoordinator
         if (owner is null) return false;
         if (ownerSlotDistance + HandoverZoneMarginMeters >= incumbentSlotDistance) return false;
 
-        // The old marker goes back into the shape this pass; the new owner takes the man.
+        // The old marker goes back into the shape this pass; the new owner takes the man. Move the
+        // duty counts with the jobs: the old marker's slot is released and the line's owner leaves
+        // the line, so neither may keep a count that was already spent this pass.
+        counts[TacticalJob.Marker] = Math.Max(0, counts.GetValueOrDefault(TacticalJob.Marker) - 1);
         _assignments.Remove(incumbent.Id);
         _assignedAtTick.Remove(incumbent.Id);
         taken.Remove(incumbent.Id);
@@ -1044,6 +1061,8 @@ public sealed class TeamJobCoordinator
 
         if (ownerOnTheLine)
         {
+            counts[TacticalJob.DefensiveLine] =
+                Math.Max(0, counts.GetValueOrDefault(TacticalJob.DefensiveLine) - 1);
             _assignments.Remove(owner.Id);
             _assignedAtTick.Remove(owner.Id);
             taken.Remove(owner.Id);

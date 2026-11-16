@@ -244,6 +244,8 @@ public sealed class PresentationAndConfigTests
             new MatchSimulationEngine(new PreMatchConfig(), new PitchDimensions { GoalWidth = 80f })); // wider than the pitch
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new MatchSimulationEngine(new PreMatchConfig(), new PitchDimensions { PenaltyAreaLength = 60f })); // longer than a half
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new MatchSimulationEngine(new PreMatchConfig(), new PitchDimensions { PenaltySpotDistance = 20f })); // beyond the 16.5 m area
 
         var pitch = new PitchDimensions();
         Assert.Throws<ArgumentOutOfRangeException>(() => new MatchRulesEngine(pitch, 0f));

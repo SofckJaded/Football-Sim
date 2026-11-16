@@ -346,7 +346,13 @@ public static class DefensiveLineModel
 
         float keeperShift = afterKeeper - beforeKeeper;
 
-        if (maxProj < minProj) maxProj = minProj;
+        // The ball cap and the own-goal safety floor can contradict each other when the ball is inside
+        // the safety band: a ball 1.5 m from the goal line caps the line at -49 m, while the floor would
+        // put it at -47.5 m, i.e. 3.5 m ahead of the ball. The cap is the hard rule (a defender must not
+        // stand upfield of a ball on his own byline); the floor is a shape preference. Drop the floor to
+        // the cap in that case, but never let any cap place a body behind the goal line.
+        if (maxProj < -pitch.HalfLength) maxProj = -pitch.HalfLength;
+        if (maxProj < minProj) minProj = maxProj;
 
         float proj = Math.Clamp(afterKeeper, minProj, maxProj);
         float field01 = Clamp01(0.5f + ballProj / (2f * pitch.HalfLength));

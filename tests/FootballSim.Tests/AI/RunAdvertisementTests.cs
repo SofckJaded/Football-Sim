@@ -210,12 +210,16 @@ public sealed class RunAdvertisementTests
             Intent(RunKind.InBehind, new Vector2(20f, 4f), 100, meetTick: 160, expiresTick: 220), 100);
 
         // The carrier holds the pass as its chosen action for several ticks; the claim names the same ball,
-        // so it keeps the deadline it was first raised with instead of sliding with the present.
-        for (int tick = 101; tick <= 120; tick++)
+        // so it keeps the deadline it was first raised with instead of sliding with the present. Re-issuing
+        // after the grace window must not resurrect it either: the runner is deliberately free by then.
+        for (int tick = 101; tick <= 300; tick++)
             board.Claim(TeamId.Home, RunnerId, CarrierId, arriveTick: 160, tick: tick);
 
         Assert.True(board.TryGetClaim(TeamId.Home, RunnerId, 160, out RunClaim claim));
         Assert.Equal(101, claim.ClaimedTick);
+        Assert.Equal(160 + RunAdvertisementBoard.ClaimGraceTicks, claim.ExpiresTick);
+        Assert.False(board.TryGetClaim(TeamId.Home, RunnerId, claim.ExpiresTick + 1, out _),
+            "re-issuing the same claim after its grace window resurrected it");
     }
 
     // ---------------------------------------------------------------------------------------------

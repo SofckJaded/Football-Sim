@@ -202,11 +202,19 @@ public sealed class GoalkeeperController : IFootballerController
                 float lateralOffset = diveXZ.Length();
                 if (lateralOffset > 1e-4f) diveXZ /= lateralOffset;
 
+                // The dive request has to describe the capability the model just priced. The old
+                // 2.6 m upper bound was a second, tighter reach owned only by the command: a shot
+                // the keeper reported as saveable at 2.6-4.3 m set State=Saving and said
+                // "GK:DiveSave" while asking for no dive, which normal locomotion cannot cover in
+                // the available flight time.
+                bool dive = lateralOffset > 0.85f;
                 State = GoalkeeperState.Saving;
-                _debugSummary = $"GK:DiveSave(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)";
+                _debugSummary = dive
+                    ? $"GK:DiveSave(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)"
+                    : $"GK:Save(z={interceptPoint.Z:F1}m,{shot.InterceptSeconds:F2}s)";
                 return new FootballerCommand(
                     diveXZ, new Vector2(obs.AttackingDirectionX, 0f), true, false, false, false,
-                    lateralOffset > 0.85f && lateralOffset < 2.6f, diveVec,
+                    dive, diveVec,
                     KickIntentType.None, Vector3.UnitX, 0f, 0f);
             }
 
@@ -721,6 +729,18 @@ public sealed class MatchRulesEngine
 
         RestartKind origin = ActiveRestart;
         ActiveRestart = RestartKind.None;
+
+        // The first contact is only the restart's own play when it belongs to the team that was
+        // awarded the restart. An opponent who intercepts the first touch is playing the ball in
+        // open play: the restart's Law 11 exemption and its direct-goal restriction are the
+        // restarting team's, not the interceptor's. Stamping the intercepting touch would arm the
+        // wrong team's second-touch requirement and exempt the wrong team from offside.
+        if (contacts[0].Team != RestartTeam)
+        {
+            LastStampedRestartOrigin = RestartKind.None;
+            return;
+        }
+
         LastStampedRestartOrigin = origin;
         contacts[0] = contacts[0] with { RestartOrigin = origin };
     }
@@ -1113,24 +1133,26 @@ public sealed class MatchRulesEngine
         // Law 11 restart exemptions: no offside offence can be committed from a throw-in, a goal
         // kick or a corner kick, so the restarting team's receivers are deliberately not snapshot.
         // A kickoff, a direct free kick and a penalty are normal play and do snapshot.
+        //
+        // A restart can be BOTH offside-exempt and unable-to-score-directly (a throw-in). The two
+        // rules are independent, so the second-touch requirement must be armed before the exemption
+        // returns: otherwise a throw-in could score directly, which Law 15 forbids.
         if (contact.Kind == BallContactKind.Kick && contact.RestartOrigin != RestartKind.None)
         {
-            if (RestartRules.ExemptsOffside(contact.RestartOrigin))
-            {
-                ClearOffsidePhase();
-                return false;
-            }
-
-            SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX, contactGeometry);
-
+            bool armsSecondTouch = false;
             if (RestartRules.RequiresSecondTouchBeforeGoal(contact.RestartOrigin))
             {
                 _secondTouchPending = true;
                 _secondTouchRestartTeam = contact.Team;
-                return true;
+                armsSecondTouch = true;
             }
 
-            return false;
+            if (RestartRules.ExemptsOffside(contact.RestartOrigin))
+                ClearOffsidePhase();
+            else
+                SnapshotOffsidePositions(contact.PlayerId, contact.Team, players, ball, homeDirX, contactGeometry);
+
+            return armsSecondTouch;
         }
 
         // Audit F14: a deliberate save is not a deliberate play under Law 11. It cannot remove an

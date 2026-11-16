@@ -73,6 +73,25 @@ public sealed class DefensiveLineModelTests
         Assert.True(band.BallCapShiftMeters < 0f, "the ball cap should have moved the band");
     }
 
+    /// <summary>
+    /// A ball inside the five-metre own-goal safety band used to make the ball cap and the floor
+    /// contradict each other. The old guard raised the ceiling to the floor, putting the line 3.5 m
+    /// ahead of a ball on its own byline. The hard ball cap has to win; the floor may only pull the
+    /// line up to the cap, never past it.
+    /// </summary>
+    [Fact]
+    public void TheLine_StaysGoalSideOfABallOnItsOwnByline()
+    {
+        List<FootballerState> players = LineAt(-12f);
+        DefensiveLineBand band = Evaluate(players, ballX: -51f, Belief(), BallPossessionSnapshot.Loose);
+
+        Assert.True(band.IsValid);
+        Assert.True(band.ProjX <= -51f + DefensiveLineModel.AheadOfBallToleranceMeters + 0.01f,
+            $"the line stood at {band.ProjX:F1} m with the ball at -51 m");
+        Assert.True(band.ProjX >= -Pitch.HalfLength,
+            $"the line stood behind its own goal line at {band.ProjX:F1} m");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Passer pressure.
     // ---------------------------------------------------------------------------------------------

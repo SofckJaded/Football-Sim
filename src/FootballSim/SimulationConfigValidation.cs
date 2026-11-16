@@ -125,6 +125,10 @@ public static class SimulationConfigValidation
             throw new ArgumentOutOfRangeException(nameof(pitch.GoalAreaWidth), pitch.GoalAreaWidth, "The goal area cannot be wider than the penalty area.");
         if (pitch.PenaltySpotDistance >= pitch.HalfLength)
             throw new ArgumentOutOfRangeException(nameof(pitch.PenaltySpotDistance), pitch.PenaltySpotDistance, "The penalty spot must be inside the pitch.");
+        if (pitch.PenaltySpotDistance > pitch.PenaltyAreaLength)
+            throw new ArgumentOutOfRangeException(
+                nameof(pitch.PenaltySpotDistance), pitch.PenaltySpotDistance,
+                "The penalty spot must be inside the penalty area, not beyond its depth.");
         if (pitch.CenterCircleRadius > MathF.Min(pitch.HalfLength, pitch.HalfWidth))
             throw new ArgumentOutOfRangeException(nameof(pitch.CenterCircleRadius), pitch.CenterCircleRadius, "The centre circle must fit on the pitch.");
     }

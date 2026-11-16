@@ -157,7 +157,12 @@ public sealed class BallPossessionTracker
 
     private void Set(BallControlState state, TeamId? team, int? controllingPlayerId, int? intendedReceiverId)
     {
-        if (_state != state || _possessionTeam != team || _controllingPlayerId != controllingPlayerId)
+        // A pass to a different receiver is a new flight, even when the state, team and controlling
+        // player are unchanged. Without the receiver in this comparison a one-touch second pass by
+        // the same team inherited the previous pass's elapsed flight clock and could settle (or time
+        // out) on its first tick, dropping the new intended receiver and the reception assistance.
+        if (_state != state || _possessionTeam != team || _controllingPlayerId != controllingPlayerId ||
+            _intendedReceiverId != intendedReceiverId)
             _elapsedInState = 0f;
 
         _state = state;

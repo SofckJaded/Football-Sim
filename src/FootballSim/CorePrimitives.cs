@@ -406,12 +406,24 @@ public enum TeamId
 /// interception point is outside his area. The ball carries <see cref="Physics.BallState.LastPlay"/> (kind,
 /// kick intent, player, team) — a deliberate kick is not a deflection, and the old last-touch-team test could
 /// not tell them apart. Trajectories differ from version 33.</item>
+/// <item><c>AiBehaviour 35</c> — A6.5b: the keeper claims a delivery at the point it is going to (the law is
+/// asked about that point), prices his distribution through the pass chain and stands off his line as a
+/// possession outlet; the 1v1 block and the sweep race share the trajectory. Trajectories differ from
+/// version 34.</item>
+/// <item><c>AiBehaviour 36</c> — audit bugfix batch 40: a throw-in can no longer score directly (the
+/// second-touch law is armed before the offside exemption returns, and an intercepted restart is stamped for
+/// the intercepting team as open play); the keeper's dive request no longer has a second 2.6 m reach cap
+/// below the reach it prices; a re-issued run claim cannot push its deadline out or resurrect itself after
+/// the grace window; the possession flight clock resets when the intended receiver changes; a marker elected
+/// presser and a handover move their duty counts instead of duplicating them; the defensive-line own-goal
+/// floor can no longer put the line upfield of a ball on its own byline; and the penalty spot is validated
+/// inside the penalty area. Trajectories differ from version 35.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 35;
+    public const int AiBehaviour = 36;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

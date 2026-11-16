@@ -166,6 +166,32 @@ public sealed class GoalkeeperDecisionTests
     }
 
     /// <summary>
+    /// The dive the keeper prices is the dive he asks for. The controller used to cap the lateral offset at
+    /// 2.6 m, a second and tighter reach than <see cref="GoalkeeperDecisionModel.DiveReachMeters"/>; a shot
+    /// 3 m to the keeper's side was reported as saveable while the command carried no dive request.
+    /// </summary>
+    [Fact]
+    public void AReachableShotBeyondTheOldTwoPointSixMetreCap_IsStillDivedFor()
+    {
+        var controller = new GoalkeeperController(Pitch);
+        // A straight 20 m/s shot along the goal line, crossing in 0.525 s. The keeper is 3 m to its side;
+        // the dive reach at the interception is about 3.5 m, so the model says saveable.
+        FootballerState keeperState = Keeper(new Vector3(-50.5f, 0f, 3.0f));
+        BallState ball = ShotFrom(new Vector3(-42f, 0.11f, 0f), new Vector3(-20f, 0f, 0f));
+
+        FootballerCommand command = controller.Decide(
+            Observe(keeperState, ball, possession: TeamId.Away), dt: 1f / 60f);
+
+        Assert.True(controller.LastShot.CanSave,
+            $"the fixture needs a saveable shot: {controller.LastShot.Describe()}");
+        Assert.True(MathF.Abs(controller.LastShot.InterceptPoint.Z - keeperState.Position.Z) > 2.6f,
+            "the fixture needs an interception beyond the old 2.6 m command cap");
+        Assert.True(command.RequestKeeperDive,
+            "the keeper priced a save but the command did not request the dive");
+        Assert.StartsWith("GK:DiveSave", controller.GetDebugSummary());
+    }
+
+    /// <summary>
     /// The other side of the rule: a shot that is on target but aimed at the far corner is not dived for. The old
     /// gate dived whenever the ball was heading at the goal, whether or not the body could get there — a late dive
     /// is a goal with an empty net behind it.

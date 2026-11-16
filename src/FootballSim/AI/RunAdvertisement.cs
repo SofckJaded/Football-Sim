@@ -277,22 +277,20 @@ public sealed class RunAdvertisementBoard
         if (slot < 0) return;
 
         Entry entry = _entries[slot];
-        int arrival = Math.Max(tick, arriveTick);
-        int expires = arrival + ClaimGraceTicks;
 
-        // Re-issuing the same claim must not extend it every tick the carrier holds the pass as his chosen
-        // action; the claim names a ball, and it keeps the deadline of the first time that ball was played.
-        if (entry.HasClaim && entry.Claim.CarrierId == carrierId && entry.Claim.IsLiveAt(tick))
+        // A claim names one ball. Re-issuing it while the carrier holds that pass as his chosen action
+        // must not move the deadline (a claim that slides with the present is not a bound), and it must
+        // not resurrect an expired claim either: after the grace window the runner is deliberately free.
+        // A genuinely new promise has a different advertised meeting tick, or was republished as a new
+        // advertisement (which clears HasClaim); both fall through and get a new claim below.
+        if (entry.HasClaim && entry.Claim.CarrierId == carrierId &&
+            entry.Advert.MeetTick == arriveTick)
         {
-            if (expires > entry.Claim.ExpiresTick)
-            {
-                entry.Claim = entry.Claim with { ExpiresTick = expires };
-                _entries[slot] = entry;
-            }
-
             return;
         }
 
+        int arrival = Math.Max(tick, arriveTick);
+        int expires = arrival + ClaimGraceTicks;
         entry.HasClaim = true;
         entry.Claim = new RunClaim(runnerId, carrierId, tick, arrival, expires);
         _entries[slot] = entry;

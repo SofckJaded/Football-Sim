@@ -1,0 +1,31 @@
+=== A6.3 defensive line evidence: 4 seeds x 1800 s ===
+Simulation version : ai36-rs1
+Profiles           : home Possession / Positional Play (marks 2, man-share 0.65) | away Direct Counterattack (marks 1, man-share 0.39)
+Units              : metres, attack-relative (own goal line = -52, opponent's = +52).
+                     spread = |actual line depth - band depth| over the players on the line;
+                     shift  = band depth - the line's mean formation-anchor depth.
+
+Seed 20260818: FT in 108250 ticks | score 1-0 | handovers 245
+
+Seed 20268737: FT in 108138 ticks | score 1-0 | handovers 233
+
+Seed 20276656: FT in 108202 ticks | score 0-1 | handovers 215
+
+Seed 20284575: FT in 108044 ticks | score 0-0 | handovers 228
+
+=== Totals over 4 seeds (4 completed, 72091 defending samples) ===
+Band depth         : mean -21.4 m | mean ball -0.0 m | mean anchors -16.2 m
+Shift from anchors : mean -5.2 m | mean absolute 6.2 m (the depth the same players would have held before A6.3)
+Line target spread : mean 1.14 m | worst tick mean 3.00 m @ tick 59592 | 71860 samples with a line
+Local exceptions   : 95411 at the band | 19739 ball-side (+3 m) | 81217 far-side (-2 m) | 9864 clamped by the band's range
+Body-vs-band gap   : mean 4.64 m | worst 69.00 m (physical lag: the target moves before the player can arrive)
+Keeper context     : mean reach 15.2 m from mean depth -47.9 m
+Field position     : mean shift +0.1 m | moved >0.5 m in 95.5% of samples
+Passer pressure    : mean 0.44 | mean shift -0.5 m | moved >0.5 m in 67.4%
+Ball cap           : pulled the line back in 15.9% of samples | mean shift -1.27 m
+Credible runs      : capped the line in 18.3% of samples | mean shift -0.89 m
+Keeper coverage    : capped the line in 19.1% of samples | mean shift -1.34 m
+Markers            : mean 0.65 per defending sample (style caps 2/1)
+Handovers          : 921 total | mean slots 8.9 m -> 4.4 m
+Observation match  : every line player saw the placed band
+RESULT: bands placed, shared and observed
