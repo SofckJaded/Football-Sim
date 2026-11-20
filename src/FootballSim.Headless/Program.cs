@@ -68,6 +68,9 @@ public static class Program
             case "--cognitive":
                 return RunCognitiveErrorEvidence(args) ? 0 : 1;
 
+            case "--archetypes":
+                return RunArchetypeEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -85,6 +88,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --receptions [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --firsttouch [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --cognitive [seeds] [halfSeconds] [on|off]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --archetypes [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -2361,6 +2365,415 @@ public static class Program
         Console.WriteLine($"Events Logged     : {engine.Rules.Events.Count}");
 
         return completed;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A7.6 -- archetypes as preferences on one pipeline.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Player archetypes, for the A7.6 probe's census and breakdown tables.</summary>
+    private static readonly int ArchetypeCount = Enum.GetValues(typeof(PlayerArchetype)).Length;
+
+    /// <summary>Candidate kinds, for the A7.6 probe's chosen-action table.</summary>
+    private static readonly int CandidateKindCount = Enum.GetValues(typeof(CandidateKind)).Length;
+
+    /// <summary>Run kinds, for the A7.6 probe's off-ball table.</summary>
+    private static readonly int RunKindCount = Enum.GetValues(typeof(RunKind)).Length;
+
+    /// <summary>How often (ticks) the A7.6 probe samples a player's chosen action and adopted run.</summary>
+    private const int ArchetypeSampleInterval = 6;
+
+    /// <summary>One A7.6 probe variant's accumulators. Two exist: archetypes on, and the uniform squad.</summary>
+    private sealed class ArchetypeEvidenceTotals
+    {
+        public int Matches;
+        public long Ticks;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long Crosses;
+        public long Lofted;
+        public long Driven;
+        public long TeamCalls;
+        public long RunAdoptions;
+        public long SweepCommitments;
+        public long KeeperSupportSamples;
+        public double KeeperSupportDepthSum;
+        public long ScanStarts;
+        public long ScanTicks;
+        public long ObserverTicks;
+        public long ActionSamples;
+        public int ArchetypePlayers;
+        public readonly int[] Census = new int[ArchetypeCount];
+        public readonly long[] CrossesByArchetype = new long[ArchetypeCount];
+        public readonly long[,] RunAdoptionsByArchetype = new long[ArchetypeCount, RunKindCount];
+        public readonly long[,] ActionSamplesByArchetype = new long[ArchetypeCount, CandidateKindCount];
+
+        public double KeeperSupportDepthMean =>
+            KeeperSupportSamples <= 0 ? 0d : KeeperSupportDepthSum / KeeperSupportSamples;
+    }
+
+    /// <summary>
+    /// A7.6 evidence: <b>archetypes are preferences on one decision pipeline</b>, measured as a same-seed
+    /// A/B between the default squad and the uniform pre-A7.6 squad.
+    ///
+    /// The same seed is simulated twice: once with <see cref="AiRuntimeConfig.EnableArchetypes"/> on (the
+    /// default XI fields all seven archetypes once each) and once off (every player is
+    /// <see cref="PlayerArchetype.None"/>). Both runs are reported side by side, so the differences are the
+    /// archetype preference and not a different world.
+    ///
+    /// What the columns are, and the consumer each one proves is live:
+    /// <list type="bullet">
+    /// <item><b>squad census</b> - which archetypes the two builds actually field;</item>
+    /// <item><b>keeper support depth</b> - the mean distance off his goal line while his own team has the
+    /// ball: the sweeper keeper's support-depth preference (<see cref="GoalkeeperSupportModel"/>) reaching
+    /// positioning;</item>
+    /// <item><b>sweep commitments</b> - transitions into a "GK:Rush1v1Sweep"/"GK:Block1v1" command, i.e. the
+    /// sweeper keeper's wider commit window reaching a decision;</item>
+    /// <item><b>run adoptions by archetype and kind</b> - off-ball paths actually adopted from the run
+    /// generator: the run-kind preference reaching the scorer (a touchline winger holding width, an inverted
+    /// fullback underlapping);</item>
+    /// <item><b>chosen player-ticks by archetype and action kind</b> - which actions each archetype spends
+    /// its decisions on: the tendency deltas reaching the carrier's candidate scores.</item>
+    /// </list>
+    ///
+    /// The verdict does not require the aggregate match numbers to be "better" (there is nothing to be better
+    /// at yet - A9 owns tuning); it requires the features to be <b>live and distinct</b>: both builds complete
+    /// every seed, the default squad fields all seven archetypes while the uniform squad fields none, the
+    /// sweeper keeper stands measurably deeper in possession, and the preferred run kinds are actually
+    /// adopted. The controlled single-choice evidence is <c>PlayerArchetypeTests</c>.
+    /// </summary>
+    private static bool RunArchetypeEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A7.6 archetype evidence: same-seed A/B, {seedCount} seeds x {halfSeconds * 2f:F0} s" +
+                          " -- default squad vs the uniform pre-A7.6 squad ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Preference model   : role tendencies +/- archetype deltas (clamped 0..1); run-kind preference");
+        Console.WriteLine($"                     x{PlayerArchetypeProfile.RunPreferenceWeight:F2} on the run score; scan refresh" +
+                          " x(1.35 - 0.70*appetite); keeper contest");
+        Console.WriteLine("                     margin x(0.60 + 0.80*aggression) and support depth x(0.50 + 1.00*aggression).");
+        Console.WriteLine("                     No candidate set, sight cone, reach or contact rule differs - only weights and attention.");
+        Console.WriteLine($"Archetypes ON      : {DescribeArchetypeSquad(archetypes: true)}");
+        Console.WriteLine($"Archetypes OFF     : {DescribeArchetypeSquad(archetypes: false)}");
+        Console.WriteLine();
+
+        var on = new ArchetypeEvidenceTotals();
+        var off = new ArchetypeEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunArchetypeMatch(seed, halfSeconds, archetypes: true, on, out string onLine);
+            bool completedOff = RunArchetypeMatch(seed, halfSeconds, archetypes: false, off, out string offLine);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-26}{"ON",12}{"OFF",12}");
+        Console.WriteLine($"{"completed matches",-26}{on.Matches,12}{off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-26}{on.Ticks,12}{off.Ticks,12}");
+        Console.WriteLine($"{"passes attempted",-26}{on.PassesAttempted,12}{off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-26}{on.PassesCompleted,12}{off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-26}{on.Shots,12}{off.Shots,12}");
+        Console.WriteLine($"{"crosses executed",-26}{on.Crosses,12}{off.Crosses,12}");
+        Console.WriteLine($"{"lofted executed",-26}{on.Lofted,12}{off.Lofted,12}");
+        Console.WriteLine($"{"driven executed",-26}{on.Driven,12}{off.Driven,12}");
+        Console.WriteLine($"{"team calls",-26}{on.TeamCalls,12}{off.TeamCalls,12}");
+        Console.WriteLine($"{"run adoptions",-26}{on.RunAdoptions,12}{off.RunAdoptions,12}");
+        Console.WriteLine($"{"sweep commitments",-26}{on.SweepCommitments,12}{off.SweepCommitments,12}");
+        Console.WriteLine($"{"keeper support depth m",-26}{on.KeeperSupportDepthMean,12:F2}{off.KeeperSupportDepthMean,12:F2}");
+        Console.WriteLine($"{"scan starts",-26}{on.ScanStarts,12}{off.ScanStarts,12}");
+        Console.WriteLine($"{"scan tick share",-26}{(on.ObserverTicks == 0 ? 0d : (double)on.ScanTicks / on.ObserverTicks),12:F4}" +
+                          $"{(off.ObserverTicks == 0 ? 0d : (double)off.ScanTicks / off.ObserverTicks),12:F4}");
+
+        int distinctArchetypes = CountArchetypes(on);
+        long preferredRunAdoptions = CountPreferredRunAdoptions(on);
+        Console.WriteLine();
+        Console.WriteLine($"Archetypes fielded : {distinctArchetypes} distinct, {on.ArchetypePlayers} players (on) |" +
+                          $" {off.ArchetypePlayers} players (off)");
+        Console.WriteLine($"Preferred runs     : {preferredRunAdoptions} of {on.RunAdoptions} adoptions were a kind the" +
+                          " player's archetype prefers (positive run preference)");
+
+        Console.WriteLine();
+        Console.WriteLine("Run adoptions by archetype (ON; kind count):");
+        WriteArchetypeRunAdoptionTable(on);
+        Console.WriteLine();
+        Console.WriteLine("Chosen player-ticks by archetype (ON; action kind share):");
+        WriteArchetypeActionTable(on);
+        Console.WriteLine();
+        Console.WriteLine($"Crosses by kicker archetype (ON): {DescribeArchetypeCounts(on.CrossesByArchetype)}");
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool assignment = distinctArchetypes == 7 && off.ArchetypePlayers == 0;
+        bool keeperDeeper = on.KeeperSupportDepthMean > off.KeeperSupportDepthMean + 0.1d;
+        bool preferencesLive = preferredRunAdoptions > 0 && on.ActionSamples > 0;
+        bool ok = completeBoth && assignment && keeperDeeper && preferencesLive;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the default squad fields all seven archetypes as preferences and the uniform squad" +
+              " none; the sweeper keeper stands deeper in possession, and the preferred run kinds and actions are" +
+              " live without a candidate, sight or limit changing"
+            : "RESULT: FAIL -- incomplete match, archetype assignment, preferred runs/actions or the sweeper" +
+              " keeper's support depth failed to separate the two builds");
+        return ok;
+    }
+
+    /// <summary>
+    /// Runs one A7.6 probe match and folds it into <paramref name="totals"/>. Returns whether the match reached
+    /// full time and a one-line summary for the per-seed report.
+    /// </summary>
+    private static bool RunArchetypeMatch(
+        ulong seed,
+        float halfSeconds,
+        bool archetypes,
+        ArchetypeEvidenceTotals totals,
+        out string line)
+    {
+        var ai = new AiRuntimeConfig { EnableArchetypes = archetypes };
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        foreach (FootballerState player in engine.Players)
+        {
+            totals.Census[(int)player.Archetype]++;
+            if (player.Archetype != PlayerArchetype.None) totals.ArchetypePlayers++;
+        }
+
+        var lastAdoptedTick = new Dictionary<int, int>();
+        var lastKeeperSummary = new Dictionary<int, string>();
+        long seedCrosses = 0;
+        long seedLofted = 0;
+        long seedDriven = 0;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+            if (engine.Rules.Phase == MatchPhase.FullTime) break;
+
+            // Executed deliveries, by the kicker's archetype: the touchline winger's cross appetite reaching
+            // a struck ball, not only a candidate score.
+            IReadOnlyList<BallContactAttempt> attempts = engine.LastContactAttempts;
+            if (attempts.Count > 0 && attempts[0].Tick == engine.CurrentTick)
+            {
+                foreach (BallContactAttempt attempt in attempts)
+                {
+                    if (!attempt.WantedKick || !attempt.Executed) continue;
+                    switch (attempt.Intent)
+                    {
+                        case KickIntentType.Cross:
+                            seedCrosses++;
+                            break;
+                        case KickIntentType.LoftedPass:
+                        case KickIntentType.LobbedThroughPass:
+                            seedLofted++;
+                            break;
+                        case KickIntentType.DrivenPass:
+                            seedDriven++;
+                            break;
+                    }
+
+                    if (attempt.Intent == KickIntentType.Cross)
+                    {
+                        foreach (FootballerState player in engine.Players)
+                        {
+                            if (player.Id != attempt.PlayerId) continue;
+                            totals.CrossesByArchetype[(int)player.Archetype]++;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // A sweep is a decision, not a tick: count the transition into a sweep/block command.
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch || player.Role != TacticalRole.Goalkeeper) continue;
+                string summary = engine.GetController(player.Id).GetDebugSummary();
+                lastKeeperSummary.TryGetValue(player.Id, out string? previous);
+                bool sweeping = IsSweepSummary(summary);
+                if (sweeping && previous is not null && !IsSweepSummary(previous)) totals.SweepCommitments++;
+                lastKeeperSummary[player.Id] = summary;
+            }
+
+            if (engine.CurrentTick % ArchetypeSampleInterval != 0) continue;
+
+            TeamId? possessing = engine.Possession.PossessionTeam;
+            float homeDir = engine.Rules.GetHomeAttackDirectionX();
+            float halfLength = engine.Pitch.HalfLength;
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch) continue;
+
+                // The sweeper keeper's support-depth preference: how far off his own line he stands while his
+                // team has the ball (A7.6's one goalkeeper positioning preference).
+                if (player.Role == TacticalRole.Goalkeeper && possessing == player.Team)
+                {
+                    float attackDir = player.Team == TeamId.Home ? homeDir : -homeDir;
+                    float ownGoalX = -attackDir * halfLength;
+                    float depth = (player.Position.X - ownGoalX) * attackDir;
+                    totals.KeeperSupportSamples++;
+                    totals.KeeperSupportDepthSum += MathF.Max(0f, depth);
+                    continue;
+                }
+
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+
+                if (!controller.LastSelected.Key.IsNone)
+                {
+                    totals.ActionSamples++;
+                    totals.ActionSamplesByArchetype[(int)player.Archetype, (int)controller.LastSelected.Key.Kind]++;
+                }
+
+                // A run adoption is the generator's own event: the intent's identity (its adoption tick)
+                // changes, so a held run is not counted twice.
+                if (controller.Runs.Intent is RunIntent intent &&
+                    (!lastAdoptedTick.TryGetValue(player.Id, out int adopted) || adopted != intent.AdoptedTick))
+                {
+                    lastAdoptedTick[player.Id] = intent.AdoptedTick;
+                    totals.RunAdoptions++;
+                    totals.RunAdoptionsByArchetype[(int)player.Archetype, (int)intent.Kind]++;
+                }
+            }
+        }
+
+        var analytics = engine.Analytics;
+        totals.Ticks += engine.CurrentTick;
+        totals.PassesAttempted += analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        totals.PassesCompleted += analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        totals.Shots += analytics.HomeShots + analytics.AwayShots;
+        totals.Crosses += seedCrosses;
+        totals.Lofted += seedLofted;
+        totals.Driven += seedDriven;
+        totals.TeamCalls += engine.Communication.Calls.PublishedCount;
+        ScanTelemetry scan = engine.ScanStats;
+        totals.ScanStarts += scan.ScanStarts;
+        totals.ScanTicks += scan.ScanTicks;
+        totals.ObserverTicks += scan.ObserverTicks;
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.Matches++;
+
+        line = $"{engine.CurrentTick} ticks, score {analytics.HomeGoals}-{analytics.AwayGoals}, passes " +
+               $"{analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} attempted " +
+               $"({analytics.HomePassesCompleted}/{analytics.AwayPassesCompleted} completed), shots " +
+               $"{analytics.HomeShots}/{analytics.AwayShots}, crosses {seedCrosses}";
+        return completed;
+    }
+
+    /// <summary>A keeper debug summary that means he committed to a sweep or a 1v1 block.</summary>
+    private static bool IsSweepSummary(string summary) =>
+        summary.StartsWith("GK:Rush1v1Sweep", StringComparison.Ordinal) ||
+        summary.StartsWith("GK:Block1v1", StringComparison.Ordinal);
+
+    /// <summary>The 11v11 default squad's archetype assignment, as the A7.6 probe prints it.</summary>
+    private static string DescribeArchetypeSquad(bool archetypes)
+    {
+        var parts = new List<string>();
+        for (int shirt = 1; shirt <= 11; shirt++)
+        {
+            var (role, _, _) = TeamTacticalCoordinator.GetFormationRoleAndSlot(shirt, 11);
+            PlayerArchetype archetype = archetypes
+                ? PlayerArchetypeProfile.ForShirt(role, shirt, 11)
+                : PlayerArchetype.None;
+            if (archetype == PlayerArchetype.None) continue;
+            parts.Add($"{shirt}:{archetype}");
+        }
+
+        return parts.Count == 0 ? "none (uniform role squad)" : $"{parts.Count} fielded -- {string.Join(", ", parts)}";
+    }
+
+    private static int CountArchetypes(ArchetypeEvidenceTotals totals)
+    {
+        int count = 0;
+        for (int archetype = 1; archetype < ArchetypeCount; archetype++)
+            if (totals.Census[archetype] > 0) count++;
+        return count;
+    }
+
+    private static long CountPreferredRunAdoptions(ArchetypeEvidenceTotals totals)
+    {
+        long count = 0;
+        for (int archetype = 1; archetype < ArchetypeCount; archetype++)
+        for (int kind = 0; kind < RunKindCount; kind++)
+        {
+            if (totals.RunAdoptionsByArchetype[archetype, kind] <= 0) continue;
+            if (PlayerArchetypeProfile.RunPreference((RunKind)kind, (PlayerArchetype)archetype) > 0f)
+                count += totals.RunAdoptionsByArchetype[archetype, kind];
+        }
+
+        return count;
+    }
+
+    private static void WriteArchetypeRunAdoptionTable(ArchetypeEvidenceTotals totals)
+    {
+        for (int archetype = 1; archetype < ArchetypeCount; archetype++)
+        {
+            var parts = new List<string>();
+            for (int kind = 0; kind < RunKindCount; kind++)
+            {
+                long count = totals.RunAdoptionsByArchetype[archetype, kind];
+                if (count > 0) parts.Add($"{(RunKind)kind} {count}");
+            }
+
+            if (parts.Count > 0)
+                Console.WriteLine($"  {((PlayerArchetype)archetype),-16}: {string.Join(", ", parts)}");
+        }
+    }
+
+    private static void WriteArchetypeActionTable(ArchetypeEvidenceTotals totals)
+    {
+        for (int archetype = 1; archetype < ArchetypeCount; archetype++)
+        {
+            long total = 0;
+            for (int kind = 0; kind < CandidateKindCount; kind++) total += totals.ActionSamplesByArchetype[archetype, kind];
+            if (total <= 0) continue;
+
+            var parts = new List<string>();
+            for (int kind = 0; kind < CandidateKindCount; kind++)
+            {
+                long count = totals.ActionSamplesByArchetype[archetype, kind];
+                if (count <= 0) continue;
+                parts.Add($"{(CandidateKind)kind} {count} ({100.0 * count / total:F0} %)");
+            }
+
+            Console.WriteLine($"  {((PlayerArchetype)archetype),-16}: {string.Join(", ", parts)}");
+        }
+    }
+
+    private static string DescribeArchetypeCounts(long[] counts)
+    {
+        var parts = new List<string>();
+        for (int archetype = 1; archetype < ArchetypeCount; archetype++)
+        {
+            if (counts[archetype] <= 0) continue;
+            parts.Add($"{((PlayerArchetype)archetype)} {counts[archetype]}");
+        }
+
+        return parts.Count == 0 ? "none" : string.Join(", ", parts);
     }
 
     /// <summary>
