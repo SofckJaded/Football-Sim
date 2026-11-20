@@ -331,6 +331,7 @@ public sealed class PerceptionSystem
             SelfId = self.Id,
             SelfTeam = self.Team,
             SelfRole = self.Role,
+            SelfArchetype = self.Archetype,
             SelfPosition = self.Position,
             SelfVelocity = self.Velocity,
             SelfFacingXZ = self.FacingXZ,
@@ -407,8 +408,11 @@ public sealed class PerceptionSystem
         bool staleThreat = false;
         if (!isCarrier)
         {
+            // A7.6: the staleness threshold is this player's own scan appetite — the archetype's one
+            // perception preference, applied to the existing attention policy (an eager player refreshes a
+            // sighting sooner and therefore turns his head more often).
             staleThreat = memory.TryFindStaleOpponent(
-                self.Team, tick, self.Position, _scanPlanner.RefreshAgeTicks,
+                self.Team, tick, self.Position, _scanPlanner.RefreshAgeTicksFor(self.Tendencies.ScanAppetite01),
                 _scanPlanner.AttentionRangeMeters, out threat);
         }
 

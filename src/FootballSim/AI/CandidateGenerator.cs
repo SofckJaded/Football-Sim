@@ -1040,6 +1040,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Candidate tag of the cross (A5.5). Interned: a candidate is built every tick.</summary>
     internal const string CrossPassTag = "Cross";
 
+    /// <summary>
+    /// A7.6: how much of the player's cross appetite becomes preference on the cross candidate, in scale
+    /// units. The appetite is a 0..1 tendency with a neutral of 0.55, so a touchline winger (≈0.75, i.e.
+    /// +0.20 above neutral) prices a cross ≈0.08 higher and an inside forward (≈0.40, −0.15) ≈0.06 lower —
+    /// comparable with the A7.2 call preferences, and deliberately smaller than the gap between a delivery and
+    /// a good carry, because an archetype is a lean, not an instruction.
+    /// </summary>
+    internal const float CrossPreferenceScale = 0.40f;
+
     /// <summary>Candidate tag of the driven delivery (A5.5b).</summary>
     internal const string DrivenPassTag = "Driven";
 
@@ -1134,9 +1143,14 @@ public sealed class CandidateGenerator : IAiStateResettable
             obs, bestMateId, terms.LandingXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
         float crossForward = (bestRegion.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+        // A7.6: the archetype's delivery appetite is a preference on the cross it already prices — a
+        // touchline winger wants it, an inside forward does not. The candidate itself is offered on exactly
+        // the same feasibility rules for both.
+        float crossPreference = PassPreference(obs, crossForward, lane)
+            + (obs.SelfTendencies.CrossPreference01 - PlayerTendencyBaselines.CrossPreference)
+            * CrossPreferenceScale;
         ValueTerms valueTerms = new(
-            terms.CompletionProbability01, reception.Value, loss,
-            PassPreference(obs, crossForward, lane));
+            terms.CompletionProbability01, reception.Value, loss, crossPreference);
 
         Vector2 aim = SimMath.SafeNormalize(bestRegion - ballXZ, new Vector2(obs.AttackingDirectionX, 0f));
         var command = new FootballerCommand(

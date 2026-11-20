@@ -359,6 +359,18 @@ public sealed class AiRuntimeConfigTests
         AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableReceptionPlanning = false });
     }
 
+    [Fact]
+    public void ArchetypesDefault_IsOnAndStatedInTheDescription()
+    {
+        // A7.6 ships the default squad's archetypes on: the field is the A9.2 ablation and the --archetypes
+        // A/B, not a hidden guard. Off fields the uniform pre-A7.6 squad, so it is a supported configuration.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableArchetypes);
+        Assert.Contains("archetypes(on)", defaults.Describe());
+        Assert.Contains("archetypes(off)", new AiRuntimeConfig { EnableArchetypes = false }.Describe());
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableArchetypes = false });
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {

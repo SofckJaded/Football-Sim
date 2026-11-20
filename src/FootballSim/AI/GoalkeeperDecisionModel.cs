@@ -253,12 +253,19 @@ public static class GoalkeeperDecisionModel
     public const float TrajectoryHorizonSeconds = 2f;
 
     /// <summary>
-    /// How much later than the nearest opponent the keeper still accepts, in seconds. Being level with an
-    /// opponent is still a contest for the ball; being clearly behind is not.
+    /// How much later than the nearest opponent the keeper still accepts, in seconds, at the neutral sweep
+    /// aggression (A7.6). Being level with an opponent is still a contest for the ball; being clearly behind
+    /// is not. A bolder keeper — the sweeper archetype — accepts a wider contested window through
+    /// <see cref="PlayerArchetypeProfile.SweepRaceMarginScale"/>; his reach is unchanged, so this is a
+    /// preference for committing to a 50/50, not a longer arm.
     /// </summary>
     public const float SweepRaceMarginSeconds = 0.35f;
 
-    /// <summary>Furthest the keeper travels to a sweep if the race is on, in metres.</summary>
+    /// <summary>
+    /// Furthest the keeper travels to a sweep if the race is on, in metres. This is not an archetype lever:
+    /// the trajectory horizon and the keeper's own acceleration already bound the distance he can reach, so
+    /// a wider committed radius would accept nothing new (A7.6 measured that and kept the neutral value).
+    /// </summary>
     public const float SweepCommitRangeMeters = 12.5f;
 
     /// <summary>
@@ -371,7 +378,12 @@ public static class GoalkeeperDecisionModel
         }
 
         bool first = keeperSeconds <= opponentSeconds;
-        bool withinMargin = keeperSeconds <= opponentSeconds + SweepRaceMarginSeconds;
+        // A7.6: how far behind the keeper will still commit to a contest is the sweeper keeper's preference.
+        // The reach and the horizon that produced both times are untouched: this only widens the window he
+        // accepts a 50/50 in.
+        float raceMargin = SweepRaceMarginSeconds *
+                           PlayerArchetypeProfile.SweepRaceMarginScale(obs.SelfTendencies.SweepAggression01);
+        bool withinMargin = keeperSeconds <= opponentSeconds + raceMargin;
         return new GoalkeeperRace(
             ShouldGo: first || withinMargin,
             // A6.5b: three answers, not two. The old mapping reported "Contested" for a race the keeper was
@@ -508,7 +520,9 @@ public static class GoalkeeperDecisionModel
             ? GoalkeeperClaimMode.Gather
             : GoalkeeperClaimMode.Punch;
 
-        if (!first && keeperSeconds > attackerSeconds + SweepRaceMarginSeconds)
+        if (!first && keeperSeconds > attackerSeconds +
+                SweepRaceMarginSeconds * PlayerArchetypeProfile.SweepRaceMarginScale(
+                    obs.SelfTendencies.SweepAggression01))
         {
             return new GoalkeeperClaim(
                 ShouldAttack: false, GoalkeeperClaimMode.Stay, GoalkeeperClaimReason.OpponentFirst,

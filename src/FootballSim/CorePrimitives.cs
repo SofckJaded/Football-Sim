@@ -492,12 +492,21 @@ public enum TeamId
 /// (<see cref="Locomotion.ReceptionTouchModel.AnticipationToleranceMeters"/>). A plan that met the ball
 /// where it expected to is unchanged, and a command with no plan is unchanged. Trajectories differ from
 /// version 44 once a flight is mis-predicted.</item>
+/// <item><c>AiBehaviour 46</c> — A7.6: <b>archetypes are preferences on the one pipeline</b>
+/// (<see cref="AI.PlayerArchetypeProfile"/>). A player may carry a <see cref="PlayerArchetype"/> —
+/// playmaker, ball winner, inverted fullback, touchline winger, inside forward, target forward, sweeper
+/// keeper — which biases the same candidates, weights and attention every player already has: the role's
+/// tendencies gain bounded affinity deltas, off-ball path scores gain a run-kind preference, the scan
+/// attention refreshes sooner or later, and the keeper's support depth and sweep commit window move. No
+/// archetype generates a candidate, reads a sighting or moves a limit another player could not have, and
+/// <see cref="AI.AiRuntimeConfig.EnableArchetypes"/> off is the version-45 build exactly. Trajectories
+/// differ from version 45 because the default squad now fields archetypes.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 45;
+    public const int AiBehaviour = 46;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -514,6 +523,44 @@ public enum TacticalRole
     CentralMidfielder,
     Winger,
     Striker
+}
+
+/// <summary>
+/// A7.6: what kind of player this is, as a set of <b>preferences</b> on the one decision pipeline — never a
+/// capability, never a second pipeline.
+///
+/// The role (<see cref="TacticalRole"/>) says where a player starts and which duties he may be given; the
+/// archetype says what he leans toward. A playmaker and a ball winner can occupy the same central-midfield
+/// slot and generate exactly the same candidates, because an archetype only moves weights (the role's
+/// tendency affinities, off-ball path preference, scan attention) and never a candidate set, a sight range,
+/// a reach or a contact rule. <see cref="None"/> is the neutral archetype: it applies no delta at all, so a
+/// fixture that never mentions this field behaves exactly as it did before A7.6.
+/// </summary>
+public enum PlayerArchetype
+{
+    /// <summary>No archetype: the role's own tendencies and no preference delta (the pre-A7.6 player).</summary>
+    None = 0,
+
+    /// <summary>Wants the ball in the middle: progressive, risk-tolerant passing, extra scanning.</summary>
+    Playmaker,
+
+    /// <summary>Wins it back: presses higher and longer, recycles simply, stays disciplined.</summary>
+    BallWinner,
+
+    /// <summary>Steps inside from fullback: underlaps more than he overlaps, comfortable on the ball.</summary>
+    InvertedFullBack,
+
+    /// <summary>Holds the touchline: wide runs, crosses, take-ons; less shooting.</summary>
+    TouchlineWinger,
+
+    /// <summary>Attacks the half-space and the box from wide: shoots and makes inside runs, crosses less.</summary>
+    InsideForward,
+
+    /// <summary>Holds the last line and the box: pins, late arrivals, hold-up play; little dribbling.</summary>
+    TargetForward,
+
+    /// <summary>Plays high behind the line: a deeper support position and a bolder sweep race.</summary>
+    SweeperKeeper
 }
 
 public enum KickIntentType
@@ -969,6 +1016,16 @@ public sealed class FootballerObservation
     public required int SelfId { get; init; }
     public required TeamId SelfTeam { get; init; }
     public required TacticalRole SelfRole { get; init; }
+
+    /// <summary>
+    /// A7.6: this player's archetype — a preference, never a capability. Default <see cref="PlayerArchetype.None"/>
+    /// so an observation built by a fixture that predates A7.6 behaves exactly as it did (no path preference,
+    /// no attention change, no keeper change). The archetype's tendency deltas are already folded into
+    /// <see cref="SelfTendencies"/> by the match that built the player; this field is what a preference that
+    /// has no tendency slot (the run-kind preference) reads.
+    /// </summary>
+    public PlayerArchetype SelfArchetype { get; init; } = PlayerArchetype.None;
+
     public required Vector3 SelfPosition { get; init; }
     public required Vector3 SelfVelocity { get; init; }
     public required Vector2 SelfFacingXZ { get; init; }
@@ -1200,6 +1257,15 @@ public static class PlayerTendencyBaselines
     public const float DribblePreference = 0.50f;
     public const float PositionalDiscipline = 0.70f;
     public const float PressingAggression = 0.60f;
+
+    /// <summary>A7.6: appetite for a wide delivery (the cross). The cross's own preference term reads it.</summary>
+    public const float CrossPreference = 0.55f;
+
+    /// <summary>A7.6: how eager the player is to refresh a stale sighting (the scan attention policy).</summary>
+    public const float ScanAppetite = 0.50f;
+
+    /// <summary>A7.6: how boldly the keeper leaves his line to sweep and how deep he supports in possession.</summary>
+    public const float SweepAggression = 0.50f;
 }
 
 public sealed class PlayerTendencies
@@ -1210,6 +1276,28 @@ public sealed class PlayerTendencies
     public float DribblePreference01 { get; init; } = PlayerTendencyBaselines.DribblePreference;
     public float PositionalDiscipline01 { get; init; } = PlayerTendencyBaselines.PositionalDiscipline;
     public float PressingAggression01 { get; init; } = PlayerTendencyBaselines.PressingAggression;
+
+    /// <summary>
+    /// A7.6: appetite for a wide delivery. Read by the cross candidate's preference term. The neutral value
+    /// is <see cref="PlayerTendencyBaselines.CrossPreference"/>, so a default player prices a cross exactly
+    /// as he did before A7.6.
+    /// </summary>
+    public float CrossPreference01 { get; init; } = PlayerTendencyBaselines.CrossPreference;
+
+    /// <summary>
+    /// A7.6: how eager the player is to refresh a stale sighting — the scan attention policy's one player
+    /// input (<see cref="AI.ScanPlanner.RefreshAgeTicksFor"/>). Read by perception, not by a scorer, and the
+    /// neutral value reproduces the pre-A7.6 attention exactly.
+    /// </summary>
+    public float ScanAppetite01 { get; init; } = PlayerTendencyBaselines.ScanAppetite;
+
+    /// <summary>
+    /// A7.6: how boldly the keeper leaves his line — the support depth in possession and the sweep/claim
+    /// race window. Read only by the goalkeeper's decision (<see cref="AI.GoalkeeperDecisionModel"/>); the
+    /// physical reach and the law are untouched, so this is a preference for leaving the line, not a longer
+    /// arm. Neutral reproduces the pre-A7.6 keeper.
+    /// </summary>
+    public float SweepAggression01 { get; init; } = PlayerTendencyBaselines.SweepAggression;
 }
 
 /// <summary>
@@ -1217,10 +1305,25 @@ public sealed class PlayerTendencies
 /// footballer being identical. Audit F18: these fields used to be stored and exposed but never read,
 /// so no preset could have mattered. Values stay near the neutral baselines — the role differences
 /// are what the AI responds to.
+///
+/// A7.6: <see cref="ForRole"/> is the role alone (the pre-A7.6 player). <see cref="For"/> composes the role
+/// with an <see cref="PlayerArchetype"/>'s bounded affinity deltas
+/// (<see cref="AI.PlayerArchetypeProfile"/>), which is how one player in a role can lean toward one way of
+/// playing without a second candidate or a second scorer.
 /// </summary>
 public static class PlayerTendencyProfile
 {
-    public static PlayerTendencies ForRole(TacticalRole role) => role switch
+    /// <summary>The role's own tendency preset, with no archetype deltas (the pre-A7.6 player).</summary>
+    public static PlayerTendencies ForRole(TacticalRole role) => RoleTendencies(role);
+
+    /// <summary>
+    /// A7.6: the role's preset with <paramref name="archetype"/>'s affinity deltas applied and clamped to
+    /// 0..1. <see cref="PlayerArchetype.None"/> returns <see cref="ForRole"/> exactly.
+    /// </summary>
+    public static PlayerTendencies For(TacticalRole role, PlayerArchetype archetype) =>
+        AI.PlayerArchetypeProfile.Apply(RoleTendencies(role), archetype);
+
+    private static PlayerTendencies RoleTendencies(TacticalRole role) => role switch
     {
         TacticalRole.Striker => new PlayerTendencies
         {

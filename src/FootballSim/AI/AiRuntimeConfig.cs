@@ -224,6 +224,21 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableCognitiveError { get; init; } = true;
 
+    /// <summary>
+    /// Whether the match fields <b>archetypes</b> — playmaker, ball winner, inverted fullback, touchline
+    /// winger, inside forward, target forward, sweeper keeper — as preferences on the one decision pipeline
+    /// (A7.6, see <see cref="PlayerArchetypeProfile"/>). <b>On by default</b>: this is the behaviour the
+    /// version ships, and the field exists so the evidence probe can run the same match with the uniform
+    /// pre-A7.6 squad and so A9.2 can ablate it. Off means every player is <see cref="PlayerArchetype.None"/>
+    /// — the role's own tendencies, no run preference, the neutral scan attention and the neutral keeper — so
+    /// the off run is the previous build rather than a near-miss.
+    ///
+    /// The switch resolves a player's archetype when the squad is built. A scenario fixture that states an
+    /// archetype explicitly keeps it even with this off: the field says what the default squad is, not what a
+    /// fixture may describe.
+    /// </summary>
+    public bool EnableArchetypes { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -238,7 +253,8 @@ public sealed class AiRuntimeConfig
         $"range {ScanAttentionRangeMeters:F0}m) " +
         $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t) " +
         $"reception({(EnableReceptionPlanning ? "on" : "off")}) " +
-        $"cognitive({(EnableCognitiveError ? "on" : "off")})";
+        $"cognitive({(EnableCognitiveError ? "on" : "off")}) " +
+        $"archetypes({(EnableArchetypes ? "on" : "off")})";
 }
 
 /// <summary>

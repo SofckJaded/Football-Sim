@@ -209,7 +209,11 @@ public static class ScenarioLibrary
         scenario.Add(Player(112, TeamId.Home, TacticalRole.CentralMidfielder, 12f, -4f, 10));
         scenario.Add(Player(111, TeamId.Home, TacticalRole.Winger, -14f, -24f, 11));
         scenario.Add(Player(HighLineCarrier, TeamId.Home, TacticalRole.CentralMidfielder, -6f, 14f, 8));
-        scenario.Add(Player(HighLineStriker, TeamId.Home, TacticalRole.Striker, 2f, 0f, 9));
+        // A7.6: this fixture measures the geometry of a run in behind a high line, so its striker is the plain
+        // pre-A7.6 forward. The default squad's target forward prefers to pin the line instead, which is a
+        // legitimate new behaviour but not the mechanism this fixture isolates.
+        scenario.Add(Player(HighLineStriker, TeamId.Home, TacticalRole.Striker, 2f, 0f, 9)
+            .WithArchetype(PlayerArchetype.None));
         scenario.Add(Player(201, TeamId.Away, TacticalRole.Goalkeeper, 46f, 0f, 1));
         scenario.Add(Player(202, TeamId.Away, TacticalRole.CenterBack, 14f, -6f, 4));
         scenario.Add(Player(203, TeamId.Away, TacticalRole.CenterBack, 14f, 6f, 5));

@@ -65,14 +65,24 @@ public static class GoalkeeperSupportModel
     /// <summary>
     /// How far off his own goal line the keeper's target sits, in metres. <paramref name="goalToBallMeters"/>
     /// is the planar distance from his own goal centre to the ball.
+    ///
+    /// A7.6: <paramref name="sweepAggression01"/> scales only the <i>possession</i> depth — a sweeper keeper
+    /// stands further off his line as an outlet. The area cap is applied after the scale, so the sweeper
+    /// keeper is still inside his own box; the defensive angle is a shot-blocking duty and is not scaled by
+    /// the archetype.
     /// </summary>
-    public static float StandoffMeters(float goalToBallMeters, bool teamHasBall)
+    public static float StandoffMeters(
+        float goalToBallMeters,
+        bool teamHasBall,
+        float sweepAggression01 = PlayerTendencyBaselines.SweepAggression)
     {
         if (!float.IsFinite(goalToBallMeters) || goalToBallMeters <= 0f)
             return teamHasBall ? MinSupportDepthMeters : MinDefensiveDepthMeters;
 
         return teamHasBall
-            ? Math.Clamp(goalToBallMeters * SupportDepthShare, MinSupportDepthMeters, MaxSupportDepthMeters)
+            ? Math.Clamp(
+                goalToBallMeters * SupportDepthShare * PlayerArchetypeProfile.SupportDepthScale(sweepAggression01),
+                MinSupportDepthMeters, MaxSupportDepthMeters)
             : Math.Clamp(goalToBallMeters * DefensiveDepthShare, MinDefensiveDepthMeters, MaxDefensiveDepthMeters);
     }
 

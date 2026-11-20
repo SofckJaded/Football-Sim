@@ -16,6 +16,14 @@ public sealed class FootballerState
     public required PlayerAttributes Attributes { get; init; }
     public required PlayerTendencies Tendencies { get; init; }
 
+    /// <summary>
+    /// A7.6: the player's archetype. It is a preference bundle, not a role: the role still decides the
+    /// formation slot and the duties, and the archetype's tendency deltas are already folded into
+    /// <see cref="Tendencies"/>. Default <see cref="PlayerArchetype.None"/> (a fixture built before A7.6 is
+    /// the pre-A7.6 player).
+    /// </summary>
+    public PlayerArchetype Archetype { get; init; } = PlayerArchetype.None;
+
     public Vector3 Position { get; set; }
     public Vector3 PreviousPosition { get; set; }
     public Vector3 Velocity { get; set; }

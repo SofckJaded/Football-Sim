@@ -325,18 +325,26 @@ public sealed class MatchSimulationEngine
                 int playerId = idCounter++;
                 var (role, _, _) = TeamTacticalCoordinator.GetFormationRoleAndSlot(shirt, _config.PlayersPerTeam);
 
+                // A7.6: the default squad fields an archetype per shirt (all seven once in 11v11), which is
+                // the behaviour change; with `EnableArchetypes` off every player is the pre-A7.6 player and
+                // the squad is the uniform one the A/B compares against.
+                PlayerArchetype archetype = _config.Ai.EnableArchetypes
+                    ? PlayerArchetypeProfile.ForShirt(role, shirt, _config.PlayersPerTeam)
+                    : PlayerArchetype.None;
+
                 var player = new FootballerState
                 {
                     Id = playerId,
                     Team = team,
                     ShirtNumber = shirt,
                     Role = role,
+                    Archetype = archetype,
                     Attributes = new PlayerAttributes
                     {
                         // Deterministic footedness per shirt so the same seed/replay is identical.
                         PreferredFoot = shirt is 3 or 7 or 11 ? Footedness.Left : Footedness.Right
                     },
-                    Tendencies = PlayerTendencyProfile.ForRole(role)
+                    Tendencies = PlayerTendencyProfile.For(role, archetype)
                 };
 
                 // Audit F22: the squad is public state, so its attributes are validated once here
@@ -380,14 +388,23 @@ public sealed class MatchSimulationEngine
 
         foreach (ScenarioPlayer spec in specs)
         {
+            // A7.6: a fixture may state an archetype explicitly; otherwise the match fields the role's default
+            // one when archetypes are enabled. The archetype's deltas are folded into the tendencies the same
+            // way, whether the fixture stated them or not (explicit tendencies are the fixture's statement of
+            // the player, and the archetype is a preference on top of it).
+            PlayerArchetype archetype = spec.Archetype ??
+                (_config.Ai.EnableArchetypes ? PlayerArchetypeProfile.DefaultFor(spec.Role) : PlayerArchetype.None);
+
             var player = new FootballerState
             {
                 Id = spec.Id,
                 Team = spec.Team,
                 ShirtNumber = spec.ShirtNumber,
                 Role = spec.Role,
+                Archetype = archetype,
                 Attributes = spec.Attributes,
-                Tendencies = spec.Tendencies ?? PlayerTendencyProfile.ForRole(spec.Role),
+                Tendencies = PlayerArchetypeProfile.Apply(
+                    spec.Tendencies ?? PlayerTendencyProfile.ForRole(spec.Role), archetype),
                 Position = spec.Position,
                 PreviousPosition = spec.Position,
                 Velocity = spec.Velocity,

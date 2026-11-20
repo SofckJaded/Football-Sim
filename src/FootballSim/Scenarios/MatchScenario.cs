@@ -57,6 +57,14 @@ public sealed class ScenarioPlayer
     /// <summary>Role preset when null, so a fixture only states the differences it actually cares about.</summary>
     public PlayerTendencies? Tendencies { get; init; }
 
+    /// <summary>
+    /// A7.6: the player's archetype, or null to take the match's default for the role
+    /// (<see cref="PlayerArchetypeProfile.DefaultFor"/> when <see cref="AiRuntimeConfig.EnableArchetypes"/> is
+    /// on, neutral otherwise). An explicit value is honoured even with archetypes disabled — a fixture that
+    /// names an archetype is stating a property of its world, not asking for the default squad.
+    /// </summary>
+    public PlayerArchetype? Archetype { get; init; }
+
     public bool IsActiveOnPitch { get; init; } = true;
 
     /// <summary>
@@ -70,42 +78,50 @@ public sealed class ScenarioPlayer
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = Position,
         Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = attributes,
-        Tendencies = Tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+        Tendencies = Tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
     };
 
     public ScenarioPlayer WithTendencies(PlayerTendencies tendencies) => new()
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = Position,
         Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
-        Tendencies = tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+        Tendencies = tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+    };
+
+    /// <summary>A7.6: this player's archetype preference. See <see cref="ScenarioPlayer.Archetype"/>.</summary>
+    public ScenarioPlayer WithArchetype(PlayerArchetype archetype) => new()
+    {
+        Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = Position,
+        Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
+        Tendencies = Tendencies, Archetype = archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
     };
 
     public ScenarioPlayer WithShirt(int shirtNumber) => new()
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = shirtNumber, Position = Position,
         Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
-        Tendencies = Tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+        Tendencies = Tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
     };
 
     public ScenarioPlayer WithController(IFootballerController controller) => new()
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = Position,
         Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
-        Tendencies = Tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = controller
+        Tendencies = Tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = controller
     };
 
     public ScenarioPlayer MovedTo(Vector3 position) => new()
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = position,
         Velocity = Velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
-        Tendencies = Tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+        Tendencies = Tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
     };
 
     public ScenarioPlayer MovingAt(Vector3 velocity) => new()
     {
         Id = Id, Team = Team, Role = Role, ShirtNumber = ShirtNumber, Position = Position,
         Velocity = velocity, FacingXZ = FacingXZ, Stamina01 = Stamina01, Attributes = Attributes,
-        Tendencies = Tendencies, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
+        Tendencies = Tendencies, Archetype = Archetype, IsActiveOnPitch = IsActiveOnPitch, Controller = Controller
     };
 }
 

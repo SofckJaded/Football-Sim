@@ -36,6 +36,13 @@ public readonly record struct RunScoreTerms(
     /// </summary>
     public float DecoySpace01 { get; init; }
 
+    /// <summary>
+    /// A7.6: this player's archetype preference for the path's kind, in [-1, 1] (already weighted into
+    /// <see cref="Score"/>). Kept as a term so the decision trace can explain a run chosen by preference
+    /// rather than by geometry; zero for <see cref="PlayerArchetype.None"/> and for a decoy.
+    /// </summary>
+    public float ArchetypePreference01 { get; init; }
+
     /// <summary>The defender the decoy expects to pull (0 when none). Diagnostics only.</summary>
     public int DecoyDefenderId { get; init; }
 
@@ -49,6 +56,7 @@ public readonly record struct RunScoreTerms(
               $"travel {TravelMeters:F0} m ⇒ {Score:F2}"
             : $"arrive {ArrivalAdvantage01:F2} · pass {PassAvailability01:F2} · orient {ReceivingOrientation01:F2} · " +
               $"break {LineBreaks01:F2} · room {Congestion01:F2} · role {RoleUsefulness01:F2} · " +
+              $"arch {ArchetypePreference01:+0.00;-0.00;0.00} · " +
               $"fit {ArrivalFit01:F2} · exposed {TransitionExposure01:F2} · travel {TravelMeters:F0} m ⇒ {Score:F2}";
 }
 
@@ -271,6 +279,10 @@ public static class RunScoring
         float lineBreaks = LineBreaks(obs, carrierXZ, meetXZ);
         float congestion = Congestion(obs, meetXZ, mySeconds, path.MeetRadiusMeters, out float nearestAtArrival);
         float role = RoleUsefulness(path.Kind, obs.SelfRole);
+        // A7.6: the archetype prices the same path the duty already offered. It is a preference on top of the
+        // role fit — never a kind filter — so two players in the same role and duty see the same candidate set
+        // and differ only in what they would rather do with it.
+        float archetypePreference = PlayerArchetypeProfile.RunPreference(path.Kind, obs.SelfArchetype);
         float exposure = TransitionExposure(security);
         float travel = Vector2.Distance(selfXZ, meetXZ);
 
@@ -286,12 +298,16 @@ public static class RunScoring
                     + LineBreakWeight * lineBreaks
                     + CongestionWeight * congestion
                     + RoleWeight * role
+                    + PlayerArchetypeProfile.RunPreferenceWeight * archetypePreference
                     + fitContribution
                     - ExposureWeight * exposure
                     - TravelWeight * MathF.Min(travel, 40f) / 40f;
 
         return new RunScoreTerms(arrival, pass, orientation, lineBreaks, congestion, role, exposure,
-            fit, float.IsFinite(travel) ? travel : 0f, score);
+            fit, float.IsFinite(travel) ? travel : 0f, score)
+        {
+            ArchetypePreference01 = archetypePreference
+        };
     }
 
     /// <summary>

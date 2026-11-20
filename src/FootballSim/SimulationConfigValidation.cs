@@ -160,7 +160,7 @@ public static class SimulationConfigValidation
         Require01(attributes.GoalkeepingReflex01, $"{name}.GoalkeepingReflex01");
     }
 
-    /// <summary>Validates the six behaviour tendencies (each is a 0..1 blend weight).</summary>
+    /// <summary>Validates the nine behaviour tendencies (each is a 0..1 blend weight).</summary>
     public static void ValidateTendencies(PlayerTendencies tendencies, string name = "tendencies")
     {
         ArgumentNullException.ThrowIfNull(tendencies);
@@ -171,6 +171,10 @@ public static class SimulationConfigValidation
         Require01(tendencies.DribblePreference01, $"{name}.DribblePreference01");
         Require01(tendencies.PositionalDiscipline01, $"{name}.PositionalDiscipline01");
         Require01(tendencies.PressingAggression01, $"{name}.PressingAggression01");
+        // A7.6: the three archetype preference axes that are not covered by the six above.
+        Require01(tendencies.CrossPreference01, $"{name}.CrossPreference01");
+        Require01(tendencies.ScanAppetite01, $"{name}.ScanAppetite01");
+        Require01(tendencies.SweepAggression01, $"{name}.SweepAggression01");
     }
 
     /// <summary>Validates a team tactical profile (every field feeds an AI utility).</summary>

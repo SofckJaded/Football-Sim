@@ -337,7 +337,10 @@ public sealed class GoalkeeperController : IFootballerController
         Vector2 dirGoalToBall = SimMath.SafeNormalize(goalToBall, new Vector2(obs.AttackingDirectionX, 0f));
 
         bool teamHasBall = obs.PossessingTeam == obs.SelfTeam;
-        float standoff = GoalkeeperSupportModel.StandoffMeters(distGoalToBall, teamHasBall);
+        // A7.6: a sweeper keeper stands further off his line in possession (the archetype's one positioning
+        // preference); the defensive shot-blocking angle is unchanged, and the area cap still applies.
+        float standoff = GoalkeeperSupportModel.StandoffMeters(
+            distGoalToBall, teamHasBall, obs.SelfTendencies.SweepAggression01);
         Vector2 idealSpot = goalCenter + dirGoalToBall * standoff;
 
         // The keeper stays in front of his goal in both phases: the angle can point wide, but his job is to be

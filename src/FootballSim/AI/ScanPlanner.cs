@@ -158,6 +158,7 @@ public sealed class ScanPlanner
     private readonly int _holdTicks;
     private readonly int _cooldownTicks;
     private readonly float _attentionRangeMeters;
+    private readonly int _refreshAgeTicks;
     private readonly Dictionary<int, HeadState> _heads = new();
     private int _scanStarts;
     private int _threatScanStarts;
@@ -175,11 +176,33 @@ public sealed class ScanPlanner
         _holdTicks = SecondsToTicks(config.ScanHoldSeconds);
         _cooldownTicks = SecondsToTicks(config.ScanCooldownSeconds);
         _attentionRangeMeters = config.ScanAttentionRangeMeters;
-        RefreshAgeTicks = SecondsToTicks(config.ScanRefreshAgeSeconds);
+        _refreshAgeTicks = SecondsToTicks(config.ScanRefreshAgeSeconds);
+        RefreshAgeTicks = _refreshAgeTicks;
     }
 
-    /// <summary>How stale a sighting must be before a player turns to refresh it.</summary>
+    /// <summary>
+    /// How stale a sighting must be before a player turns to refresh it, at the neutral scan appetite. This
+    /// is the configured policy value; a player's own appetite moves it through
+    /// <see cref="RefreshAgeTicksFor"/>.
+    /// </summary>
     public int RefreshAgeTicks { get; }
+
+    /// <summary>
+    /// A7.6: the staleness threshold <b>this player</b> reacts to, after his scan appetite. The appetite is
+    /// the archetype's perception preference (<see cref="PlayerTendencies.ScanAppetite01"/>): an eager player
+    /// refreshes a sighting sooner (so he scans more often), a patient one lets it age. The neutral appetite
+    /// (0.50) returns <see cref="RefreshAgeTicks"/> exactly, so a default player's attention is unchanged.
+    ///
+    /// This is a preference on the <i>existing</i> attention policy, not a second sight model: the same heads,
+    /// the same turn rate, the same hold and cooldown, the same cone.
+    /// </summary>
+    public int RefreshAgeTicksFor(float scanAppetite01)
+    {
+        float appetite = float.IsFinite(scanAppetite01) ? Math.Clamp(scanAppetite01, 0f, 1f) : 0.5f;
+        float scale = 1.35f - 0.70f * appetite; // neutral 0.50 → 1.00
+        int ticks = (int)MathF.Round(_refreshAgeTicks * scale);
+        return Math.Clamp(ticks, 1, 600);
+    }
 
     /// <summary>Furthest a believed opponent can be and still attract a scan.</summary>
     public float AttentionRangeMeters => _attentionRangeMeters;
