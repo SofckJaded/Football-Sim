@@ -559,6 +559,26 @@ public sealed class RunAdvertisementTests
         Assert.Equal(Regions.MeetTick, claim.ArriveTick);
     }
 
+    /// <summary>
+    /// The raised alternative to an announced runner claims the region exactly like a cross (M2). It is
+    /// aimed at the meeting point and has the longest flight of any delivery, so an unclaimed loft could
+    /// land where the runner has already stopped waiting.
+    /// </summary>
+    [Fact]
+    public void ChoosingTheLoftedBall_ClaimsTheRunnersRegion()
+    {
+        MatchCommunicationContext comms = AnnounceRunFor(MateId: RunnerId);
+        var generator = new CandidateGenerator(Pitch, comms) { TimeOnBall = 0.8f };
+        FootballerObservation obs = CarrierObservation();
+
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 34f);
+        generator.NoteDecision(obs, new CandidateKey(CandidateKind.Pass, RunnerId, "Lofted"));
+
+        Assert.True(comms.Runs.TryGetClaim(TeamId.Home, RunnerId, obs.Tick, out RunClaim claim));
+        Assert.Equal(CarrierId, claim.CarrierId);
+        Assert.Equal(Regions.MeetTick, claim.ArriveTick);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Fixture-level: the high-line run is really heard by the team
     // ---------------------------------------------------------------------------------------------

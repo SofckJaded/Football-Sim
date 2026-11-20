@@ -536,10 +536,9 @@ public sealed class PassSuccessModel
         // raised profile is judged from the calibrated height profile instead — a defender only blocks if
         // the ball is low enough to be played where he stands. A driven ball is low at the point it passes
         // most defenders, which is exactly why it needs a lane, and the test says so.
-        lane = IsAirborneLaneBlocked(
-            selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam)
-            ? 0f
-            : 1f;
+        bool laneBlocked = IsAirborneLaneBlocked(
+            selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam);
+        lane = laneBlocked ? 0f : 1f;
 
         float control = profile == RaisedPassProfile.Driven ? DrivenControl01 : AirborneControl01;
         float completion = receiverTerm
@@ -557,7 +556,8 @@ public sealed class PassSuccessModel
         {
             LandingXZ = landing,
             TargetXZ = targetXZ,
-            Profile = profile
+            Profile = profile,
+            LaneBlocked = laneBlocked
         };
     }
 
@@ -801,6 +801,14 @@ public readonly record struct LoftedPassTerms(
 
     /// <summary>Which airborne profile produced this estimate (A5.5).</summary>
     public RaisedPassProfile Profile { get; init; }
+
+    /// <summary>
+    /// True when a defender stands where the airborne ball is still low enough to be played (A5.5). The
+    /// estimate already charges this in <see cref="CompletionProbability01"/>; it is published separately so
+    /// a caller ordering deliveries — the restart taker's "open route first" tier — asks the same question
+    /// for a raised ball that it asks for a ground one (L8).
+    /// </summary>
+    public bool LaneBlocked { get; init; }
 
     /// <summary>No raised route to this receiver: out of the model's band, or landing too far away.</summary>
     public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);

@@ -323,6 +323,31 @@ public sealed class CoverageRequestTests
             entry => Assert.True(IsPossessionJob(entry.Value.Job), $"#{entry.Key} kept {entry.Value.Job}"));
     }
 
+    [Fact]
+    public void TheElectedResponder_KeepsThePress_EvenWhenACoverageRequestOwnsHim()
+    {
+        Setup setup = CentreBackSteppedOutSetup();
+        CoverageRequest request = setup.Jobs.CoverageOf(TeamId.Home);
+        int owner = request.OwnerPlayerId;
+        Assert.Equal(TacticalJob.ProtectGap, setup.Jobs.Get(owner)!.Value.Job);
+
+        // The ball is played into the gap the owner is covering and he is the closest defender, so the
+        // election names him (M3). The responder block writes his Presser duty first; the sticky coverage
+        // branch used to overwrite it with ProtectGap on the same pass, leaving the side with nobody
+        // pressing while every observation still published him as the responder.
+        Run(setup, AwayControlled, TeamId.Away, homeResponderId: owner, awayResponderId: null, tick: 6);
+
+        TeamJobAssignment duty = setup.Jobs.Get(owner)!.Value;
+        Assert.Equal(TacticalJob.Presser, duty.Job);
+
+        // The request ends with the same precedence the in-possession direction already had, and the
+        // closure survives the re-open the same pass may perform for the *presser's* now-vacated slot.
+        CoverageRequest after = setup.Jobs.CoverageOf(TeamId.Home);
+        Assert.Equal(CoverageRequestState.PassageEnded, after.PreviousState);
+        Assert.Contains("elected to the ball", after.PreviousReason);
+        Assert.DoesNotContain(setup.Jobs.Assignments.Values, a => a.Job == TacticalJob.ProtectGap);
+    }
+
     /// <summary>The state a request ended in, looking through a re-open that has already happened.</summary>
     private static CoverageRequestState SetupLastState(Setup setup)
     {

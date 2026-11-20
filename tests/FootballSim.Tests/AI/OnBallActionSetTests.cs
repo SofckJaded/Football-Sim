@@ -25,6 +25,8 @@ public sealed class OnBallActionSetTests
     private const int KeeperId = 1;
     private const int MateId = 9;
     private const int SecondMateId = 10;
+    private const int DeepestMateId = 14;
+    private const int DeeperMateId = 15;
     private static readonly PitchDimensions Pitch = new();
 
     // ---------------------------------------------------------------------------------------------
@@ -152,6 +154,39 @@ public sealed class OnBallActionSetTests
             offsideLineProjX: 30f);
 
         Assert.DoesNotContain(high.Candidates, c => c.Key.TargetPlayerId == KeeperId);
+    }
+
+    /// <summary>
+    /// A newly received ball is inside the settle window, so no pass set is built — and the recycle options
+    /// must still be there (M1). The pre-rank is this decision's buffer; inheriting the previous passage's
+    /// one silently excluded every team-mate it happened to name, including the two deepest, so a carrier
+    /// who had just collected the ball could have no safe ball backward at all.
+    /// </summary>
+    [Fact]
+    public void ARecycle_IsOfferedWhileTheCarrierIsStillSettling()
+    {
+        FootballerObservation obs = RecycleObservation();
+
+        // Decision one: the carrier has had the ball long enough to release it, so the pre-rank fills with
+        // every visible team-mate and the recycle options are (correctly) filtered out as duplicates.
+        var generator = new CandidateGenerator(Pitch) { TimeOnBall = 1.0f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 34f);
+        Assert.DoesNotContain(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "Recycle");
+
+        // Decision two, one tick into the next possession: inside the settle window, so no pass set is
+        // built. The two deepest team-mates must be offered as recycles.
+        generator.Clear();
+        generator.TimeOnBall = 0f;
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 34f);
+
+        Assert.DoesNotContain(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "ToFeet");
+        int[] recycled = generator.Candidates
+            .Where(c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "Recycle")
+            .Select(c => c.Key.TargetPlayerId)
+            .ToArray();
+        Assert.Equal(new[] { DeepestMateId, DeeperMateId }, recycled);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -335,6 +370,17 @@ public sealed class OnBallActionSetTests
         Mate(11, new Vector2(16f, -10f), new Vector2(3f, 0f)),
         Mate(12, new Vector2(22f, 18f)),
         Mate(13, new Vector2(-4f, -12f)));
+
+    private static FootballerObservation RecycleObservation() => Observation(
+        new Vector2(0f, 8f),
+        Mate(MateId, new Vector2(8f, 14f)),
+        Mate(SecondMateId, new Vector2(10f, 2f)),
+        Mate(11, new Vector2(16f, -10f), new Vector2(3f, 0f)),
+        Mate(12, new Vector2(22f, 18f)),
+        Mate(13, new Vector2(14f, 22f)),
+        Mate(16, new Vector2(6f, -4f)),
+        Mate(DeeperMateId, new Vector2(-10f, 8f)),
+        Mate(DeepestMateId, new Vector2(-14f, 10f)));
 
     private static FootballerObservation Observation(Vector2 carrierPosition, params PerceivedEntity[] visible) => new()
     {

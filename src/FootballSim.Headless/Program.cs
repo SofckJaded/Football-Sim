@@ -54,8 +54,7 @@ public static class Program
                 return RunKeeperEvidence(args) ? 0 : 1;
 
             default:
-                Console.WriteLine("FootballSim.Headless CLI Runner");
-                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
+                Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-11v11");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --tactical-batch");
@@ -69,7 +68,13 @@ public static class Program
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
-                return 0;
+
+                // L47: an unknown mode used to print this help and exit 0, so a typo'd or stale documented
+                // command looked successful while running nothing. Only an explicit help request is success.
+                if (mode is "--help" or "-h" or "/?") return 0;
+
+                Console.Error.WriteLine($"unknown mode '{mode}' — use one of the modes above");
+                return 1;
         }
     }
 
@@ -224,15 +229,17 @@ public static class Program
     /// <item><b>offered</b> â€” live decision ticks where the family appeared in the carrier's action set;</item>
     /// <item><b>chosen</b> â€” how many separate selections the family won (a new choice, not a held one);</item>
     /// <item><b>executed</b> â€” balls the execution layer actually struck, from its own contacts;</item>
-    /// <item><b>margin</b> â€” how far the family's best score was from the best non-delivery action on the
-    ///   same tick (positive = the delivery lost by that much, negative = it was in front);</item>
-    /// <item><b>p / gain / loss</b> â€” the winning delivery's own value terms, so a lost offer says which of
-    ///   the three levers is off instead of being a bare number.</item>
+    /// <item><b>margin</b> â€” how far the family's best score was from the best <i>other</i> family's best
+    ///   score on the same tick (positive = the delivery lost by that much). Carry and recycle are in that
+    ///   comparison set, because they are the baselines a delivery has to beat (M10);</item>
+    /// <item><b>p / gain / loss</b> â€” the family's best candidate's own value terms (one candidate, not an
+    ///   average over every record-breaker, which mixed several actions into one row — L42).</item>
     /// </list>
     ///
     /// The counts are ticks, not events: a carrier who holds the same action for forty ticks counts forty
     /// times. That is the right denominator for "was it on the table", and the chosen/executed columns are
-    /// what carry the decision evidence.
+    /// what carry the decision evidence. Rejections are the one exception: a refusal belongs to a decision,
+    /// so it is counted once per computed decision, not once per tick (M11).
     /// </summary>
     private static bool RunDeliveryEvidence(string[] args)
     {
@@ -252,7 +259,8 @@ public static class Program
         Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
         Console.WriteLine("Units              : offered/chosen are live carrier decision ticks (a held action counts every");
         Console.WriteLine("                     tick it is held); executed is from the execution layer's own contacts;");
-        Console.WriteLine("                     margin = best non-delivery score - the delivery's best score (>0 = it lost).");
+        Console.WriteLine("                     margin = best score of any other family - this family's best (>0 = it lost).");
+        Console.WriteLine("                     Rejections are counted once per computed decision.");
 
         var offered = new int[FamilyCount];
         var chosen = new int[FamilyCount];
@@ -295,11 +303,13 @@ public static class Program
             IReadOnlyList<FootballerState> players = engine.Players;
             var previousFamily = new int[players.Count];
             Array.Fill(previousFamily, -2);   // -2 = nothing selected yet, so the first choice counts
+            var previousDecisions = new int[players.Count];
             int decoyTicks = 0;
             int decoyAdoptions = 0;
             var previousDecoy = new bool[players.Count];
 
             var familyBest = new float[FamilyCount];
+            var familyBestIndex = new int[FamilyCount];
             int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
             int lastAttemptTick = -1;
 
@@ -313,34 +323,63 @@ public static class Program
                     if (!player.IsActiveOnPitch) continue;
                     if (engine.GetController(player.Id) is not TacticalUtilityAiController ai) continue;
 
+                    // A refusal belongs to a decision (M11): the generator's rejection buffer is reset by
+                    // every decision, so reading it once after the match counted the final tick only.
+                    // Compare the controller's decision counter instead of sampling per tick, or a held
+                    // decision would be counted once per tick it is held.
+                    if (ai.DecisionsComputed != previousDecisions[index])
+                    {
+                        previousDecisions[index] = ai.DecisionsComputed;
+                        for (int r = 0; r < ai.RejectionCount; r++)
+                        {
+                            string refusal = ai.GetRejection(r).Reason;
+                            rejections[refusal] = rejections.GetValueOrDefault(refusal) + 1;
+                        }
+                    }
+
                     Array.Fill(familyBest, float.NegativeInfinity);
-                    float bestOther = float.NegativeInfinity;
+                    Array.Fill(familyBestIndex, -1);
                     IReadOnlyList<UtilityCandidate> candidates = ai.LastCandidates;
 
+                    // The family's best candidate, and only that candidate's terms (L42): accumulating
+                    // over every record-breaking candidate averaged several different actions' p/gain/loss
+                    // into one row that described none of them.
                     for (int c = 0; c < candidates.Count; c++)
                     {
                         UtilityCandidate candidate = candidates[c];
                         int family = FamilyOf(candidate.Key);
-                        if (family < 0)
-                        {
-                            if (candidate.UtilityScore > bestOther) bestOther = candidate.UtilityScore;
-                            continue;
-                        }
-
+                        if (family < 0) continue;
                         if (candidate.UtilityScore <= familyBest[family]) continue;
                         familyBest[family] = candidate.UtilityScore;
-                        if (!candidate.Terms.IsPresent) continue;
-                        seedProbability[family] += candidate.Terms.Probability01;
-                        seedGain[family] += candidate.Terms.Gain;
-                        seedLoss[family] += candidate.Terms.Loss;
-                        seedTermsTicks[family]++;
+                        familyBestIndex[family] = c;
                     }
 
                     for (int family = 0; family < FamilyCount; family++)
                     {
-                        if (float.IsNegativeInfinity(familyBest[family])) continue;
+                        int winnerIndex = familyBestIndex[family];
+                        if (winnerIndex < 0) continue;
 
                         seedOffered[family]++;
+
+                        UtilityCandidate winner = candidates[winnerIndex];
+                        if (winner.Terms.IsPresent)
+                        {
+                            seedProbability[family] += winner.Terms.Probability01;
+                            seedGain[family] += winner.Terms.Gain;
+                            seedLoss[family] += winner.Terms.Loss;
+                            seedTermsTicks[family]++;
+                        }
+
+                        // M10: the comparison set is every *other* family's best, which includes the carry
+                        // and the recycle. Excluding them made the delivery-vs-carry gap the plan is about
+                        // invisible: the recorded cross margin was 0.46 while the carry row was -0.35.
+                        float bestOther = float.NegativeInfinity;
+                        for (int other = 0; other < FamilyCount; other++)
+                        {
+                            if (other == family) continue;
+                            if (familyBest[other] > bestOther) bestOther = familyBest[other];
+                        }
+
                         if (float.IsNegativeInfinity(bestOther)) continue;
 
                         float margin = bestOther - familyBest[family];
@@ -378,18 +417,6 @@ public static class Program
                         int family = FamilyOfIntent(attempts[a].Intent);
                         if (family >= 0) seedExecuted[family]++;
                     }
-                }
-            }
-
-            // Why a delivery was refused (A4.6's rejection list), counted for the whole match. This is the
-            // other half of "never chosen": a cross refused for low completion never reached the table.
-            for (int index = 0; index < players.Count; index++)
-            {
-                if (engine.GetController(players[index].Id) is not TacticalUtilityAiController ai) continue;
-                for (int r = 0; r < ai.RejectionCount; r++)
-                {
-                    string reason = ai.GetRejection(r).Reason;
-                    rejections[reason] = rejections.GetValueOrDefault(reason) + 1;
                 }
             }
 
@@ -458,8 +485,9 @@ public static class Program
     /// The milestone's claim is not "the line is a number" but "the line is one number the whole line holds,
     /// and four picture facts move it". This probe measures each half of that on live matches:
     /// <list type="bullet">
-    /// <item><b>spread</b> â€” mean and maximum distance of a line player's actual depth from the band's, per
-    ///   defending sample. A shared band is only shared if this is small.</item>
+    /// <item><b>spread</b> â€” mean and maximum distance of a line player's <i>assigned target depth</i> from
+    ///   the band's, per defending sample. A shared band is only shared if this is small; the body's own lag
+    ///   behind its target is reported separately as the body-vs-band gap.</item>
     /// <item><b>shift from the anchors</b> â€” band depth minus the line's mean formation-anchor depth, which is
     ///   the depth the same players would have held before this milestone. It quantifies the behaviour change
     ///   instead of leaving it to the scoreline.</item>
@@ -491,7 +519,8 @@ public static class Program
                           $" | away {awayProfile.Name} (marks {DefensiveLineModel.MarkerCount(awayProfile)}," +
                           $" man-share {DefensiveLineModel.ManShare01(awayProfile):F2})");
         Console.WriteLine("Units              : metres, attack-relative (own goal line = -52, opponent's = +52).");
-        Console.WriteLine("                     spread = |actual line depth - band depth| over the players on the line;");
+        Console.WriteLine("                     spread = |assigned line target - band depth| over the players told to hold the");
+        Console.WriteLine("                     line (the shared-band claim); body lag is reported separately as body-vs-band gap;");
         Console.WriteLine("                     shift  = band depth - the line's mean formation-anchor depth.");
 
         int samples = 0;
@@ -657,7 +686,7 @@ public static class Program
         Console.WriteLine($"Shift from anchors : mean {shiftSum / samples:+0.0;-0.0} m | mean absolute {shiftAbsSum / samples:F1} m" +
                           $" (the depth the same players would have held before A6.3)");
         Console.WriteLine($"Line target spread : mean {spreadSum / Math.Max(1d, spreadCount):F2} m" +
-                          $" | worst tick mean {widestSpread:F2} m @ tick {widestSpreadTick}" +
+                          $" | worst player sample {widestSpread:F2} m @ tick {widestSpreadTick}" +
                           $" | {linePlayerSamples} samples with a line");
         Console.WriteLine($"Local exceptions   : {lineAtBand} at the band | {lineAhead} ball-side (+" +
                           $"{DefensiveLineModel.BallSideAdvanceMeters:F0} m) | {lineTucked} far-side (-" +
@@ -943,6 +972,8 @@ public static class Program
         for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
         {
             ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            // L44: the per-seed line reports this match's own samples, not the running total.
+            int seedSamples = 0;
             var config = new PreMatchConfig
             {
                 Seed = seed,
@@ -997,6 +1028,7 @@ public static class Program
 
                     if (!sampled) continue;
                     samples++;
+                    seedSamples++;
 
                     int handlingIndex = (int)keeper.LastHandling.Reason;
                     if (handlingIndex >= 0 && handlingIndex < handlingReasons)
@@ -1095,7 +1127,7 @@ public static class Program
 
             Console.WriteLine();
             Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks | " +
-                              $"score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} | {samples} keeper samples");
+                              $"score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} | {seedSamples} keeper samples");
         }
 
         Console.WriteLine();
@@ -1245,6 +1277,9 @@ public static class Program
         KickIntentType.LoftedPass => 1,
         KickIntentType.LobbedThroughPass => 1,
         KickIntentType.DrivenPass => 2,
+        // L43: the ground run is a ThroughPass. Without this mapping the "ground-run" row's executed
+        // column was structurally 0 whenever the intent was the ground form.
+        KickIntentType.ThroughPass => 4,
         _ => -1
     };
 
@@ -1400,7 +1435,8 @@ public static class Program
 
         Console.WriteLine(
             $"Width separation : mean {meanWidthDifference:F2} m (with the ball), wider on {widerSeeds}/{seedCount} seeds " +
-            $"(gate: majority and mean > 0.5 m)");
+            // L46: the criterion is 4 of 5, i.e. a supermajority, and must not be described as a majority.
+            $"(gate: at least {seedCount - 1}/{seedCount} and mean > 0.5 m)");
         Console.WriteLine(allPassed ? "GATE: PASS" : "GATE: FAIL");
         return allPassed;
     }

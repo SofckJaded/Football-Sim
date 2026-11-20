@@ -77,6 +77,32 @@ public sealed class SetPieceDeliveryTests
             "a restart has no scored alternative, so its trace must not invent terms");
     }
 
+    /// <summary>
+    /// A raised restart reports its own lane verdict (L8). The taker's "open route first" tier asks every
+    /// delivery the same question; a raised ball that never reported <c>laneOpen</c> used to rank ahead of
+    /// an open ground ball to another team-mate once the more advanced man had no ground route left.
+    /// </summary>
+    [Fact]
+    public void ARaisedRouteWithADefenderOnIt_LosesToAnOpenGroundRoute()
+    {
+        var controller = new TacticalUtilityAiController(Pitch);
+        Vector2 takerXZ = new(0f, Pitch.HalfWidth - 1f);
+        Vector2 advanced = new(44f, Pitch.HalfWidth - 22f);
+        Vector2 near = new(18f, Pitch.HalfWidth - 12f);
+        Vector2 onTheRaisedPath = takerXZ + (advanced - takerXZ) * 0.12f;
+
+        FootballerObservation observation = RestartObservation(
+            0f,
+            Midfielder(9, advanced),
+            Midfielder(10, near),
+            Opponent(14, onTheRaisedPath));
+
+        FootballerCommand command = controller.Decide(observation, SimConstants.FixedDeltaTime);
+
+        Assert.Equal(10, command.IntendedReceiverId);
+        Assert.Equal(KickIntentType.GroundPass, command.KickType);
+    }
+
     private static PerceivedEntity Midfielder(int id, Vector2 position, Vector2 velocity = default) => new(
         id, TeamId.Home, TacticalRole.CentralMidfielder,
         new Vector3(position.X, 0f, position.Y),

@@ -710,7 +710,10 @@ foreach (float halfLength in new[] { 1f, 2700f })
             aimZ = Math.Round(command.KickAimDirectionXZ.Z, 3),
             crossingZ = double.IsNaN(crossingZ) ? (double?)null : Math.Round(crossingZ, 2),
             crossingY = double.IsNaN(crossingY) ? (double?)null : Math.Round(crossingY, 2),
-            onTarget = !double.IsNaN(crossingZ) && MathF.Abs(crossingZ) <= pitch.HalfGoalWidth
+            // L51: on target is between the posts *and* under the bar — the lateral crossing alone made a
+            // ball over the bar read as on target, which the shot probe below already got right.
+            onTarget = !double.IsNaN(crossingZ) && MathF.Abs(crossingZ) <= pitch.HalfGoalWidth &&
+                       !double.IsNaN(crossingY) && crossingY <= pitch.GoalHeight
         };
     }
 

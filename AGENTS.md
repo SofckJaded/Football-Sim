@@ -26,8 +26,8 @@ pre-match; the AI must never take that player over.
 | Toolchain pin | `.NET 8.0` SDK (`global.json`), Godot `4.7.2-stable` mono |
 | Build everything | `dotnet build FootballSimulation.sln -c Debug` |
 | Run the test suite | `dotnet test tests\FootballSim.Tests\FootballSim.Tests.csproj --nologo` |
-| Headless 11v11 match | `dotnet run --project src\FootballSim.Headless -c Debug -- match` |
-| Headless 5v5 match | `dotnet run --project src\FootballSim.Headless -c Debug -- 5v5` |
+| Headless 11v11 match | `dotnet run --project src\FootballSim.Headless -c Debug -- --match-11v11` |
+| Headless 5v5 match | `dotnet run --project src\FootballSim.Headless -c Debug -- --match-5v5` |
 | Audit probe JSON | `dotnet run --project tools\FootballSim.AuditProbe -c Debug` |
 | Shortcut wrapper | `start.bat check` (build + test), `start.bat verify` (build + test + probe) |
 

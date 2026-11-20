@@ -268,10 +268,18 @@ public sealed class CandidateGenerator : IAiStateResettable
     public float TackleCooldown => _tackleCooldown;
 
     /// <summary>Drops the previous decision candidate set. Called once per decision.</summary>
+    /// <remarks>
+    /// The pass-target pre-rank is dropped with it (M1): <see cref="WasOfferedAsPassTarget"/> answers a
+    /// question about *this* decision, so a decision that built no pass set — the carrier is not yet
+    /// ready to release the ball — must not inherit the previous passage's buffer and filter the recycle
+    /// options with it. Reset here rather than only in the ranking pass, which the early-possession path
+    /// skips.
+    /// </remarks>
     public void Clear()
     {
         _lastCandidates.Clear();
         _rejectionCount = 0;
+        _passTargetCount = 0;
     }
 
     /// <summary>Advances the timers this object owns. Called once per decision.</summary>
@@ -285,6 +293,7 @@ public sealed class CandidateGenerator : IAiStateResettable
     public void ResetForPhase(AiResetReason reason)
     {
         _lastCandidates.Clear();
+        _passTargetCount = 0;
         _tackleCooldown = 0f;
         _timeOnBall = 0f;
         _hasLastCarryDirection = false;
@@ -319,11 +328,18 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>True when this candidate tag names a ball played into a team-mate's announced region.</summary>
+    /// <remarks>
+    /// The raised alternative belongs here (M2). It is aimed at the advertisement's meeting point when the
+    /// team has heard one — the same promise a cross or a driven ball makes — and it has the longest flight
+    /// of any delivery, so leaving it out meant a lofted ball could land in a region whose announcement had
+    /// already been withdrawn because nothing had claimed it.
+    /// </remarks>
     private static bool IsDeliveredToRun(string? tag) =>
         string.Equals(tag, RunPassTag, StringComparison.Ordinal) ||
         string.Equals(tag, CrossPassTag, StringComparison.Ordinal) ||
         string.Equals(tag, DrivenPassTag, StringComparison.Ordinal) ||
-        string.Equals(tag, CutbackPassTag, StringComparison.Ordinal);
+        string.Equals(tag, CutbackPassTag, StringComparison.Ordinal) ||
+        string.Equals(tag, LoftedPassTag, StringComparison.Ordinal);
 
     /// <summary>
     /// Generates the carrier's candidate set for one decision (A4.1).
@@ -1761,6 +1777,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         float raisedLane = EvaluateLaneClearance(ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
         LoftedPassTerms raised = _passSuccess.EstimateLofted(obs, mate, distance, raisedLane);
         if (!raised.Feasible) return false;
+
+        // The raised route reports its own lane verdict (L8). Without it the caller's "open route first"
+        // tier could not see a raised delivery at all, so a blocked lofted ball ranked ahead of an open
+        // to-feet ball to another team-mate — the ordering the tier list exists to prevent.
+        laneOpen = !raised.LaneBlocked;
 
         // Aim at where the receiver will be when the ball comes down, bounded like any other lead, and
         // never outside the pitch.

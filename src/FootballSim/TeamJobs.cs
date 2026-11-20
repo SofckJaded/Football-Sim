@@ -700,6 +700,16 @@ public sealed class TeamJobCoordinator
                 CloseCoverage(team, CoverageRequestState.OwnerRemoved, tick,
                     $"owner #{request.OwnerPlayerId} left the pitch");
             }
+            else if (responderId == owner.Id)
+            {
+                // M3: the responder block above is authoritative — the elected man presses the ball, and
+                // the same precedence already holds in possession, where CloseCoverage only strips a duty
+                // that is still ProtectGap. Re-assigning him here would overwrite the freshly written
+                // Presser duty with ProtectGap, leave counts[Presser] incremented and leave the side with
+                // nobody pressing while every observation still names him as the responder.
+                CloseCoverage(team, CoverageRequestState.PassageEnded, tick,
+                    $"#{owner.Id} has been elected to the ball");
+            }
             else if (!PressesStill(source.Id))
             {
                 CloseCoverage(team, CoverageRequestState.PassageEnded, tick, "the press ended");

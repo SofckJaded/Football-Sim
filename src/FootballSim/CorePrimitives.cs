@@ -425,12 +425,18 @@ public enum TeamId
 /// offside); and an underlap arrives <b>inside the carrier</b> by up to 12 m, floored 3 m from the centre
 /// line, instead of at a fixed |z| = 12 m lane that could be outside him (A6.B10). A6.B11 (a height-aware
 /// dive) was implemented, measured as a regression and reverted. Trajectories differ from version 36.</item>
+/// <item><c>AiBehaviour 38</c> — audit bugfix batch 42 (M1/M2/M3/L8). The pass-target pre-rank is dropped
+/// with every decision, so the early-possession recycle options are no longer filtered by the previous
+/// passage's buffer (M1); a lofted ball aimed at an announced run region claims it, like a cross, driven
+/// ball or cutback (M2); a coverage request no longer overwrites the elected ball responder's <c>Presser</c>
+/// duty, so the side keeps pressing (M3); and a raised restart delivery reports its own lane verdict, so the
+/// taker's "open route first" tier ranks it correctly (L8). Trajectories differ from version 37.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 37;
+    public const int AiBehaviour = 38;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
