@@ -270,7 +270,9 @@ public sealed class TeamJobCoordinator
         TeamFormation homeFormation,
         TeamFormation awayFormation,
         TeamContext? homeContext = null,
-        TeamContext? awayContext = null)
+        TeamContext? awayContext = null,
+        float homeLineCallShiftMeters = 0f,
+        float awayLineCallShiftMeters = 0f)
     {
         bool urgent = possessingTeam != _lastPossessionTeam;
         if (!urgent && tick - _lastRecomputeTick < RecomputeIntervalTicks)
@@ -290,9 +292,9 @@ public sealed class TeamJobCoordinator
         }
 
         AssignTeam(TeamId.Home, players, ball, possession, possessingTeam, homeResponderId, homeDirX, tick,
-            homeProfile, homeOpponents, homeFormation, homeContext);
+            homeProfile, homeOpponents, homeFormation, homeContext, homeLineCallShiftMeters);
         AssignTeam(TeamId.Away, players, ball, possession, possessingTeam, awayResponderId, -homeDirX, tick,
-            awayProfile, awayOpponents, awayFormation, awayContext);
+            awayProfile, awayOpponents, awayFormation, awayContext, awayLineCallShiftMeters);
     }
 
     private void AssignTeam(
@@ -307,7 +309,8 @@ public sealed class TeamJobCoordinator
         TeamTacticalProfile profile,
         TeamBelief opponents,
         TeamFormation formation,
-        TeamContext? context)
+        TeamContext? context,
+        float lineCallShiftMeters = 0f)
     {
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
 
@@ -335,7 +338,7 @@ public sealed class TeamJobCoordinator
         DefensiveLineBand band = inPossession
             ? DefensiveLineBand.None
             : DefensiveLineModel.Evaluate(team, players, ball, possession, opponents, profile, attackDirX, _pitch,
-                turnover.LineShiftMeters);
+                turnover.LineShiftMeters, lineCallShiftMeters);
         _lineBands[team] = band;
 
         FootballerState? carrier = null;

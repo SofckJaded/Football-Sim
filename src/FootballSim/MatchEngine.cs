@@ -589,6 +589,13 @@ public sealed class MatchSimulationEngine
             if (_teamJobs.WillRecompute(possessingTeam, CurrentTick))
                 UpdateTeamBeliefs();
 
+            // A7.2: the team-wide defensive instruction currently in force reaches the one allocator as a
+            // bounded preference on the A6.3 line band — never as an immediate move of a player. A step/drop
+            // call is read before the jobs update so this tick's band already includes it; the board's own
+            // delay and expiry are what keep the instruction from being a per-tick reflex.
+            float homeLineCallShift = LineCallShiftFor(TeamId.Home);
+            float awayLineCallShift = LineCallShiftFor(TeamId.Away);
+
             _teamJobs.Update(
                 _players, Ball, possession, possessingTeam,
                 _ballResponderElection.GetResponder(TeamId.Home),
@@ -596,7 +603,8 @@ public sealed class MatchSimulationEngine
                 homeDirX, CurrentTick, _config.HomeProfile, _config.AwayProfile,
                 _homeBelief, _awayBelief,
                 _tacticalCoordinator.HomeFormation, _tacticalCoordinator.AwayFormation,
-                _tacticalCoordinator.HomeContext, _tacticalCoordinator.AwayContext);
+                _tacticalCoordinator.HomeContext, _tacticalCoordinator.AwayContext,
+                homeLineCallShift, awayLineCallShift);
 
             // A6.1: one second man per team, elected once from the team's shared inputs. Resolving it
             // independently in each defender's noisy observation let two equidistant centre-backs both
@@ -619,8 +627,15 @@ public sealed class MatchSimulationEngine
                     _tacticalCoordinator.ContextFor(p.Team), _teamJobs.SecurityOf(p.Team),
                     _ballResponderElection.GetResponder(p.Team), _teamJobs.LineBandOf(p.Team),
                     p.Team == TeamId.Home ? homeSupportPresser : awaySupportPresser,
-                    _teamJobs.TurnoverOf(p.Team));
+                    _teamJobs.TurnoverOf(p.Team),
+                    // A7.2: what this player's own team has already said, through the communication delay.
+                    _communication.Calls.BuildContext(p.Team, p.Id, CurrentTick));
                 _latestObservations[p.Id] = obs;
+
+                // A7.2: the player's own shout, decided from the observation he just built. Only an AI
+                // makes calls; the locked human's instruction is the HUD's call-for-pass and is unchanged.
+                if (_controllers[p.Id].SourceType == ControllerSourceType.AI)
+                    TeamCallPlanner.Publish(obs, _communication.Calls, _config.Ai);
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);
                 p.LastCommand = cmd;
@@ -725,6 +740,16 @@ public sealed class MatchSimulationEngine
         // to each defender's noisy independent resolution.
         return elected;
     }
+
+    /// <summary>
+    /// A7.2: the line-band shift this team's live step/drop call asks for, or zero. Drop outranks step
+    /// inside the board; the value is re-clamped by <see cref="DefensiveLineModel"/> so it can bias the
+    /// band but never defeat the ball, run or keeper caps.
+    /// </summary>
+    private float LineCallShiftFor(TeamId team) =>
+        _communication.Calls.TryGetLineDirective(team, CurrentTick, out TeamCall directive)
+            ? TeamCallPlanner.LineShiftMeters(directive.Kind)
+            : 0f;
 
     /// <summary>
     /// Records what the installed controller chose. A utility AI exposes its scored candidates, so the
@@ -842,6 +867,12 @@ public sealed class MatchSimulationEngine
         // throw-in would make the first look after every stoppage blind for no reason.
         if (reason is AiResetReason.HalfTime or AiResetReason.FullTime)
             _perceptionSystem.Clear();
+
+        // A7.2: a shout belongs to the passage it was made in, and every call lifetime is under two
+        // seconds anyway — but a restart also moves the ball and re-places the teams, so a call about the
+        // old picture must not survive it. The board is empty by construction at half time; clearing on
+        // every reset is the honest statement rather than an assumption about timing.
+        _communication.Calls.ClearAll();
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

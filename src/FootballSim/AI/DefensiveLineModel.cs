@@ -37,7 +37,8 @@ public readonly record struct DefensiveLineBand(
     float DeepestRunnerProjX,
     int KeeperId,
     float KeeperReachMeters,
-    float TurnoverShiftMeters = 0f)
+    float TurnoverShiftMeters = 0f,
+    float CallShiftMeters = 0f)
 {
     /// <summary>No usable band: the team is not defending, or it has no line to place.</summary>
     public static DefensiveLineBand None => default;
@@ -54,6 +55,7 @@ public readonly record struct DefensiveLineBand(
         : $"line {ProjX:F1} m in [{MinProjX:F1}, {MaxProjX:F1}] from anchors {AnchorMeanProjX:F1}" +
           $" · field {FieldShiftMeters:+0.0;-0.0} · pressure {PasserPressure01:F2} ({PressureShiftMeters:+0.0;-0.0})" +
           $" · turnover {TurnoverShiftMeters:+0.0;-0.0}" +
+          $" · call {CallShiftMeters:+0.0;-0.0}" +
           $" · ball cap {BallCapShiftMeters:+0.0;-0.0}" +
           $" · run {(HasCredibleRunner ? $"#{DeepestRunnerId} at {DeepestRunnerProjX:F1} ({RunShiftMeters:+0.0;-0.0})" : "none")}" +
           $" · keeper #{KeeperId} reach {KeeperReachMeters:F1} m ({KeeperShiftMeters:+0.0;-0.0})";
@@ -177,6 +179,13 @@ public static class DefensiveLineModel
     /// </summary>
     public const float MaxTurnoverShiftMeters = 6f;
 
+    /// <summary>
+    /// Largest amount a step/drop team call (A7.2) may move the band, in metres. Smaller than the turnover
+    /// response on purpose: a call is one player's delayed opinion about the picture, a preference layered
+    /// on the band — not a second depth model, and never a bypass of the caps below it.
+    /// </summary>
+    public const float MaxCallShiftMeters = 3f;
+
     // ---------------------------------------------------------------------------------------------
     // Keeper coverage.
     // ---------------------------------------------------------------------------------------------
@@ -268,7 +277,8 @@ public static class DefensiveLineModel
         TeamTacticalProfile profile,
         float attackDirX,
         PitchDimensions pitch,
-        float turnoverShiftMeters = 0f)
+        float turnoverShiftMeters = 0f,
+        float callShiftMeters = 0f)
     {
         float anchorSum = 0f;
         int lineCount = 0;
@@ -312,7 +322,14 @@ public static class DefensiveLineModel
             ? Math.Clamp(turnoverShiftMeters, -MaxTurnoverShiftMeters, MaxTurnoverShiftMeters)
             : 0f;
 
-        float target = anchorMean + fieldShift + pressureShift + turnoverShift;
+        // A7.2: the line caller's delayed step/drop preference. Bounded here as well as by the caller,
+        // because it must never become a fifth depth model; the caps below are applied after it and still
+        // bind.
+        float callShift = float.IsFinite(callShiftMeters)
+            ? Math.Clamp(callShiftMeters, -MaxCallShiftMeters, MaxCallShiftMeters)
+            : 0f;
+
+        float target = anchorMean + fieldShift + pressureShift + turnoverShift + callShift;
 
         // Credible runs cap the line before anything else does.
         float runThreat01 = 0f;
@@ -377,7 +394,8 @@ public static class DefensiveLineModel
             DeepestRunnerProjX: runnerProj,
             KeeperId: keeper?.Id ?? 0,
             KeeperReachMeters: keeperReach,
-            TurnoverShiftMeters: turnoverShift);
+            TurnoverShiftMeters: turnoverShift,
+            CallShiftMeters: callShift);
     }
 
     /// <summary>

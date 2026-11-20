@@ -295,6 +295,13 @@ public partial class MatchClientNode : Node3D
                   ? " (neutral)"
                   : observation.Scan.IsScanning ? " (fixed)" : " (turning)");
 
+        // A7.2: what this player hears from his own team. Only calls from his own board can appear here —
+        // the delay is already applied by the time the observation is built.
+        string callsLine = observation is null
+            ? "\nCALLS (team, delayed): no observation yet"
+            : $"\nCALLS (team, delayed): {observation.Calls.Describe()}" +
+              $" | {_engine.Communication.Calls.VisibleCount(inspected.Team, _engine.CurrentTick)} live on the team board";
+
         // A3.1: the team context is several facts, so it is printed as several facts. Collapsing it
         // back to one label is exactly what the old TeamTacticalState did and what this replaced.
         TeamContext context = observation?.TacticalContext ?? _engine.Tactics.ContextFor(inspected.Team);
@@ -323,7 +330,7 @@ public partial class MatchClientNode : Node3D
         string turnoverLine = $"\nTURNOVER: {turnover.Describe()}";
 
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
-            return contextLine + scanLine + beliefLine;
+            return contextLine + bandLine + turnoverLine + scanLine + callsLine + beliefLine;
 
         PressureCell cell = ai.PressureField.Read(
             new System.Numerics.Vector2(_engine.Ball.Position.X, _engine.Ball.Position.Z), out bool inside);
@@ -332,7 +339,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return contextLine + bandLine + turnoverLine + scanLine + beliefLine + cellLine;
+        return contextLine + bandLine + turnoverLine + scanLine + callsLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 

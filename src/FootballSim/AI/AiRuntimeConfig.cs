@@ -169,6 +169,28 @@ public sealed class AiRuntimeConfig
     /// <summary>Furthest a believed opponent can be and still attract a scan, in metres.</summary>
     public float ScanAttentionRangeMeters { get; init; } = 18f;
 
+    // ---------------------------------------------------------------------------------------------
+    // A7.2 — delayed expiring team calls. A player may shout one instruction at a time at his own team;
+    // the board applies the delay and the expiry. See TeamCalls/TeamCallPlanner.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether players make team calls at all (A7.2). <b>On by default</b>: this is the behaviour the
+    /// version ships, and the field exists so A9.2 can ablate the channel and so the evidence probe can
+    /// run the same worlds with it off. It gates the <b>producer</b>: with calls off no player shouts, so
+    /// every observation's <see cref="FootballerObservation.Calls"/> stays neutral. The board itself is not
+    /// short-circuited, so a fixture or test can still publish a call directly to exercise the consumer.
+    /// </summary>
+    public bool EnableTeamCalls { get; init; } = true;
+
+    /// <summary>
+    /// How long a shout takes to reach a team-mate, in live ticks. The default is
+    /// <see cref="TeamCallBoard">&apos;s</see> A5.3 figure (18 ticks = 0.30 s) on purpose: a call is the
+    /// same kind of communication as a run advertisement, and two different delays for two team channels
+    /// would be a second convention where one already exists.
+    /// </summary>
+    public int TeamCallCommunicationDelayTicks { get; init; } = 18;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -180,7 +202,8 @@ public sealed class AiRuntimeConfig
         $"runs {MaxRunCandidates}) " +
         $"scan({(EnableScanning ? "on" : "off")} turn {ScanMaxHeadTurnDegrees:F0}deg " +
         $"rate {ScanTurnRateDegreesPerSecond:F0}deg/s hold {ScanHoldSeconds:F2}s " +
-        $"range {ScanAttentionRangeMeters:F0}m)";
+        $"range {ScanAttentionRangeMeters:F0}m) " +
+        $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t)";
 }
 
 /// <summary>
@@ -215,6 +238,12 @@ public static class AiRuntimeConfigValidation
 
     /// <summary>Furthest scan attention a configuration may request, in metres.</summary>
     public const float MaxScanAttentionRangeMeters = 60f;
+
+    /// <summary>
+    /// Longest communication delay a configuration may request, in live ticks (5 s). A longer delay is not
+    /// a shout, it is a rumour: the call's own lifetimes are all under two seconds.
+    /// </summary>
+    public const int MaxTeamCallDelayTicks = 300;
 
     public static void Validate(AiRuntimeConfig? config, string name = "AiRuntimeConfig")
     {
@@ -281,6 +310,11 @@ public static class AiRuntimeConfigValidation
         RequireFinite(config.ScanAttentionRangeMeters, name, nameof(AiRuntimeConfig.ScanAttentionRangeMeters));
         RequireRange(config.ScanAttentionRangeMeters, 1f, MaxScanAttentionRangeMeters, name,
             nameof(AiRuntimeConfig.ScanAttentionRangeMeters));
+
+        // A7.2 team calls. Zero delay is legal only as an ablation (a call that is heard the tick it is
+        // made); it is deliberately not the default, because the delay is what the milestone is about.
+        RequireRange(config.TeamCallCommunicationDelayTicks, 0, MaxTeamCallDelayTicks, name,
+            nameof(AiRuntimeConfig.TeamCallCommunicationDelayTicks));
     }
 
     private static void RequireFinite(float value, string owner, string field)

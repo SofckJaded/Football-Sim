@@ -56,6 +56,9 @@ public static class Program
             case "--scans":
                 return RunScanEvidence(args) ? 0 : 1;
 
+            case "--calls":
+                return RunTeamCallEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -69,6 +72,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --turnovers [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --keepers [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scans [seeds] [halfSeconds] [on|off]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --calls [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -1383,12 +1387,240 @@ public static class Program
         return ok;
     }
 
-    /// <summary>Mean knowledge age in ticks, or "n/a" when nothing was sampled.</summary>
-    private static string MeanAge(long sum, int count) => count == 0 ? "n/a" : $"{sum / (double)count:F1}";
-
     /// <summary>Mean and deepest standoff off the keeper's own goal line for one possession phase.</summary>
     private static string StandoffReport(double sum, int count, float worst) =>
         count == 0 ? "n/a" : $"{sum / count:F1} m mean, {worst:F1} m deepest ({count} samples)";
+
+    /// <summary>
+    /// A7.2 evidence: what the team-call channel actually does in real matches, measured rather than
+    /// asserted.
+    ///
+    /// Denominator: one completed 11v11 match per seed. "Heard" counts are player-observations — one
+    /// observation build per active player per live tick — that carried a call addressed to that player (or
+    /// a step/drop line instruction); the action split under a man-on call is read from the controller's
+    /// own selected action for the carrier holding the ball, so it is a decision, not a passive field.
+    /// The line-shift columns are read from the A6.3 band the allocator actually placed players from, which
+    /// is what proves a step/drop call reached the allocator instead of moving a body directly.
+    ///
+    /// Passing <c>off</c> runs the same matches with <see cref="AiRuntimeConfig.EnableTeamCalls"/> false:
+    /// the A/B is then two invocations of this probe with identical squads, seeds and clocks, and the
+    /// off run's requirement is that every call counter and every observation context is exactly zero.
+    /// </summary>
+    private static bool RunTeamCallEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+        bool callsOn = args.Length <= 3 || !args[3].Equals("off", StringComparison.OrdinalIgnoreCase);
+        var ai = new AiRuntimeConfig { EnableTeamCalls = callsOn };
+
+        Console.WriteLine($"=== A7.2 team-call evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s," +
+                          $" calls {(callsOn ? "ON" : "OFF")} ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Call model         : {ai.Describe()}");
+
+        long published = 0;
+        long suppressed = 0;
+        long expired = 0;
+        long evicted = 0;
+        long observations = 0;
+        long playerCallReads = 0;
+        long lineDirectiveReads = 0;
+        long lineShiftSamples = 0;
+        double lineShiftSum = 0d;
+        float lineShiftMin = float.MaxValue;
+        float lineShiftMax = float.MinValue;
+        long carrierDecisions = 0;
+        long manOnCarrierDecisions = 0;
+        long runDecisionsUnderCall = 0;
+        var publishedByKind = new int[Enum.GetValues(typeof(TeamCallKind)).Length];
+        var heardByKind = new int[Enum.GetValues(typeof(TeamCallKind)).Length];
+        var carrierActions = new Dictionary<string, int>();
+        var manOnActions = new Dictionary<string, int>();
+        int matches = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack,
+                Ai = ai
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+            long seedPlayerCallReads = 0;
+            int seedCarrierDecisions = 0;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+
+                foreach (FootballerState player in engine.Players)
+                {
+                    if (!player.IsActiveOnPitch) continue;
+                    FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                    if (observation is null) continue;
+
+                    observations++;
+                    if (observation.Calls.HasPlayerCall)
+                    {
+                        playerCallReads++;
+                        seedPlayerCallReads++;
+                        heardByKind[(int)observation.Calls.Kind]++;
+                    }
+
+                    if (observation.Calls.HasLineDirective) lineDirectiveReads++;
+
+                    if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+
+                    // A run call is heard by the runner, not by the carrier: it is a preference on the run
+                    // candidates this player actually chose, so it is counted for every player.
+                    if (observation.Calls.Kind == TeamCallKind.Run &&
+                        controller.LastSelected.Key.Kind == CandidateKind.Run)
+                    {
+                        runDecisionsUnderCall++;
+                    }
+
+                    bool isCarrier = observation.BallControllingPlayerId == player.Id &&
+                                     observation.PossessingTeam == player.Team;
+                    if (!isCarrier) continue;
+
+                    carrierDecisions++;
+                    seedCarrierDecisions++;
+                    string chosen = controller.LastSelected.ActionName;
+                    carrierActions[chosen] = carrierActions.GetValueOrDefault(chosen) + 1;
+
+                    if (observation.Calls.Kind == TeamCallKind.ManOn)
+                    {
+                        manOnCarrierDecisions++;
+                        manOnActions[chosen] = manOnActions.GetValueOrDefault(chosen) + 1;
+                    }
+                }
+
+                // The allocator side of step/drop: the band every line player was placed from this tick.
+                SampleLineCallShift(engine, TeamId.Home, ref lineShiftSamples, ref lineShiftSum,
+                    ref lineShiftMin, ref lineShiftMax);
+                SampleLineCallShift(engine, TeamId.Away, ref lineShiftSamples, ref lineShiftSum,
+                    ref lineShiftMin, ref lineShiftMax);
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matches++;
+
+            TeamCallBoard board = engine.Communication.Calls;
+            published += board.PublishedCount;
+            suppressed += board.SuppressedCount;
+            expired += board.ExpiredCount;
+            evicted += board.EvictedCount;
+            for (int kind = 1; kind < publishedByKind.Length; kind++)
+                publishedByKind[kind] += board.CountOf((TeamCallKind)kind);
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
+                              $" score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} |" +
+                              $" calls {board.PublishedCount} published, {board.SuppressedCount} suppressed," +
+                              $" {board.ExpiredCount} expired, {board.EvictedCount} evicted |" +
+                              $" {seedPlayerCallReads} player-observations heard one |" +
+                              $" {seedCarrierDecisions} carrier decisions");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matches} completed, {observations} player-observations) ===");
+        if (matches == 0 || observations == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"Calls published    : {published} | {suppressed} repeated shouts suppressed |" +
+                          $" {expired} expired | {evicted} evicted from the bounded board");
+        Console.WriteLine($"Received           : {playerCallReads} player-observations carried a call" +
+                          $" ({100.0 * playerCallReads / observations:F2} %) | {lineDirectiveReads} carried a" +
+                          " step/drop line instruction");
+        Console.WriteLine($"By kind            : {DescribeKindCounts(publishedByKind)}");
+        Console.WriteLine($"Heard by kind      : {DescribeKindCounts(heardByKind)}");
+        Console.WriteLine($"Line band shift    : {lineShiftSamples} defending samples with a call shift" +
+                          (lineShiftSamples == 0
+                              ? string.Empty
+                              : $" (mean {lineShiftSum / lineShiftSamples:F2} m, range" +
+                                $" {lineShiftMin:F2}..{lineShiftMax:F2} m)") +
+                          " | read from the band the allocator placed the line from");
+        Console.WriteLine($"Carrier decisions  : {carrierDecisions} | {manOnCarrierDecisions} under a man-on call" +
+                          $" | {runDecisionsUnderCall} run choices while told to run");
+        Console.WriteLine($"Carrier actions    : {DescribeTopActions(carrierActions)}");
+        Console.WriteLine($"Under man-on       : {DescribeTopActions(manOnActions)}");
+
+        bool ok = callsOn
+            ? matches == seedCount && published > 0 && playerCallReads > 0 && expired > 0
+            : matches == seedCount && published == 0 && playerCallReads == 0 && lineDirectiveReads == 0;
+        Console.WriteLine(ok
+            ? callsOn
+                ? "RESULT: the channel is alive, heard after its delay, expires, and reaches the allocator"
+                : "RESULT: calls off means no call, no heard instruction and a neutral observation"
+            : "RESULT: incomplete, or the call channel did not appear (calls on with nothing published)");
+        return ok;
+    }
+
+    /// <summary>Adds one team's current line band call shift to the probe's sample, if it has one.</summary>
+    private static void SampleLineCallShift(
+        MatchSimulationEngine engine,
+        TeamId team,
+        ref long samples,
+        ref double sum,
+        ref float min,
+        ref float max)
+    {
+        DefensiveLineBand band = engine.TeamJobs.LineBandOf(team);
+        if (!band.IsValid || MathF.Abs(band.CallShiftMeters) < 1e-4f) return;
+
+        samples++;
+        sum += band.CallShiftMeters;
+        if (band.CallShiftMeters < min) min = band.CallShiftMeters;
+        if (band.CallShiftMeters > max) max = band.CallShiftMeters;
+    }
+
+    /// <summary>"ManOn 120, Turn 88, ..." for the call kinds that occurred, in enum order.</summary>
+    private static string DescribeKindCounts(int[] counts)
+    {
+        var parts = new List<string>();
+        for (int kind = 1; kind < counts.Length; kind++)
+        {
+            if (counts[kind] == 0) continue;
+            parts.Add($"{((TeamCallKind)kind)} {counts[kind]}");
+        }
+
+        return parts.Count == 0 ? "none" : string.Join(", ", parts);
+    }
+
+    /// <summary>The three most frequent chosen actions, name and count.</summary>
+    private static string DescribeTopActions(Dictionary<string, int> actions)
+    {
+        if (actions.Count == 0) return "none";
+
+        var parts = new List<string>();
+        foreach (KeyValuePair<string, int> pair in actions
+                     .OrderByDescending(pair => pair.Value)
+                     .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                     .Take(3))
+        {
+            parts.Add($"{pair.Key} {pair.Value}");
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>Mean knowledge age in ticks, or "n/a" when nothing was sampled.</summary>
+    private static string MeanAge(long sum, int count) => count == 0 ? "n/a" : $"{sum / (double)count:F1}";
 
     /// <summary>How often the keeper probe samples each keeper, in ticks (0.2 s).</summary>
     private const int KeeperSampleInterval = 12;
@@ -1529,6 +1761,13 @@ public static class Program
         Console.WriteLine($"Run adverts (A5.3): {engine.Communication.Runs.PublishedCount} published | "
                           + $"{engine.Communication.Runs.WithdrawnCount} withdrawn | "
                           + $"{engine.Communication.Runs.ClaimedCount} claims by a carrier");
+        var callCounts = new int[Enum.GetValues(typeof(TeamCallKind)).Length];
+        for (int kind = 1; kind < callCounts.Length; kind++)
+            callCounts[kind] = engine.Communication.Calls.CountOf((TeamCallKind)kind);
+        Console.WriteLine($"Team calls (A7.2) : {engine.Communication.Calls.PublishedCount} published | "
+                          + $"{engine.Communication.Calls.SuppressedCount} suppressed | "
+                          + $"{engine.Communication.Calls.ExpiredCount} expired | "
+                          + $"{DescribeKindCounts(callCounts)}");
         Console.WriteLine($"Airborne (A5.5)   : {crosses} crosses | {lofted} lofted | {driven} driven executed");
         Console.WriteLine($"Events Logged     : {engine.Rules.Events.Count}");
 

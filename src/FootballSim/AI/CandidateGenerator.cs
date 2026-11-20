@@ -687,6 +687,14 @@ public sealed class CandidateGenerator : IAiStateResettable
     internal const float AnnouncedRunRankBonus = 0.35f;
 
     /// <summary>
+    /// A7.2: the pre-rank bonus given to the team-mate who asked for a switch. Same job as
+    /// <see cref="AnnouncedRunRankBonus"/> — keep the team-mate the call is about inside
+    /// <see cref="AiRuntimeConfig.MaxPassTargets"/> so the preference is actually read — and deliberately
+    /// the same size, because both are communication that must not be pruned before it is priced.
+    /// </summary>
+    internal const float SwitchCallRankBonus = 0.35f;
+
+    /// <summary>
     /// Fills the bounded pass-target buffer with the most promising eligible receivers. The rank is
     /// deliberately cheap (progression, the room the receiver stands in, and whether he has announced a
     /// run): it exists to bound the expensive trajectory work, not to make the decision.
@@ -724,6 +732,12 @@ public sealed class CandidateGenerator : IAiStateResettable
             {
                 rank += AnnouncedRunRankBonus;
             }
+
+            // A7.2: a team-mate who asked for the switch is not an anonymous target either. Like the run
+            // advertisement's bonus this only rescues him from the bounded pre-rank; the pass model and the
+            // value scale still decide whether the ball should go there.
+            if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == mate.PlayerId)
+                rank += SwitchCallRankBonus;
 
             // The human's request is planned whatever its rank: a caller is never silently dropped.
             if (mate.PlayerId == callerId) rank = float.MaxValue;
@@ -897,6 +911,14 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         float preference = PassPreference(obs, forwardMeters, terms.LaneClearance01);
         if (option.HumanCaller) preference += HumanCallPassBonus;
+
+        // A7.2: a call moves the preference of the action it is about, exactly once.
+        // - "man on"  → the bounce / first-time return is the ball out of the pressure;
+        // - "switch"  → the pass to the team-mate who asked for it is worth more than the others.
+        if (obs.Calls.Kind == TeamCallKind.ManOn)
+            preference += ActionValueScale.CallBouncePassBonus;
+        if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == receiverId)
+            preference += ActionValueScale.CallSwitchPassBonus;
 
         valueTerms = new ValueTerms(
             terms.CompletionProbability01, reception.Value, loss, preference);
@@ -1495,6 +1517,14 @@ public sealed class CandidateGenerator : IAiStateResettable
         float carryPreference = ActionValueScale.ProgressBonus
                                 * Math.Clamp((carryTarget.X - selfXZ.X) * obs.AttackingDirectionX / 20f, -1f, 1f);
         carryPreference += (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        // A7.2: a team-mate's call is information about the action it is about, paid in the preference slot.
+        // A man-on shout makes the turn into the pressure worth less (the carrier cannot see what the caller
+        // saw, but he can act on "somebody is on you"); a turn shout makes turning worth a little more.
+        if (obs.Calls.Kind == TeamCallKind.ManOn)
+            carryPreference -= ActionValueScale.CallCarryPenalty;
+        else if (obs.Calls.Kind == TeamCallKind.Turn)
+            carryPreference += ActionValueScale.CallTurnCarryBonus;
+
         float utility = carryGain + carryPreference;
         bool sprint = bestSpace > 0.70f && nearestOppDist > 5.0f;
 
@@ -1547,6 +1577,9 @@ public sealed class CandidateGenerator : IAiStateResettable
                         + ActionValueScale.TakeOnSpaceBonus * space
                         - ActionValueScale.TakeOnRiskCost;
         float takeOnPreference = (obs.SelfTendencies.DribblePreference01 - PlayerTendencyBaselines.DribblePreference) * 0.45f;
+        // A7.2: man-on — the caller saw somebody already on him, so committing to beat that man is worse.
+        if (obs.Calls.Kind == TeamCallKind.ManOn)
+            takeOnPreference -= ActionValueScale.CallTakeOnPenalty;
         utility += takeOnPreference;
 
         var command = new FootballerCommand(
@@ -1584,15 +1617,17 @@ public sealed class CandidateGenerator : IAiStateResettable
         float utility = ActionValueScale.ShieldBaseValue
                         + ActionValueScale.ShieldCrowdingBonus * crowding
                         + ActionValueScale.ShieldPatienceBonus * patience;
+        // A7.2: "man on" is exactly the event shielding exists for — the caller's shout raises it.
+        float callPreference = obs.Calls.Kind == TeamCallKind.ManOn ? ActionValueScale.CallShieldBonus : 0f;
 
         var command = new FootballerCommand(
             hold, away, false, true, false, false, false, Vector3.Zero,
             KickIntentType.None, Vector3.UnitX, 0f, 0f);
 
-        _lastCandidates.Add(new UtilityCandidate("ShieldBall", utility, command)
+        _lastCandidates.Add(new UtilityCandidate("ShieldBall", utility + callPreference, command)
         {
             Key = new CandidateKey(CandidateKind.Shield, TargetTag: "pressure"),
-            Terms = new ValueTerms(1f, utility, 0f, 0f)
+            Terms = new ValueTerms(1f, utility, 0f, callPreference)
         });
     }
 
@@ -2319,7 +2354,12 @@ public sealed class CandidateGenerator : IAiStateResettable
                 KickIntentType.None, Vector3.UnitX, 0f, 0f);
 
             _lastCandidates.Add(new UtilityCandidate(
-                RunTags.ActionNameOf(path.Kind), baseUtility + terms.Score, command)
+                RunTags.ActionNameOf(path.Kind),
+                // A7.2: a team-mate asked this player to run. The request raises the run candidates' value;
+                // it does not invent a run for a duty that has none, and it is not a claim on the ball —
+                // A5.3's board is still the only place a pass to a run is promised.
+                baseUtility + terms.Score + (obs.Calls.Kind == TeamCallKind.Run ? ActionValueScale.CallRunBonus : 0f),
+                command)
             {
                 TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y),
                 Key = RunTags.KeyOf(path.Kind)

@@ -31,6 +31,13 @@ public sealed class MatchCommunicationContext
     /// </summary>
     public AI.RunAdvertisementBoard Runs { get; } = new();
 
+    /// <summary>
+    /// The teams' call boards (A7.2). The same match-owned communication object carries the human's call
+    /// for the pass, the AI's run advertisements and now the AI's shouted instructions, with the
+    /// communication delay the plan asks for. One channel, extended — never a second one.
+    /// </summary>
+    public AI.TeamCallBoard Calls { get; } = new();
+
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
     /// <summary>True when the active call came from <paramref name="team"/>, i.e. is this team's own shout.</summary>

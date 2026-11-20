@@ -213,6 +213,41 @@ public static class ActionValueScale
     public const float ProgressBonus = 0.35f;
 
     // ---------------------------------------------------------------------------------------------
+    // A7.2 — team-call preferences.
+    //
+    // A call is information the player did not have, so it moves the value of the actions that information
+    // is about, and nothing else: a man-on shout makes a shield or a bounce pass worth more and a turn into
+    // the pressure worth less (the carrier still decides, with his own picture, which action to take); a
+    // turn shout makes turning worth a little more; a switch request lifts the pass to the team-mate who
+    // asked; a run request lifts the runner's own run candidates. The magnitudes are hand-set and modest on
+    // purpose: a call is a nudge on the same scale, not a command that overrides the model.
+    //
+    // Every term is paid exactly once, in the preference slot (`p × gain − (1 − p) × loss + preference`), so
+    // the decision trace can explain a call-driven choice with the same four terms as any other.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Preference added to a shield after a man-on call: the body gets between ball and man.</summary>
+    public const float CallShieldBonus = 0.30f;
+
+    /// <summary>Preference added to a pass after a man-on call: the bounce / first-time return.</summary>
+    public const float CallBouncePassBonus = 0.12f;
+
+    /// <summary>Preference removed from a carry after a man-on call: turning into the pressure.</summary>
+    public const float CallCarryPenalty = 0.22f;
+
+    /// <summary>Preference removed from a take-on after a man-on call: the defender is already on him.</summary>
+    public const float CallTakeOnPenalty = 0.30f;
+
+    /// <summary>Preference added to a carry after a turn call: the caller says there is time to turn.</summary>
+    public const float CallTurnCarryBonus = 0.16f;
+
+    /// <summary>Preference added to the pass to the team-mate who asked for a switch.</summary>
+    public const float CallSwitchPassBonus = 0.22f;
+
+    /// <summary>Preference added to a run candidate when the carrier has asked this player to run.</summary>
+    public const float CallRunBonus = 0.18f;
+
+    // ---------------------------------------------------------------------------------------------
     // Composition.
     // ---------------------------------------------------------------------------------------------
 

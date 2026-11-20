@@ -393,7 +393,11 @@ public static class PressPolicy
                        !obs.IsTemporaryResponsibility &&
                        obs.TacticalJob == TacticalJob.CoverDefender;
 
-        bool hasCoverBehind = HasTeammateBehind(obs, presserXZ, goalSide);
+        bool hasCoverBehind = HasTeammateBehind(obs, presserXZ, goalSide) ||
+                              // A7.2: the elected second man has told this player he is behind him. The
+                              // shout is about the caller's own position, not about the opponent, so it is
+                              // the one team fact that can replace a geometry the presser could not see.
+                              obs.Calls.Kind == TeamCallKind.Cover;
         float bypass = BypassRisk(
             obs, presserXZ, carrierXZ, carrierId, hasCarrier, goalSide, pitch);
         float danger = Clamp01(1f - Vector2.Distance(carrierXZ, ownGoalXZ) / pitch.HalfLength);

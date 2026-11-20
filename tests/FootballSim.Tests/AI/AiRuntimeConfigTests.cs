@@ -302,6 +302,42 @@ public sealed class AiRuntimeConfigTests
         Assert.Contains("react", text);
         Assert.Contains("caps", text);
         Assert.Contains("scan", text);
+        Assert.Contains("calls", text);
+    }
+
+    [Fact]
+    public void CallDefaults_AreOnAndUseTheExistingTeamDelay()
+    {
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+
+        // A7.2 ships the channel on; the switch is the A9.2 ablation and the --calls A/B, not a hidden guard.
+        Assert.True(defaults.EnableTeamCalls);
+
+        // One communication delay for both team channels: a call is the same kind of shout as a run
+        // announcement, and two conventions for it would be one too many.
+        Assert.Equal(18, defaults.TeamCallCommunicationDelayTicks);
+        Assert.Equal(RunAdvertisementBoard.CommunicationDelayTicks, defaults.TeamCallCommunicationDelayTicks);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(301)]
+    public void Validator_RejectsAnImpossibleCallDelay(int delayTicks)
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => AiRuntimeConfigValidation.Validate(
+            new AiRuntimeConfig { TeamCallCommunicationDelayTicks = delayTicks }));
+    }
+
+    [Fact]
+    public void Validator_AcceptsTheZeroDelayAblation()
+    {
+        // A zero delay is "heard the tick it is made" — an ablation the A/B can use, not a typo. It is
+        // deliberately not the default: the delay is the milestone.
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig
+        {
+            EnableTeamCalls = false,
+            TeamCallCommunicationDelayTicks = 0
+        });
     }
 
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>

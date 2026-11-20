@@ -449,12 +449,21 @@ public enum TeamId
 /// shoulders; a body standing on the sight line also blocks it (simple occlusion). Sightings still go into
 /// the A2.2 <see cref="AI.PlayerMemory"/>, so an unscanned rear threat stays an aged estimate while a
 /// scanned one is fresh. Trajectories differ from version 39.</item>
+/// <item><c>AiBehaviour 41</c> — A7.2: <b>delayed, expiring team calls</b>. A player may shout one
+/// instruction at his own team (man-on, turn, switch, run, cover, step, drop) from his own observation; the
+/// per-team <see cref="AI.TeamCallBoard"/> applies a communication delay and an expiry, and the receiver's
+/// decision changes only through a preference or through the belief that somebody covers behind the press.
+/// A man-on call makes the carrier shield or bounce rather than turn into pressure; a turn call supports
+/// turning; a switch names the open far-side receiver; a run request raises the value of the runner's own
+/// run candidates; a cover call changes the presser's depth; step and drop are the one line caller's
+/// bounded bias on the A6.3 line band. No call carries an opponent position, so the knowledge boundary is
+/// unchanged. Trajectories differ from version 40.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 40;
+    public const int AiBehaviour = 41;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -871,6 +880,15 @@ public sealed class FootballerObservation
     /// difference between two otherwise identical observations.
     /// </summary>
     public Vector2 EffectiveGazeXZ => Scan.GazeFrom(SelfFacingXZ);
+
+    /// <summary>
+    /// A7.2: what this player hears from his own team this tick — at most one call addressed to him and at
+    /// most one team-wide defensive instruction. The default is neutral, so an observation built by a
+    /// fixture or a standalone controller behaves exactly as it did before A7.2; the calls arrive here
+    /// (rather than being read from the match object inside a scorer) so the knowledge boundary stays in
+    /// one place and two observations can differ by exactly one call in a test.
+    /// </summary>
+    public AI.TeamCallContext Calls { get; init; } = AI.TeamCallContext.None;
 
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }
