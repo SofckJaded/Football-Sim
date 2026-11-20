@@ -1,0 +1,19 @@
+=== A7.3 reception-planning evidence: 4 seeds x 2400 s, planning OFF ===
+Simulation version : ai42-rs1
+Reception model    : 5 (orientation, touch) pairs, horizon 2.0 s, pressure radius 6 m, man-on belief 0.80 +/- 0.30
+AI configuration   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(off)
+
+Seed 20260818: FT in 144380 ticks | score 0-0 | 14249 receiver looks, 0 planned | 2087 man-on warnings heard
+
+Seed 20268737: FT in 144394 ticks | score 1-0 | 15285 receiver looks, 0 planned | 2446 man-on warnings heard
+
+Seed 20276656: FT in 144170 ticks | score 1-0 | 15032 receiver looks, 0 planned | 2209 man-on warnings heard
+
+Seed 20284575: FT in 144588 ticks | score 0-0 | 15799 receiver looks, 0 planned | 2743 man-on warnings heard
+
+=== Totals over 4 seeds (4 completed, 60365 receiver looks) ===
+Plans formed       : 0 of 60365 receiver looks (0.00 %) | mean score n/a, mean arrival n/a
+By touch           : none
+Cannot say         : 0 plans formed with no believed presser (n/a)
+Receiver warnings  : 9485 in-flight receiver observations carried a man-on call
+RESULT: planning off means no reception plan and the pre-A7.3 intercept ray

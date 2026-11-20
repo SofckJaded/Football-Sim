@@ -1,0 +1,19 @@
+=== A7.3 reception-planning evidence: 4 seeds x 2400 s, planning ON ===
+Simulation version : ai42-rs1
+Reception model    : 5 (orientation, touch) pairs, horizon 2.0 s, pressure radius 6 m, man-on belief 0.80 +/- 0.30
+AI configuration   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on)
+
+Seed 20260818: FT in 144536 ticks | score 0-2 | 13395 receiver looks, 10724 planned (0.43 mean score, 4.5 options, 0.67 s to arrival) | 1931 man-on warnings heard
+
+Seed 20268737: FT in 144390 ticks | score 1-2 | 13232 receiver looks, 10604 planned (0.43 mean score, 4.6 options, 0.65 s to arrival) | 1983 man-on warnings heard
+
+Seed 20276656: FT in 144490 ticks | score 1-0 | 13987 receiver looks, 11204 planned (0.43 mean score, 4.6 options, 0.65 s to arrival) | 1973 man-on warnings heard
+
+Seed 20284575: FT in 144674 ticks | score 3-2 | 14374 receiver looks, 11207 planned (0.44 mean score, 4.6 options, 0.69 s to arrival) | 2413 man-on warnings heard
+
+=== Totals over 4 seeds (4 completed, 54988 receiver looks) ===
+Plans formed       : 43739 of 54988 receiver looks (79.54 %) | mean score 0.43, mean arrival 0.66 s, 4.6 options per decision
+By touch           : Kill 18434, OpenBody 22, StrideTouch 2209, Shield 4830, EscapePressure 18244
+Cannot say         : 0 plans formed with no believed presser (0.0 % of plans)
+Receiver warnings  : 8300 in-flight receiver observations carried a man-on call
+RESULT: receivers plan the first touch, including shield/escape under believed pressure
