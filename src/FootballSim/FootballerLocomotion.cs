@@ -167,6 +167,33 @@ public static class BallContactRules
                 ? HeaderContactHeight
                 : TorsoContactHeight;
 
+    /// <summary>
+    /// The pressure a body is under when it touches the ball, 0..1: the nearest opponent inside
+    /// <see cref="ContactPressureRangeMeters"/>, linearly. One owner since A7.5 — the kick's accuracy and the
+    /// first touch's quality read the same number, and the cognitive probe measures with it, so "under
+    /// pressure" means one thing everywhere.
+    /// </summary>
+    public static float PressureAtContact(
+        Vector3 position,
+        TeamId team,
+        IReadOnlyList<FootballerState> players)
+    {
+        float pressure = 0f;
+        for (int i = 0; i < players.Count; i++)
+        {
+            FootballerState other = players[i];
+            if (!other.IsActiveOnPitch || other.Team == team) continue;
+            float distance = Vector3.Distance(position, other.Position);
+            if (distance < ContactPressureRangeMeters)
+                pressure = MathF.Max(pressure, (ContactPressureRangeMeters - distance) / ContactPressureRangeMeters);
+        }
+
+        return pressure;
+    }
+
+    /// <summary>Range inside which an opponent puts a body under pressure at contact, in metres.</summary>
+    public const float ContactPressureRangeMeters = 3.0f;
+
     /// <summary>True when the ball's height is inside the player's reach window.</summary>
     public static bool IsHeightReachable(float ballY, float playerY, float maxContactHeight)
     {
@@ -201,15 +228,24 @@ public sealed class FootballerExecutionSystem
     private const float TackleShieldSeconds = 0.4f;
 
     private readonly PitchDimensions _pitch;
+    private readonly bool _cognitiveError;
     private int _currentTick;
     private int _controlLockPlayerId = -1;
     private float _controlLockSeconds;
     private int _tackleShieldPlayerId = -1;
     private float _tackleShieldSeconds;
 
-    public FootballerExecutionSystem(PitchDimensions pitch)
+    /// <param name="pitch">The pitch geometry the laws and the boundaries use.</param>
+    /// <param name="cognitiveError">
+    /// A7.5: whether fatigue and contact pressure degrade a first touch
+    /// (<see cref="AI.PlayerCognitiveState.ExecutionError01"/>). On by default — it is physical, not a
+    /// decision heuristic — and the match passes its own <see cref="AI.AiRuntimeConfig.EnableCognitiveError"/>
+    /// so the whole feature can be ablated in one place.
+    /// </param>
+    public FootballerExecutionSystem(PitchDimensions pitch, bool cognitiveError = true)
     {
         _pitch = pitch;
+        _cognitiveError = cognitiveError;
     }
 
     /// <summary>
@@ -1013,14 +1049,7 @@ public sealed class FootballerExecutionSystem
             return;
         }
 
-        float pressure01 = 0f;
-        foreach (var opp in allPlayers)
-        {
-            if (!opp.IsActiveOnPitch || opp.Team == player.Team) continue;
-            float d = Vector3.Distance(player.Position, opp.Position);
-            if (d < 3.0f)
-                pressure01 = MathF.Max(pressure01, (3.0f - d) / 3.0f);
-        }
+        float pressure01 = BallContactRules.PressureAtContact(player.Position, player.Team, allPlayers);
 
         // Case 1: Explicit Kick Intention (Passes & Shots)
         if (cmd.KickType != KickIntentType.None)
@@ -1211,6 +1240,20 @@ public sealed class FootballerExecutionSystem
             0.50f * player.Attributes.FirstTouch01 +
             0.30f * player.Balance01 +
             0.20f * player.ControlQuality01, 0.15f, 1f);
+
+        // A7.5: one owner for execution error. A body under pressure or short of stamina controls the
+        // ball less well — the touch keeps more of the pass's pace and (through the intent blend in A7.4)
+        // realises less of the planned touch. Zero at no pressure and full stamina, so an untouched,
+        // fresh player's first touch is exactly the pre-A7.5 cushion. This is also the only place the
+        // four error sources of A7.5 meet the ball, so the A7 exit gate's "pressure reduces control
+        // quality" clause is measured on this number.
+        if (_cognitiveError && isFirstTouchReception)
+        {
+            float executionError = AI.PlayerCognitiveState.ExecutionError01(
+                player.Attributes, player.Stamina01, pressure01);
+            if (executionError > 0f)
+                controlQuality = Math.Clamp(controlQuality * (1f - executionError), 0.15f, 1f);
+        }
 
         if (isFirstTouchReception)
         {

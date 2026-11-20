@@ -65,6 +65,9 @@ public static class Program
             case "--firsttouch":
                 return RunFirstTouchEvidence(args) ? 0 : 1;
 
+            case "--cognitive":
+                return RunCognitiveErrorEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -81,6 +84,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --calls [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --receptions [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --firsttouch [seeds] [halfSeconds] [on|off]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --cognitive [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -1731,6 +1735,221 @@ public static class Program
             : "RESULT: incomplete, or the reception planner did not appear (planning on with no plan)");
         return ok;
     }
+
+    /// <summary>
+    /// A7.5 evidence: the separated error sources, measured in real 11v11 matches.
+    ///
+    /// Three things are reported, each from a different consumer, so a claim about one cannot hide behind
+    /// another:
+    /// <list type="bullet">
+    /// <item><b>The shared causes reach the picture of the game</b> - every 4 ticks the probe converts each
+    /// live player's stamina and composure with <see cref="PlayerCognitiveState.Compute"/>, so the reported
+    /// noise scale, evaluation error and reaction delay are the numbers the perception system and the
+    /// scorers were handed, not an estimate.</item>
+    /// <item><b>The evaluation error reaches a decision</b> - the controllers count the decisions in which
+    /// the misjudgement changed which candidate scored highest
+    /// (<see cref="TacticalUtilityAiController.EvaluationChangedDecisions"/>).</item>
+    /// <item><b>Pressure reaches the first touch</b> - every executed first touch is binned by the contact
+    /// pressure it happened under, with the execution error the contact layer applied and the ball's pace
+    /// relative to the receiver. That is the A7 exit gate's "pressure reduces control quality" clause. The
+    /// bin comparison is descriptive (different contacts, different balls); the controlled paired sample is
+    /// <c>CognitiveErrorTests.PressureReducesControlQuality_OverAPairedSample</c>.</item>
+    /// </list>
+    ///
+    /// Passing <c>off</c> runs the same matches with <see cref="AiRuntimeConfig.EnableCognitiveError"/>
+    /// false: the probe must then find no evaluation-driven change and no execution error at all - the
+    /// pre-A7.5 build.
+    /// </summary>
+    private static bool RunCognitiveErrorEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+        bool cognitive = args.Length <= 3 || !args[3].Equals("off", StringComparison.OrdinalIgnoreCase);
+        var ai = new AiRuntimeConfig { EnableCognitiveError = cognitive };
+
+        Console.WriteLine($"=== A7.5 separated-error evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s," +
+                          $" cognitive error {(cognitive ? "ON" : "OFF")} ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Error model        : observation x(1 + {PlayerCognitiveState.FatigueObservationNoiseGain:F2}*fatigue)," +
+                          $" evaluation +/-{PlayerCognitiveState.EvaluationUtilitySpan:F2}*error," +
+                          $" reaction x(1 + {PlayerCognitiveState.FatigueReactionGain:F2}*fatigue)," +
+                          $" first touch -{PlayerCognitiveState.PressureExecutionGain:F2}*pressure*(1-composure)" +
+                          $" -{PlayerCognitiveState.FatigueExecutionGain:F2}*fatigue");
+        Console.WriteLine($"AI configuration   : {ai.Describe()}");
+
+        long observations = 0;
+        double staminaSum = 0;
+        float staminaMin = 1f;
+        double noiseScaleSum = 0;
+        double evaluationSum = 0;
+        double reactionSum = 0;
+        long decisions = 0;
+        long misjudged = 0;
+        int[] touchCounts = new int[PressureBands];
+        double[] touchPace = new double[PressureBands];
+        double[] touchError = new double[PressureBands];
+        int matches = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack,
+                Ai = ai
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+            var playersById = new Dictionary<int, FootballerState>(engine.Players.Count);
+            foreach (FootballerState player in engine.Players)
+                playersById[player.Id] = player;
+
+            long seedObservations = 0;
+            long seedDecisions = 0;
+            long seedMisjudged = 0;
+            int[] seedTouches = new int[PressureBands];
+            double seedStamina = 0;
+            double seedNoise = 0;
+            double seedEvaluation = 0;
+            double seedReaction = 0;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+
+                // The shared causes, converted exactly as perception and the scorers convert them.
+                if (engine.CurrentTick % ReceptionSampleInterval == 0)
+                {
+                    foreach (FootballerState player in engine.Players)
+                    {
+                        if (!player.IsActiveOnPitch) continue;
+                        // With the feature off nothing reads these numbers, so the probe reports the neutral
+                        // state rather than the model's would-be values.
+                        CognitiveState state = cognitive
+                            ? PlayerCognitiveState.Compute(player.Attributes, player.Stamina01)
+                            : CognitiveState.Neutral(player.Attributes.ReactionDelaySeconds);
+                        seedObservations++;
+                        seedStamina += player.Stamina01;
+                        seedNoise += state.ObservationNoiseScale;
+                        seedEvaluation += state.EvaluationError01;
+                        seedReaction += state.ReactionDelaySeconds;
+                        if (player.Stamina01 < staminaMin) staminaMin = player.Stamina01;
+                    }
+                }
+
+                // First touches, binned by the pressure the contact happened under.
+                IReadOnlyList<BallContactEvent> log = engine.ContactLog;
+                for (int i = log.Count - 1; i >= 0; i--)
+                {
+                    BallContactEvent contact = log[i];
+                    if (contact.Tick != engine.CurrentTick) break;
+                    if (contact.Kind != BallContactKind.Collection) continue;
+                    if (!playersById.TryGetValue(contact.PlayerId, out FootballerState? player)) continue;
+                    if (!player.LastExecutionDiagnostic.StartsWith("FirstTouchCushion", StringComparison.Ordinal))
+                        continue;
+
+                    float pressure = BallContactRules.PressureAtContact(player.Position, player.Team, engine.Players);
+                    int band = pressure < 0.15f ? 0 : pressure < 0.5f ? 1 : 2;
+                    seedTouches[band]++;
+                    touchCounts[band]++;
+                    touchError[band] += cognitive
+                        ? PlayerCognitiveState.ExecutionError01(player.Attributes, player.Stamina01, pressure)
+                        : 0f;
+                    Vector2 ballVel = new(engine.Ball.Velocity.X, engine.Ball.Velocity.Z);
+                    Vector2 playerVel = new(player.Velocity.X, player.Velocity.Z);
+                    // The pace of the ball relative to the receiver: the worse the first touch, the more of
+                    // the pass's pace survives it. (The *signed* run-ahead is the wrong column here - a bad
+                    // touch sends the ball back the way it came, which reads as "behind the player".)
+                    touchPace[band] += (ballVel - playerVel).Length();
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matches++;
+            foreach (FootballerState player in engine.Players)
+            {
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+                seedDecisions += controller.DecisionsComputed;
+                seedMisjudged += controller.EvaluationChangedDecisions;
+            }
+
+            observations += seedObservations;
+            staminaSum += seedStamina;
+            noiseScaleSum += seedNoise;
+            evaluationSum += seedEvaluation;
+            reactionSum += seedReaction;
+            decisions += seedDecisions;
+            misjudged += seedMisjudged;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
+                              $" score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} |" +
+                              $" stamina {(seedObservations == 0 ? 0 : seedStamina / seedObservations):F2} |" +
+                              $" {seedDecisions} decisions, {seedMisjudged} misjudged the choice |" +
+                              $" first touches {seedTouches[0]}+{seedTouches[1]}+{seedTouches[2]} (free/light/heavy)");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matches} completed, {observations} player-samples," +
+                          $" {decisions} decisions) ===");
+        if (matches == 0 || observations == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        int touches = touchCounts[0] + touchCounts[1] + touchCounts[2];
+        Console.WriteLine($"Causes             : mean stamina {staminaSum / observations:F2} (min {staminaMin:F2}) |" +
+                          $" observation noise x{noiseScaleSum / observations:F2} |" +
+                          $" evaluation {evaluationSum / observations:F3} |" +
+                          $" reaction delay {reactionSum / observations:F3} s");
+        Console.WriteLine($"Decisions          : {decisions} scored | {misjudged} misjudged the choice" +
+                          (decisions == 0 ? string.Empty : $" ({100.0 * misjudged / decisions:F2} %)"));
+        if (touches > 0)
+        {
+            Console.WriteLine($"First touches      : {touches} | free {touchCounts[0]}, light {touchCounts[1]}," +
+                              $" heavy {touchCounts[2]} | execution error" +
+                              $" {BandMean(touchError, touchCounts, 0):F3}/{BandMean(touchError, touchCounts, 1):F3}/" +
+                              $"{BandMean(touchError, touchCounts, 2):F3} | ball pace relative to the receiver" +
+                              $" {BandMean(touchPace, touchCounts, 0):F2}/" +
+                              $"{BandMean(touchPace, touchCounts, 1):F2}/" +
+                              $"{BandMean(touchPace, touchCounts, 2):F2}");
+        }
+        else
+        {
+            Console.WriteLine("First touches      : none executed");
+        }
+
+        bool ok = cognitive
+            ? matches == seedCount && misjudged > 0 && (touchCounts[2] == 0 || touchError[2] > 0)
+            : matches == seedCount && misjudged == 0 && touches > 0 && touchError[0] + touchError[1] + touchError[2] == 0;
+        Console.WriteLine(ok
+            ? cognitive
+                ? "RESULT: fatigue and composure reach observation, judgement, reaction and the first touch"
+                : "RESULT: cognitive error off means no misjudged choice and no execution error at all"
+            : cognitive
+                ? "RESULT: incomplete, or the causes never reached a decision or a contact"
+                : "RESULT: incomplete, or a decision/contact still carried a cognitive error with the feature off");
+        return ok;
+    }
+
+    /// <summary>Pressure bands of the cognitive probe: free, light, heavy.</summary>
+    private const int PressureBands = 3;
+
+    /// <summary>Mean per-contact value in one pressure band, or 0 when the band is empty.</summary>
+    private static double BandMean(double[] sums, int[] counts, int band) =>
+        counts[band] == 0 ? 0d : sums[band] / counts[band];
 
     /// <summary>
     /// A7.4 evidence: does the reception plan reach execution, and does it change what a legal first

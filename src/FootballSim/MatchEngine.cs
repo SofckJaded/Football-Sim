@@ -161,7 +161,7 @@ public sealed class MatchSimulationEngine
         _executionRng = RandomStreams.Create(_config.Seed, RandomStream.Execution);
         _perceptionRng = RandomStreams.Create(_config.Seed, RandomStream.Perception);
         _ballSolver = new BallPhysicsSolver(null, _pitch);
-        _executionSystem = new FootballerExecutionSystem(_pitch);
+        _executionSystem = new FootballerExecutionSystem(_pitch, _config.Ai.EnableCognitiveError);
         // A3.1: the coordinator resolves each team's context from the profiles (the transition windows
         // depend on directness and pressing intensity), so it needs them from the start.
         _tacticalCoordinator = new TeamTacticalCoordinator(_pitch, _config.HomeProfile, _config.AwayProfile);

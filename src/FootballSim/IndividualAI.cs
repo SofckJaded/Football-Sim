@@ -81,6 +81,25 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     /// <summary>Best candidate that did not win, after the same bonus was applied.</summary>
     public UtilityCandidate? LastRunnerUp => _lastRunnerUp;
 
+    /// <summary>
+    /// A7.5: true when this decision's evaluation error changed which candidate scored highest — the player
+    /// misread the value of what he was choosing between. Diagnostics for the trace and the cognitive probe;
+    /// false whenever the error is zero (full stamina, reference composure, or the feature switched off).
+    /// </summary>
+    public bool LastEvaluationChangedChoice { get; private set; }
+
+    /// <summary>A7.5: the action that would have scored highest with no evaluation error (diagnostics).</summary>
+    public string LastRawBestActionName { get; private set; } = "none";
+
+    /// <summary>
+    /// A7.5: how many decisions this controller has made in which the evaluation error changed which
+    /// candidate scored highest. A match-level diagnostic for the cognitive probe; the decision path never
+    /// reads it.
+    /// </summary>
+    public int EvaluationChangedDecisions => _evaluationChangedDecisions;
+
+    private int _evaluationChangedDecisions;
+
     /// <summary>Number of candidates generated on the last decision.</summary>
     public int LastCandidateCount => _lastCandidateCount;
 
@@ -249,9 +268,44 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         bool hasBest = false;
         bool hasCurrent = false;
 
+        // A7.5: a fatigued or rattled player misreads the value of what he is choosing between. The error
+        // is one deterministic hash per (player, tick, candidate) — never a random stream, whose
+        // advancement would then depend on how many candidates were scored — and it is exactly zero at
+        // full stamina with reference composure, so an unfatigued fixture decides as it always did.
+        CognitiveState cognitive = _ai.EnableCognitiveError
+            ? PlayerCognitiveState.Compute(obs.SelfAttributes, obs.Stamina01)
+            : CognitiveState.Neutral(obs.SelfAttributes.ReactionDelaySeconds);
+        float evaluationSpan = cognitive.EvaluationError01 * PlayerCognitiveState.EvaluationUtilitySpan;
+
+        // The best raw candidate this decision, alongside the best one the player *believed* before
+        // commitment was added — the pair is what makes "the misjudgement changed the choice" a measured
+        // fact instead of an assumption. Comparing against the committed winner would confuse a commitment
+        // hold with a misjudgement.
+        UtilityCandidate rawBest = default;
+        float rawBestScore = float.NegativeInfinity;
+        CandidateKey believedBestKey = CandidateKey.None;
+        float believedBestScore = float.NegativeInfinity;
+
         foreach (var cand in _generator.Candidates)
         {
             float score = cand.UtilityScore;
+            if (score > rawBestScore)
+            {
+                rawBestScore = score;
+                rawBest = cand;
+            }
+
+            if (evaluationSpan > 0f)
+            {
+                score += PlayerCognitiveState.EvaluationBias(obs.SelfId, obs.Tick, cand.Key) * evaluationSpan;
+            }
+
+            if (score > believedBestScore)
+            {
+                believedBestScore = score;
+                believedBestKey = cand.Key;
+            }
+
             // Identity, not label: the same act against the same target keeps its commitment even if the
             // display name is reworded or the target point moves by centimetres.
             if (_commitmentTimer > 0f && cand.Key == _committedKey)
@@ -278,6 +332,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         if (!hasBest)
             best = new UtilityCandidate("ActiveSupportMove", -999f, FootballerCommand.Idle);
+
+        // A7.5's evidence hook: did the misjudgement change which candidate looked best? Recorded before the
+        // switch rule, because the claim is about the ranking the error acted on, not about the final
+        // committed action. Diagnostics only — nothing in the decision path reads it.
+        LastEvaluationChangedChoice = evaluationSpan > 0f && hasBest && !believedBestKey.Equals(rawBest.Key);
+        LastRawBestActionName = hasBest ? rawBest.ActionName : "none";
+        if (LastEvaluationChangedChoice) _evaluationChangedDecisions++;
 
         // A4.5: keep doing what we are doing unless the alternative is *clearly* better. This is the plan's
         // rule, on the absolute scale of the scores:

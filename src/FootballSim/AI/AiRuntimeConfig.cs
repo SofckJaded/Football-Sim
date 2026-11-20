@@ -206,6 +206,22 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableReceptionPlanning { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A7.5 — separated error sources. Stamina and composure are the shared causes; one module converts
+    // them into observation noise, evaluation error, reaction latency and execution error (see
+    // PlayerCognitiveState).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether stamina and composure produce error at all (A7.5). <b>On by default</b>: this is the
+    /// behaviour the version ships, and the field exists so A9.2 can ablate the mechanism and so the
+    /// evidence probe can run the same worlds with it off. Off is exactly the pre-A7.5 build: the
+    /// distance-based observation noise, the attribute's own reaction delay, no evaluation error and no
+    /// fatigue or pressure term on a first touch — which is what makes the A/B two builds rather than two
+    /// tunings of the same numbers.
+    /// </summary>
+    public bool EnableCognitiveError { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -219,7 +235,8 @@ public sealed class AiRuntimeConfig
         $"rate {ScanTurnRateDegreesPerSecond:F0}deg/s hold {ScanHoldSeconds:F2}s " +
         $"range {ScanAttentionRangeMeters:F0}m) " +
         $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t) " +
-        $"reception({(EnableReceptionPlanning ? "on" : "off")})";
+        $"reception({(EnableReceptionPlanning ? "on" : "off")}) " +
+        $"cognitive({(EnableCognitiveError ? "on" : "off")})";
 }
 
 /// <summary>

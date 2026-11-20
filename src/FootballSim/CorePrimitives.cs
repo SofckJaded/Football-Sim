@@ -475,12 +475,22 @@ public enum TeamId
 /// own first-touch quality (<see cref="Locomotion.ReceptionTouchModel"/>). Reach, contact height, body
 /// orientation and the contact arbitration are untouched, so an intent can never manufacture a contact.
 /// Trajectories differ from version 42.</item>
+/// <item><c>AiBehaviour 44</c> — A7.5: the <b>four error sources are separated</b>
+/// (<see cref="AI.PlayerCognitiveState"/>). Stamina and composure are the shared causes, converted in one
+/// place into a picture-of-the-game error — positional and ball noise scaled up by fatigue, the ball view's
+/// delay lengthened by fatigue, and a deterministic per-candidate misjudgement of a choice's value — and into
+/// an execution error, which is now applied to the first touch: pressure and fatigue make a legal touch keep
+/// more of the pass's pace, so the A7 exit gate's "pressure reduces control quality" clause is true and has
+/// one owner (<see cref="Locomotion.BallContactRules.PressureAtContact"/>). Everything is exactly neutral at
+/// full stamina with reference composure, so a fresh fixture decides and touches as it did in version 43;
+/// <see cref="AI.AiRuntimeConfig.EnableCognitiveError"/> off is the version-43 build. Trajectories differ
+/// from version 43 as soon as a player is tired or pressed.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 43;
+    public const int AiBehaviour = 44;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

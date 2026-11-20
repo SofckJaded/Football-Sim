@@ -93,6 +93,16 @@ public sealed class PerceptionSystem
     /// </summary>
     private readonly bool _scanningEnabled;
 
+    /// <summary>
+    /// A7.5: true when the match supplied a configuration with the cognitive error model on. Like scanning,
+    /// a standalone <see cref="PerceptionSystem"/> is off by construction, so a fixture or probe that does
+    /// not opt in keeps the pre-A7.5 model exactly (distance-only noise, the attribute's own delay).
+    /// </summary>
+    private readonly bool _cognitiveEnabled;
+
+    /// <summary>Distance-based positional noise at zero confidence, in metres (A7.5 names it).</summary>
+    private const float ObservationNoiseSpanMeters = 0.30f;
+
     private long _scanTicks;
     private long _observerTicks;
     private long _revealedByGaze;
@@ -113,6 +123,7 @@ public sealed class PerceptionSystem
     {
         _scouting = scouting;
         _scanningEnabled = ai?.EnableScanning == true;
+        _cognitiveEnabled = ai?.EnableCognitiveError == true;
         _scanPlanner = new ScanPlanner(ai ?? AiRuntimeConfig.Default);
     }
 
@@ -201,6 +212,13 @@ public sealed class PerceptionSystem
         bool firstLook = !memory.IsInitialised;
         Vector2 facing = SimMath.SafeNormalize(self.FacingXZ, Vector2.UnitX);
 
+        // A7.5: the one conversion of the shared causes (stamina, composure) into this player's error
+        // magnitudes. Off — a standalone perception system — the neutral state reproduces the pre-A7.5
+        // numbers exactly: distance-only noise and the attribute's own reaction delay.
+        CognitiveState cognitive = _cognitiveEnabled
+            ? PlayerCognitiveState.Compute(self.Attributes, self.Stamina01)
+            : CognitiveState.Neutral(self.Attributes.ReactionDelaySeconds);
+
         // A7.1: the head decides where the eyes point before the sight filter runs, so this tick's sight is
         // filtered by this tick's gaze. With scanning off (a standalone PerceptionSystem) the gaze is the
         // body facing and none of this is evaluated — the pre-A7.1 model, exactly.
@@ -255,7 +273,7 @@ public sealed class PerceptionSystem
                 float distanceFactor = Math.Clamp(1.0f - (dist / 65.0f), 0.20f, 1.0f);
                 float confidence = distanceFactor;
 
-                float posNoise = (1.0f - confidence) * 0.30f;
+                float posNoise = (1.0f - confidence) * ObservationNoiseSpanMeters * cognitive.ObservationNoiseScale;
                 Vector3 estPos = other.Position + new Vector3(
                     rng.NextGaussian(0f, posNoise),
                     0f,
@@ -298,10 +316,10 @@ public sealed class PerceptionSystem
         // layer still applies live positions when the ball is actually played). A small velocity
         // noise scaled by reaction quality is kept on top, as before.
         (Vector3 observedBallPos, Vector3 observedBallVel) =
-            ObservedBallState(self, ball, matchTimeSeconds);
+            ObservedBallState(self, ball, matchTimeSeconds, cognitive.ReactionDelaySeconds);
 
         float ballDist = Vector3.Distance(self.Position, observedBallPos);
-        float ballNoise = Math.Clamp(ballDist / 90.0f, 0.01f, 0.18f) * self.Attributes.ReactionDelaySeconds;
+        float ballNoise = Math.Clamp(ballDist / 90.0f, 0.01f, 0.18f) * cognitive.ReactionDelaySeconds;
         Vector3 perceivedBallPos = observedBallPos;
         Vector3 perceivedBallVel = observedBallVel + new Vector3(
             rng.NextGaussian(0f, ballNoise),
@@ -499,7 +517,8 @@ public sealed class PerceptionSystem
     private (Vector3 Position, Vector3 Velocity) ObservedBallState(
         FootballerState self,
         BallState ball,
-        float matchTimeSeconds)
+        float matchTimeSeconds,
+        float reactionDelaySeconds)
     {
         if (!_ballHistory.TryGetValue(self.Id, out List<(Vector3 Position, Vector3 Velocity)>? history))
         {
@@ -525,7 +544,7 @@ public sealed class PerceptionSystem
             _historyTimestamp[self.Id] = matchTimeSeconds;
         }
 
-        int delayTicks = ReactionDelayTicks(self.Attributes.ReactionDelaySeconds);
+        int delayTicks = ReactionDelayTicks(reactionDelaySeconds);
         int index = history.Count - 1 - delayTicks;
         if (index < 0) return (ball.Position, ball.Velocity);
 
