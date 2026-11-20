@@ -38,6 +38,14 @@ public sealed class MatchCommunicationContext
     /// </summary>
     public AI.TeamCallBoard Calls { get; } = new();
 
+    /// <summary>
+    /// The teams' combination board (A8.1). The same match-owned communication object that carries the
+    /// human's call, A5.3's run advertisements and A7.2's calls now carries the bounded one-two and
+    /// third-player contracts with their own delay and expiry. Again one channel, extended — never a
+    /// second one; the plan names <c>CombinationCoordinator</c> as the module that owns the contracts.
+    /// </summary>
+    public AI.CombinationCoordinator Combinations { get; } = new();
+
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
     /// <summary>True when the active call came from <paramref name="team"/>, i.e. is this team's own shout.</summary>

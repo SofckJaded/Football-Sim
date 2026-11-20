@@ -71,6 +71,9 @@ public static class Program
             case "--archetypes":
                 return RunArchetypeEvidence(args) ? 0 : 1;
 
+            case "--combinations":
+                return RunCombinationEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -89,6 +92,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --firsttouch [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --cognitive [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --archetypes [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --combinations [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -2775,6 +2779,188 @@ public static class Program
 
         return parts.Count == 0 ? "none" : string.Join(", ", parts);
     }
+
+    /// <summary>
+    /// A8.1 evidence: <b>bounded combinations</b>, measured as a same-seed A/B between the default build and
+    /// the build with <see cref="AiRuntimeConfig.EnableCombinations"/> off.
+    ///
+    /// The same seed is simulated twice: once with one-two and third-player contracts enabled, once with the
+    /// mechanism off. The off run is the version-46 build exactly, so the difference the columns show is the
+    /// contracts and nothing else.
+    ///
+    /// What the columns are, and the consumer each one proves is live:
+    /// <list type="bullet">
+    /// <item><b>contracts published</b> - proposals the carrier actually committed to (a pass won the
+    /// decision while a returnable partner or an advertised run made it a combination);</item>
+    /// <item><b>continuations executed</b> - the first receiver played the continuation ball while the
+    /// contract was live, attributed from the executed kick contact;</item>
+    /// <item><b>endings by reason</b> - why contracts died: expired, possession ended, replaced, or abandoned
+    /// by a participant. This is the evidence that the lifecycle is real rather than a counter that only
+    /// grows;</item>
+    /// <item><b>passes, shots, ticks</b> - the aggregate match the contracts ran in, so the two worlds can be
+    /// compared rather than only their contract tables.</item>
+    /// </list>
+    ///
+    /// The verdict does not require the aggregate match numbers to be "better" (A9 owns tuning); it requires
+    /// the feature to be <b>live and bounded</b>: both builds complete every seed, the build with combinations
+    /// on creates and actually completes continuations, and the build with them off creates none — which is
+    /// also the neutrality proof for the switch.
+    /// </summary>
+    private static bool RunCombinationEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A8.1 combination evidence: same-seed A/B, {seedCount} seeds x {halfSeconds * 2f:F0} s" +
+                          " -- one-two/third-player contracts on vs off ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Contract model     : initiator's pass commits a return region, meeting tick and confidence;");
+        Console.WriteLine("                     participants hear it after the communication delay; a one-two's initiator");
+        Console.WriteLine("                     runs the frozen region and the continuation pass is timed to it; a third-player");
+        Console.WriteLine("                     contract values the layoff to the runner's advertised run. No candidate, reach,");
+        Console.WriteLine("                     sight or contact rule is added - only bounded preferences and the contract itself.");
+        Console.WriteLine($"Combinations ON    : {new AiRuntimeConfig { EnableCombinations = true }.Describe()}");
+        Console.WriteLine($"Combinations OFF   : {new AiRuntimeConfig { EnableCombinations = false }.Describe()}");
+        Console.WriteLine();
+
+        var on = new CombinationEvidenceTotals();
+        var off = new CombinationEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunCombinationMatch(seed, halfSeconds, enabled: true, on, out string onLine);
+            bool completedOff = RunCombinationMatch(seed, halfSeconds, enabled: false, off, out string offLine);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-28}{"ON",12}{"OFF",12}");
+        Console.WriteLine($"{"completed matches",-28}{on.Matches,12}{off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-28}{on.Ticks,12}{off.Ticks,12}");
+        Console.WriteLine($"{"passes attempted",-28}{on.PassesAttempted,12}{off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-28}{on.PassesCompleted,12}{off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-28}{on.Shots,12}{off.Shots,12}");
+        Console.WriteLine($"{"contracts published",-28}{on.Published,12}{off.Published,12}");
+        Console.WriteLine($"{"continuations executed",-28}{on.Continued,12}{off.Continued,12}");
+        Console.WriteLine($"{"duplicate proposals suppressed",-28}{on.Suppressed,12}{off.Suppressed,12}");
+        Console.WriteLine($"{"live at full time",-28}{on.LiveAtEnd,12}{off.LiveAtEnd,12}");
+
+        Console.WriteLine();
+        Console.WriteLine("Published by kind:");
+        for (int kind = 1; kind < CombinationKindCount; kind++)
+            Console.WriteLine($"  {((CombinationKind)kind),-22}{on.PublishedByKind[kind],12}{off.PublishedByKind[kind],12}");
+
+        Console.WriteLine("Continuations by kind:");
+        for (int kind = 1; kind < CombinationKindCount; kind++)
+            Console.WriteLine($"  {((CombinationKind)kind),-22}{on.ContinuedByKind[kind],12}{off.ContinuedByKind[kind],12}");
+
+        Console.WriteLine("Endings by reason (ON):");
+        for (int reason = 1; reason < CombinationEndReasonCount; reason++)
+        {
+            long count = on.EndedByReason[reason];
+            if (count > 0) Console.WriteLine($"  {((CombinationEndReason)reason),-22}{count,12}");
+        }
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool contractsLive = on.Published > 0 && on.Continued > 0;
+        bool switchNeutral = off.Published == 0 && off.Continued == 0;
+        bool ok = completeBoth && contractsLive && switchNeutral;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the build with combinations on creates one-two/third-player contracts and executes" +
+              " continuations while the build with them off creates none; both finished every seed"
+            : "RESULT: FAIL -- incomplete matches, no live contract/continuation, or the switch did not neutralize");
+        return ok;
+    }
+
+    /// <summary>Runs one A8.1 probe match and folds it into <paramref name="totals"/>.</summary>
+    private static bool RunCombinationMatch(
+        ulong seed,
+        float halfSeconds,
+        bool enabled,
+        CombinationEvidenceTotals totals,
+        out string line)
+    {
+        var ai = new AiRuntimeConfig { EnableCombinations = enabled };
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            engine.StepTick();
+
+        CombinationCoordinator contracts = engine.Communication.Combinations;
+        var analytics = engine.Analytics;
+        totals.Ticks += engine.CurrentTick;
+        totals.PassesAttempted += analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        totals.PassesCompleted += analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        totals.Shots += analytics.HomeShots + analytics.AwayShots;
+        totals.Published += contracts.PublishedCount;
+        totals.Continued += contracts.ContinuedCount;
+        totals.Suppressed += contracts.SuppressedCount;
+        totals.Evicted += contracts.EvictedCount;
+        for (int kind = 1; kind < CombinationKindCount; kind++)
+        {
+            totals.PublishedByKind[kind] += contracts.CountOfPublished((CombinationKind)kind);
+            totals.ContinuedByKind[kind] += contracts.CountOfContinued((CombinationKind)kind);
+        }
+
+        for (int reason = 1; reason < CombinationEndReasonCount; reason++)
+            totals.EndedByReason[reason] += contracts.CountOfEnd((CombinationEndReason)reason);
+
+        int tick = engine.CurrentTick;
+        totals.LiveAtEnd += contracts.LiveCount(TeamId.Home, tick) + contracts.LiveCount(TeamId.Away, tick);
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.Matches++;
+
+        line = $"{engine.CurrentTick} ticks, score {analytics.HomeGoals}-{analytics.AwayGoals}, passes " +
+               $"{analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} attempted, shots " +
+               $"{analytics.HomeShots}/{analytics.AwayShots}, contracts {contracts.PublishedCount} published " +
+               $"/ {contracts.ContinuedCount} continued";
+        return completed;
+    }
+
+    private sealed class CombinationEvidenceTotals
+    {
+        public int Matches;
+        public long Ticks;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long Published;
+        public long Continued;
+        public long Suppressed;
+        public long Evicted;
+        public long LiveAtEnd;
+        public readonly long[] PublishedByKind = new long[CombinationKindCount];
+        public readonly long[] ContinuedByKind = new long[CombinationKindCount];
+        public readonly long[] EndedByReason = new long[CombinationEndReasonCount];
+    }
+
+    private static readonly int CombinationKindCount = Enum.GetValues(typeof(CombinationKind)).Length;
+    private static readonly int CombinationEndReasonCount = Enum.GetValues(typeof(CombinationEndReason)).Length;
 
     /// <summary>
     /// Multi-seed tactical report and gate (audit F23).

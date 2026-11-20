@@ -646,7 +646,14 @@ public sealed class MatchSimulationEngine
                     p.Team == TeamId.Home ? homeSupportPresser : awaySupportPresser,
                     _teamJobs.TurnoverOf(p.Team),
                     // A7.2: what this player's own team has already said, through the communication delay.
-                    _communication.Calls.BuildContext(p.Team, p.Id, CurrentTick));
+                    _communication.Calls.BuildContext(p.Team, p.Id, CurrentTick),
+                    // A8.1: the bounded combination this player is part of, if any. Read here (once, from
+                    // the match's own board) so every decision the player makes this tick sees the same
+                    // contract and no scorer reads the board directly.
+                    _communication.Combinations.TryGetContext(p.Team, p.Id, CurrentTick,
+                        out CombinationContext combination)
+                        ? combination
+                        : CombinationContext.None);
                 _latestObservations[p.Id] = obs;
 
                 // A7.2: the player's own shout, decided from the observation he just built. Only an AI
@@ -680,11 +687,21 @@ public sealed class MatchSimulationEngine
             // Audit F17: statistics come from the contacts execution actually made, never from the
             // commands above. A kick that lost the tick's arbitration is not a pass attempt.
             _statistics.ApplyContacts(_executionSystem.ContactEvents, CurrentTick);
+
+            // A8.1: a contract's continuation is the kick it actually became. Applied from the same
+            // contact events the rules engine and the statistics consume, so a combination is attributed
+            // to a play — never to two players happening to stand near each other.
+            _communication.Combinations.ApplyContacts(_executionSystem.ContactEvents, CurrentTick);
             AppendContactLog(_executionSystem.ContactEvents);
             ApplyContactFeedback();
 
             // Consume this tick's plays so the next tick's decisions see the new ownership.
             _possessionTracker.Update(_players, Ball, _executionSystem.ContactEvents, dt);
+
+            // A8.1: a contract belongs to the possession it was made in (the exit gate's "no contract
+            // outlives its possession"). Read after the ownership model has consumed this tick, so a team
+            // that has just lost the ball ends its contracts before its next decisions.
+            _communication.Combinations.ObservePossession(_possessionTracker.Current.PossessionTeam, CurrentTick);
 
             _ballSolver.Step(Ball, dt);
         }
@@ -862,6 +879,9 @@ public sealed class MatchSimulationEngine
             // remain keep their own slots, which is what keeps the shape plausible with ten men.
             _tacticalCoordinator.FormationFor(player.Team).Remove(player.Id);
             _perceptionSystem.Forget(player.Id);
+            // A8.1: a contract he was part of ends with him — an inactive player must not keep owning a
+            // contract or a return region.
+            _communication.Combinations.ReleasePlayer(player.Id, CurrentTick);
             LastAiResetReason = AiResetReason.PlayerRemoved;
             LastAiResetTick = CurrentTick;
         }
@@ -890,6 +910,11 @@ public sealed class MatchSimulationEngine
         // old picture must not survive it. The board is empty by construction at half time; clearing on
         // every reset is the honest statement rather than an assumption about timing.
         _communication.Calls.ClearAll();
+
+        // A8.1: a contract is a promise about a passage of play; a restart or an interval ends it. Clearing
+        // on every reset is the honest statement rather than an assumption about how long the promise would
+        // have lasted — the same rule A7.2's calls follow (and for the same reason: the ball is re-placed).
+        _communication.Combinations.ClearAll(CurrentTick);
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

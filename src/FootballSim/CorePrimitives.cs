@@ -501,12 +501,22 @@ public enum TeamId
 /// archetype generates a candidate, reads a sighting or moves a limit another player could not have, and
 /// <see cref="AI.AiRuntimeConfig.EnableArchetypes"/> off is the version-45 build exactly. Trajectories
 /// differ from version 45 because the default squad now fields archetypes.</item>
+/// <item><c>AiBehaviour 47</c> — A8.1: <b>bounded one-two and third-player contracts</b>
+/// (<see cref="AI.CombinationCoordinator"/>). When the carrier's own observation shows a give-and-go or a
+/// team-mate's advertised run worth combining with, his pass can carry a contract: participants, a return
+/// region, an expected arrival, a confidence and an expiry, heard by the other participants through the one
+/// communication channel after the usual delay. A one-two's initiator runs into the frozen return region, the
+/// receiver's continuation pass is timed to it, and a third-player contract values the layoff to the runner.
+/// Every participant may abandon a lane that stopped being valid; a contract ends with the possession it was
+/// made in. The preferences are bounded and no candidate, reach, sight or contact rule is added, and
+/// <see cref="AI.AiRuntimeConfig.EnableCombinations"/> off is the version-46 build exactly. Trajectories
+/// differ from version 46 once a combination is played.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 46;
+    public const int AiBehaviour = 47;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -1053,6 +1063,15 @@ public sealed class FootballerObservation
     /// one place and two observations can differ by exactly one call in a test.
     /// </summary>
     public AI.TeamCallContext Calls { get; init; } = AI.TeamCallContext.None;
+
+    /// <summary>
+    /// A8.1: this player's part in a live team combination — a one-two or a third-player move — as he is
+    /// entitled to know it. The default is neutral, so a fixture or standalone controller that knows nothing
+    /// about combinations behaves exactly as it did before A8.1. Like <see cref="Calls"/> it is carried on
+    /// the observation (rather than read from the match object inside a scorer) so the knowledge boundary
+    /// stays in one place and two observations can differ by exactly one contract in a test.
+    /// </summary>
+    public AI.CombinationContext Combination { get; init; } = AI.CombinationContext.None;
 
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }

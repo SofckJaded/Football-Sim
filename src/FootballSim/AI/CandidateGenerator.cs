@@ -190,6 +190,132 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Reason text for a human caller whose request could not be planned.</summary>
     public const string RejectionUnplannable = "unplannable";
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.1 — bounded combinations. The numbers are the hand-set calibration of the trigger, the two
+    // preference bonuses and the return run's utility; the contract's own lifecycle (delay, arrival,
+    // grace, capacity) lives in CombinationCoordinator. Nothing here creates a new action capability:
+    // the pass is still one pass, the run is still one movement, and execution still decides contacts.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Candidate tag of a one-two's return run (A8.1). Interned: a candidate is built per decision.</summary>
+    public const string CombinationReturnTag = "CombinationReturn";
+
+    /// <summary>Display name of the return-run candidate (diagnostics only).</summary>
+    public const string CombinationReturnActionName = "Run:CombinationReturn";
+
+    /// <summary>
+    /// Preference a candidate pass earns when a combination is offered from it, on the action-value scale.
+    /// Deliberately a nudge, not a decision: a pass still has to beat every other action on its own
+    /// reception value, and the bonus is smaller than the progression preference's own range (A4.4).
+    /// </summary>
+    public const float CombinationInitiationBonus = 0.12f;
+
+    /// <summary>
+    /// Preference the first receiver's continuation pass earns. Larger than the initiation bonus because the
+    /// receiver is honouring a promise (the contract names the region and the time), but still bounded so a
+    /// blocked or badly positioned return is not forced.
+    /// </summary>
+    public const float CombinationContinuationBonus = 0.20f;
+
+    /// <summary>
+    /// Pre-rank bonus that keeps the continuation target inside <see cref="AiRuntimeConfig.MaxPassTargets"/>
+    /// so the promise is priced rather than pruned. Same size and same reason as
+    /// <see cref="AnnouncedRunRankBonus"/> and <see cref="SwitchCallRankBonus"/>: communication that is
+    /// dropped before it is read is not communication.
+    /// </summary>
+    public const float CombinationRankBonus = 0.35f;
+
+    /// <summary>Shortest pass a one-two can be built from, in metres (below this it is a touch, not a pass).</summary>
+    internal const float OneTwoMinPassMeters = 5f;
+
+    /// <summary>Longest pass a one-two can be built from, in metres (a give-and-go is a short move).</summary>
+    internal const float OneTwoMaxPassMeters = 20f;
+
+    /// <summary>Pressure on the carrier that makes the bounce worth offering, in metres to the nearest opponent.</summary>
+    internal const float OneTwoCarrierPressureMeters = 4.5f;
+
+    /// <summary>Pressure on the receiver that makes the one-touch return natural, in metres to the nearest opponent.</summary>
+    internal const float OneTwoReceiverPressureMeters = 5.5f;
+
+    /// <summary>How far up the pitch the return region is placed from the initiator, in metres.</summary>
+    internal const float OneTwoReturnForwardMeters = 8f;
+
+    /// <summary>How far sideways (toward the receiver's side) the return region is placed, in metres.</summary>
+    internal const float OneTwoReturnLateralMeters = 2.5f;
+
+    /// <summary>Shortest progression the return region must offer for the move to be worth making, in metres.</summary>
+    internal const float OneTwoMinProgressionMeters = 5f;
+
+    /// <summary>How wide the return region is, in metres. A region, not a point: the return is met there.</summary>
+    internal const float OneTwoReturnRadiusMeters = 3f;
+
+    /// <summary>Room the return region must have around it (0..1, see EvaluateSpaceFreedom) to be a lane.</summary>
+    internal const float OneTwoMinSpace01 = 0.30f;
+
+    /// <summary>Clearance the receiver-to-region lane must have (0..1) before it is offered as a return.</summary>
+    internal const float OneTwoMinLaneClearance01 = 0.40f;
+
+    /// <summary>Speed the initiator's travel time to the return region is estimated at, in m/s (acceleration-aware).</summary>
+    internal const float OneTwoRunnerSpeedMetersPerSecond = 5.6f;
+
+    /// <summary>Time the receiver is assumed to need to control the pass before he can return it, in seconds.</summary>
+    internal const float OneTwoReceiverSetupSeconds = 0.45f;
+
+    /// <summary>Speed the return pass is estimated at for the meeting time, in m/s.</summary>
+    internal const float OneTwoReturnPassSpeedMetersPerSecond = 11f;
+
+    /// <summary>Longest meeting a one-two may plan for, in seconds. Beyond this it is not a combination.</summary>
+    internal const float OneTwoMaxArrivalSeconds = 3.2f;
+
+    /// <summary>One-two confidence: the floor before the lane/space/progression terms are added.</summary>
+    internal const float OneTwoConfidenceBase = 0.35f;
+
+    /// <summary>Lane term of the one-two confidence (multiplied by lane clearance 0..1).</summary>
+    internal const float OneTwoConfidenceLaneWeight = 0.35f;
+
+    /// <summary>Space term of the one-two confidence (multiplied by space 0..1).</summary>
+    internal const float OneTwoConfidenceSpaceWeight = 0.20f;
+
+    /// <summary>Progression term of the one-two confidence (multiplied by progression/10, capped 0..1).</summary>
+    internal const float OneTwoConfidenceProgressionWeight = 0.10f;
+
+    /// <summary>Shortest layoff a third-player contract is built from, in metres.</summary>
+    internal const float ThirdPlayerMinLayoffMeters = 5f;
+
+    /// <summary>Longest layoff a third-player contract is built from, in metres.</summary>
+    internal const float ThirdPlayerMaxLayoffMeters = 24f;
+
+    /// <summary>Clearance the receiver-to-runner lane must have before the third-player move is offered.</summary>
+    internal const float ThirdPlayerMinLaneClearance01 = 0.40f;
+
+    /// <summary>Earliest the third runner may be due to arrive, in ticks, for the layoff to be timely.</summary>
+    internal const int ThirdPlayerMinLeadTicks = 10;
+
+    /// <summary>
+    /// How early a third-player contract's layoff may arrive before the runner's advertised meeting tick,
+    /// in ticks. An early ball into a region a man is still running into is a normal through ball; a ball a
+    /// second and a half early is a ball to where he was not.
+    /// </summary>
+    internal const int ThirdPlayerEarlyArrivalTicks = 45;
+
+    /// <summary>Speed the layoff to the third runner is estimated at for the meeting time, in m/s.</summary>
+    internal const float ThirdPlayerLayoffSpeedMetersPerSecond = 12f;
+
+    /// <summary>Space the first pass of a third-player move must have behind it, i.e. the receiver's room.</summary>
+    internal const float ThirdPlayerConfidenceBase = 0.40f;
+
+    /// <summary>Utility floor of the one-two return run before the contract's confidence and the room are added.</summary>
+    internal const float CombinationReturnRunBaseUtility = 0.92f;
+
+    /// <summary>How much of the contract's remaining promise the return run's utility carries.</summary>
+    internal const float CombinationReturnRunConfidenceWeight = 0.28f;
+
+    /// <summary>How much the room at the return region adds to the return run's utility.</summary>
+    internal const float CombinationReturnRunSpaceWeight = 0.12f;
+
+    /// <summary>Below this room the return region is no longer a lane and the initiator abandons it.</summary>
+    internal const float CombinationReturnRunMinSpace01 = 0.25f;
+
     private readonly PitchDimensions _pitch;
     private readonly MatchCommunicationContext? _communication;
     private readonly PassPlanner _passPlanner;
@@ -219,6 +345,26 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     // A6.1: the defensive policy's answer for this decision. Reused like the other buffers.
     private readonly PressCandidate[] _defenceBuffer = new PressCandidate[PressPolicy.MaxCandidates];
+
+    /// <summary>
+    /// A8.1: one bounding contract the carrier was offering on a pass, before the decision is made. The
+    /// proposal is remembered per receiver so the chosen candidate can publish exactly the contract it was
+    /// priced with — the pass that won is the commitment, not every pass that was considered.
+    /// </summary>
+    private readonly record struct CombinationProposal(
+        CombinationKind Kind,
+        int ReceiverId,
+        int ThirdPlayerId,
+        Vector2 ReturnXZ,
+        float ReturnRadiusMeters,
+        int ExpectedArrivalTick,
+        float Confidence01);
+
+    // A8.1: the combination proposals of the most recent decision, indexed by receiver id. Reused: a
+    // decision with no combination offer leaves the count at zero.
+    private readonly int[] _combinationMateIds = new int[PassTargetCapacity];
+    private readonly CombinationProposal[] _combinationProposals = new CombinationProposal[PassTargetCapacity];
+    private int _combinationProposalCount;
 
     private Vector2 _lastCarryDirection;
     private bool _hasLastCarryDirection;
@@ -289,6 +435,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _rejectionCount = 0;
         _passTargetCount = 0;
         _receptionPlanCount = 0;
+        _combinationProposalCount = 0;
     }
 
     /// <summary>
@@ -307,6 +454,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Clear();
         _passTargetCount = 0;
         _receptionPlanCount = 0;
+        _combinationProposalCount = 0;
         _tackleCooldown = 0f;
         _timeOnBall = 0f;
         _hasLastCarryDirection = false;
@@ -337,6 +485,30 @@ public sealed class CandidateGenerator : IAiStateResettable
             _communication.Runs.TryGetAdvertisement(obs.SelfTeam, key.TargetPlayerId, obs.Tick, out RunAdvertisement advert))
         {
             _communication.Runs.Claim(obs.SelfTeam, key.TargetPlayerId, obs.SelfId, advert.MeetTick, obs.Tick);
+        }
+
+        // A8.1: the pass the carrier actually chose is the contract he commits to. Only a winning
+        // combination pass publishes — a pass that merely carried the initiation preference does not, and a
+        // re-decided identical pass is suppressed by the board rather than restarting its delay.
+        if (!_ai.EnableCombinations) return;
+
+        if (key.Kind == CandidateKind.Pass && key.TargetPlayerId > 0 &&
+            TryGetCombinationProposal(key.TargetPlayerId, out CombinationProposal proposal) &&
+            _communication is not null)
+        {
+            _communication.Combinations.Publish(
+                proposal.Kind, obs.SelfTeam, obs.SelfId, proposal.ReceiverId, proposal.ThirdPlayerId,
+                proposal.ReturnXZ, proposal.ReturnRadiusMeters, proposal.ExpectedArrivalTick,
+                proposal.Confidence01, obs.Tick);
+        }
+
+        // A8.1 receiver-side: the chosen action either honours the contract or visibly ends it. The
+        // continuation itself is attributed by the execution contacts (CombinationCoordinator.ApplyContacts);
+        // this only abandons a move the receiver has declined by playing the ball elsewhere.
+        if (obs.Combination.IsReceiver && key.Kind == CandidateKind.Pass &&
+            key.TargetPlayerId != obs.Combination.ContinuationTargetId)
+        {
+            AbandonCombination(obs, CombinationEndReason.AbandonedByReceiver);
         }
     }
 
@@ -386,6 +558,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         AddDribbleCandidate(obs, selfXZ, goalXZ, carry, nearestOppXZ, nearestOppDist);
         AddShieldCandidate(obs, selfXZ, nearestOppXZ, nearestOppDist);
         AddClearanceCandidate(obs, selfXZ, myAttackProjX, nearestOppDist);
+        // A8.1: the receiver's continuation is judged against the full priced action set, before the carrier
+        // cap trims it — a continuation that was priced but lost the cap is still a promise the team holds.
+        CheckCombinationContinuation(obs, offsideLineProjX);
         TrimToCarrierCap();
     }
 
@@ -458,7 +633,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         KickIntentType PassType,
         string Tag,
         bool HumanCaller,
-        PassArrivalPromise Promise = default);
+        PassArrivalPromise Promise = default,
+        // A8.1: the combination this pass would start, if any, as a preference on the action's score.
+        // Zero for every pass that is not a combination (and for every decision with combinations off).
+        float CombinationPreference = 0f);
 
     /// <summary>
     /// Every feasible pass the carrier can play (A4.1), scored with A4.2's success model.
@@ -537,12 +715,26 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
         else
         {
+            // A8.1: what combination, if any, this pass could start. Computed once per receiver so the
+            // candidate that wins publishes exactly the contract it was priced with — and only a winning
+            // pass creates a contract, never every pass that was merely considered.
+            float combinationPreference = 0f;
+            if (_ai.EnableCombinations &&
+                TryBuildCombinationProposal(obs, mate, ballXZ, selfXZ, offsideLineProjX, rawDistance, out CombinationProposal proposal))
+            {
+                combinationPreference = CombinationInitiationBonus * proposal.Confidence01;
+                RememberCombinationProposal(proposal);
+            }
+
             var feet = new PassOption(
-                Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false);
+                Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false,
+                CombinationPreference: combinationPreference);
             anyGroundPass = TryAddGroundPass(obs, mate, feet, ballXZ, selfXZ, forwardMeters, out bool feetBlocked);
 
             if (TryBuildRunPassOption(obs, mate, offsideLineProjX, out PassOption run))
             {
+                // A8.1: the run-region variant is the same pass, so it earns the same initiation preference.
+                run = run with { CombinationPreference = combinationPreference };
                 anyGroundPass |= TryAddGroundPass(obs, mate, run, ballXZ, selfXZ, forwardMeters, out bool runBlocked);
                 feetBlocked |= runBlocked;
             }
@@ -608,6 +800,33 @@ public sealed class CandidateGenerator : IAiStateResettable
                     arriveInSeconds,
                     advert.MeetRadiusMeters,
                     advert.Promise01(obs.Tick)));
+            return true;
+        }
+
+        // A8.1: a one-two contract is its own promise. The initiator named the return region and the meeting
+        // tick when he made the pass, and there is no advertisement to read, so the ball is timed to that
+        // region instead of to his current feet. A third-player contract deliberately does not do this: its
+        // continuation belongs to the third man's advertised run, so if that announcement is gone the receiver
+        // abandons the contract rather than playing the ball into a region nobody is running into.
+        if (_ai.EnableCombinations && obs.Combination.IsReceiver &&
+            obs.Combination.Kind == CombinationKind.OneTwo &&
+            obs.Combination.ContinuationTargetId == mate.PlayerId &&
+            obs.Combination.ExpectedArrivalTick > obs.Tick + 2)
+        {
+            float arriveInSeconds = (obs.Combination.ExpectedArrivalTick - obs.Tick) * SimConstants.FixedDeltaTime;
+            option = new PassOption(
+                LeadDirection: Vector2.Zero,
+                LeadMeters: 0f,
+                MaxLeadMeters: RunPassMaxLeadMeters,
+                MinPower01: 0f,
+                PassType: KickIntentType.ThroughPass,
+                Tag: RunPassTag,
+                HumanCaller: false,
+                Promise: new PassArrivalPromise(
+                    obs.Combination.ReturnXZ,
+                    arriveInSeconds,
+                    obs.Combination.ReturnRadiusMeters,
+                    obs.Combination.Promise01(obs.Tick)));
             return true;
         }
 
@@ -748,6 +967,14 @@ public sealed class CandidateGenerator : IAiStateResettable
             // value scale still decide whether the ball should go there.
             if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == mate.PlayerId)
                 rank += SwitchCallRankBonus;
+
+            // A8.1: the first receiver's continuation target must survive the pre-rank too, or the contract
+            // would be abandoned before its promised ball was ever priced.
+            if (_ai.EnableCombinations && obs.Combination.IsReceiver &&
+                obs.Combination.ContinuationTargetId == mate.PlayerId)
+            {
+                rank += CombinationRankBonus;
+            }
 
             // The human's request is planned whatever its rank: a caller is never silently dropped.
             if (mate.PlayerId == callerId) rank = float.MaxValue;
@@ -930,6 +1157,18 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == receiverId)
             preference += ActionValueScale.CallSwitchPassBonus;
 
+        // A8.1: the two combination preferences, each applied exactly once. The initiation bonus is the
+        // carrier's own offer on this candidate (zero when no contract was proposed); the continuation bonus
+        // is the receiver honouring a live contract that names this receiver as the next ball, scaled by how
+        // much of the promise is still believable. Neither can force a pass: both are preferences on the
+        // action-value scale, and a blocked or unreachable return is still rejected before it is scored.
+        preference += option.CombinationPreference;
+        if (_ai.EnableCombinations && obs.Combination.IsReceiver &&
+            obs.Combination.ContinuationTargetId == receiverId)
+        {
+            preference += CombinationContinuationBonus * obs.Combination.Promise01(obs.Tick);
+        }
+
         valueTerms = new ValueTerms(
             terms.CompletionProbability01, reception.Value, loss, preference);
         return valueTerms.Value;
@@ -1025,6 +1264,378 @@ public sealed class CandidateGenerator : IAiStateResettable
             Terms = valueTerms
         });
         return true;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A8.1 — bounded combinations: the proposal behind a pass, the receiver's continuation and the
+    // initiator's return run. The contract itself (delay, expiry, capacity, lifecycle) is owned by
+    // CombinationCoordinator; this section only decides what is worth offering and what the options cost.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Works out what combination — if any — a pass to <paramref name="mate"/> could start, from this
+    /// carrier's own observation: a one-two out of local pressure, or a third-player move onto a team-mate's
+    /// already-advertised run (A5.3). The better-supported of the two is offered, and the pass candidate
+    /// carries a bounded preference for it.
+    ///
+    /// A proposal is not a contract: only a pass that actually wins the decision publishes one (see
+    /// <see cref="NoteDecision"/>). That is what keeps "the carrier considered a combination" and "the team is
+    /// committed to one" from being the same statement.
+    /// </summary>
+    private bool TryBuildCombinationProposal(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        Vector2 ballXZ,
+        Vector2 selfXZ,
+        float offsideLineProjX,
+        float rawDistance,
+        out CombinationProposal proposal)
+    {
+        proposal = default;
+        if (rawDistance < OneTwoMinPassMeters || rawDistance > OneTwoMaxPassMeters) return false;
+
+        bool hasProposal = false;
+        float bestConfidence = 0f;
+
+        if (TryBuildOneTwoProposal(obs, mate, ballXZ, selfXZ, offsideLineProjX, out CombinationProposal oneTwo) &&
+            oneTwo.Confidence01 > bestConfidence)
+        {
+            proposal = oneTwo;
+            bestConfidence = oneTwo.Confidence01;
+            hasProposal = true;
+        }
+
+        if (TryBuildThirdPlayerProposal(obs, mate, out CombinationProposal thirdPlayer) &&
+            thirdPlayer.Confidence01 > bestConfidence)
+        {
+            proposal = thirdPlayer;
+            hasProposal = true;
+        }
+
+        return hasProposal;
+    }
+
+    /// <summary>
+    /// A one-two out of pressure: the carrier is pressed (or the receiver is), and there is a return region
+    /// ahead of the carrier that is inside the pitch, onside, in room, with an open lane from the receiver.
+    /// The meeting tick is the later of the carrier's travel time and the receiver's realistic ready-and-
+    /// return time, so the contract is a time both players can actually make.
+    /// </summary>
+    private bool TryBuildOneTwoProposal(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        Vector2 ballXZ,
+        Vector2 selfXZ,
+        float offsideLineProjX,
+        out CombinationProposal proposal)
+    {
+        proposal = default;
+
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+        float carrierPressure = NearestOpponent(obs, selfXZ, out _);
+        float receiverPressure = NearestOpponent(obs, mateXZ, out _);
+
+        // A one-two is a way out of pressure. Without pressure on either end the ordinary pass and the
+        // ordinary shape are already the right actions, and a contract would only add noise.
+        if (carrierPressure > OneTwoCarrierPressureMeters && receiverPressure > OneTwoReceiverPressureMeters)
+            return false;
+
+        float lateralSign = MathF.Abs(mateXZ.Y - selfXZ.Y) > 0.5f ? MathF.Sign(mateXZ.Y - selfXZ.Y) : 0f;
+        Vector2 region = new(
+            selfXZ.X + obs.AttackingDirectionX * OneTwoReturnForwardMeters,
+            selfXZ.Y + lateralSign * OneTwoReturnLateralMeters);
+        region = new Vector2(
+            Math.Clamp(region.X, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f),
+            Math.Clamp(region.Y, -_pitch.HalfWidth + 2.5f, _pitch.HalfWidth - 2.5f));
+
+        float progression = (region.X - selfXZ.X) * obs.AttackingDirectionX;
+        if (progression < OneTwoMinProgressionMeters) return false;
+
+        float maxOnsideProj = OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+        if (region.X * obs.AttackingDirectionX > maxOnsideProj) return false;
+
+        float space = EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam);
+        if (space < OneTwoMinSpace01) return false;
+
+        float lane = EvaluateLaneClearance(mateXZ, region, obs.VisiblePlayers, obs.SelfTeam);
+        if (lane < OneTwoMinLaneClearance01) return false;
+
+        float travelSeconds = Vector2.Distance(selfXZ, region) / OneTwoRunnerSpeedMetersPerSecond;
+        float passFlightSeconds = Vector2.Distance(ballXZ, mateXZ) /
+                                  MathF.Max(1f, PassPlanner.GroundPassLaunchSpeed(0.5f));
+        float returnFlightSeconds = Vector2.Distance(mateXZ, region) / OneTwoReturnPassSpeedMetersPerSecond;
+        float arrivalSeconds = MathF.Max(
+            travelSeconds, passFlightSeconds + OneTwoReceiverSetupSeconds + returnFlightSeconds);
+        if (!float.IsFinite(arrivalSeconds) || arrivalSeconds <= 0f || arrivalSeconds > OneTwoMaxArrivalSeconds)
+            return false;
+
+        float confidence = Math.Clamp(
+            OneTwoConfidenceBase
+            + OneTwoConfidenceLaneWeight * lane
+            + OneTwoConfidenceSpaceWeight * space
+            + OneTwoConfidenceProgressionWeight * Math.Clamp(progression / 10f, 0f, 1f),
+            0f, 1f);
+        if (confidence <= 0f) return false;
+
+        int arrivalTick = obs.Tick + Math.Max(6, (int)MathF.Round(arrivalSeconds * 60f));
+        proposal = new CombinationProposal(
+            CombinationKind.OneTwo,
+            mate.PlayerId,
+            ThirdPlayerId: 0,
+            region,
+            OneTwoReturnRadiusMeters,
+            arrivalTick,
+            confidence);
+        return true;
+    }
+
+    /// <summary>
+    /// A third-player move: the receiver is close enough to a team-mate's advertised run to lay the ball off
+    /// to it. The run itself is A5.3's — nothing here adds a run — and the contract only says "the first pass
+    /// goes to you because the layoff to him is on". The layoff's lane is judged from this carrier's own
+    /// picture, and the confidence is the runner's own promise scaled by how open the lane is.
+    /// </summary>
+    private bool TryBuildThirdPlayerProposal(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        out CombinationProposal proposal)
+    {
+        proposal = default;
+        if (_communication is null) return false;
+
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        float mateProj = mateXZ.X * obs.AttackingDirectionX;
+        float passFlightSeconds = Vector2.Distance(ballXZ, mateXZ) /
+                                  MathF.Max(1f, PassPlanner.GroundPassLaunchSpeed(0.5f));
+        int advertCount = _communication.Runs.VisibleCount(obs.SelfTeam, obs.Tick);
+        if (advertCount == 0) return false;
+
+        float bestConfidence = 0f;
+        for (int i = 0; i < advertCount; i++)
+        {
+            if (!_communication.Runs.TryGetVisibleAt(obs.SelfTeam, i, obs.Tick, out RunAdvertisement advert)) continue;
+            if (advert.PlayerId == obs.SelfId || advert.PlayerId == mate.PlayerId) continue;
+            if (advert.MeetTick <= obs.Tick + ThirdPlayerMinLeadTicks) continue;
+
+            Vector2 region = advert.MeetXZ;
+            float layoffMeters = Vector2.Distance(mateXZ, region);
+            if (layoffMeters < ThirdPlayerMinLayoffMeters || layoffMeters > ThirdPlayerMaxLayoffMeters) continue;
+
+            // The layoff must go forward of the first receiver; a third man arriving behind him is not a
+            // continuation, it is a second outlet.
+            if (region.X * obs.AttackingDirectionX <= mateProj - 2f) continue;
+
+            // The advertised meeting tick assumed a *direct* pass from the initiator. The third-player
+            // continuation is the second pass, so the contract names when that ball can actually arrive —
+            // the first pass's flight, the receiver's control, then the layoff's flight — and only accepts a
+            // run whose advertised hold window still contains it. A ball later than the window is a ball to
+            // where the runner has stopped holding.
+            float layoffFlight = layoffMeters / ThirdPlayerLayoffSpeedMetersPerSecond;
+            float arrivalSeconds = passFlightSeconds + OneTwoReceiverSetupSeconds + layoffFlight;
+            if (!float.IsFinite(arrivalSeconds) || arrivalSeconds <= 0f || arrivalSeconds > OneTwoMaxArrivalSeconds)
+                continue;
+
+            int arrivalTick = obs.Tick + Math.Max(ThirdPlayerMinLeadTicks,
+                (int)MathF.Round(arrivalSeconds * 60f));
+            if (arrivalTick > advert.ExpiresTick) continue;
+            if (arrivalTick < advert.MeetTick - ThirdPlayerEarlyArrivalTicks) continue;
+
+            float lateness = Math.Clamp(
+                (arrivalTick - advert.MeetTick) /
+                (float)Math.Max(1, advert.ExpiresTick - advert.MeetTick), 0f, 1f);
+
+            float lane = EvaluateLaneClearance(mateXZ, region, obs.VisiblePlayers, obs.SelfTeam);
+            if (lane < ThirdPlayerMinLaneClearance01) continue;
+
+            float promise = advert.Promise01(obs.Tick);
+            if (promise <= 0f) continue;
+
+            // The runner's own confidence in his advertised region is the main term; the layoff lane and the
+            // room at the region are what the first receiver will actually find when he looks up. A layoff
+            // later than the runner's advertised meeting is still on if he is holding, but it is worth less.
+            float confidence = Math.Clamp(
+                ThirdPlayerConfidenceBase * promise
+                + 0.45f * lane
+                + 0.15f * EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam)
+                - 0.25f * lateness,
+                0f, 1f);
+            if (confidence <= bestConfidence) continue;
+
+            bestConfidence = confidence;
+            proposal = new CombinationProposal(
+                CombinationKind.ThirdPlayer,
+                mate.PlayerId,
+                advert.PlayerId,
+                region,
+                Math.Clamp(advert.MeetRadiusMeters,
+                    CombinationCoordinator.MinReturnRadiusMeters,
+                    CombinationCoordinator.MaxReturnRadiusMeters),
+                arrivalTick,
+                confidence);
+        }
+
+        return bestConfidence > 0f;
+    }
+
+    /// <summary>Remembers the best combination offer for a receiver in this decision's bounded proposal table.</summary>
+    private void RememberCombinationProposal(in CombinationProposal proposal)
+    {
+        for (int i = 0; i < _combinationProposalCount; i++)
+        {
+            if (_combinationMateIds[i] != proposal.ReceiverId) continue;
+            if (_combinationProposals[i].Confidence01 >= proposal.Confidence01) return;
+            _combinationProposals[i] = proposal;
+            return;
+        }
+
+        if (_combinationProposalCount >= _combinationProposals.Length) return;
+        _combinationMateIds[_combinationProposalCount] = proposal.ReceiverId;
+        _combinationProposals[_combinationProposalCount] = proposal;
+        _combinationProposalCount++;
+    }
+
+    /// <summary>The combination proposal the last decision made for this receiver, if any.</summary>
+    private bool TryGetCombinationProposal(int receiverId, out CombinationProposal proposal)
+    {
+        for (int i = 0; i < _combinationProposalCount; i++)
+        {
+            if (_combinationMateIds[i] != receiverId) continue;
+            proposal = _combinationProposals[i];
+            return true;
+        }
+
+        proposal = default;
+        return false;
+    }
+
+    /// <summary>
+    /// A8.1's receiver-side closure. The contract ends when its <b>lane</b> is gone, not when the ball cannot
+    /// be timed to it yet: the promise names a meeting tick in the future, so the continuation pass may be
+    /// legitimately mistimed on the first tick the receiver is ready — it becomes playable as that tick
+    /// approaches. A blocked lane or a lost target is different: the receiver then abandons the contract so
+    /// the initiator stops running for a ball nobody will play (the exit gate's "a blocked return aborts
+    /// cleanly"). A third-player contract also ends if the third man's advertised run has gone — there is then
+    /// nothing left to lay the ball off to.
+    /// </summary>
+    private void CheckCombinationContinuation(in FootballerObservation obs, float offsideLineProjX)
+    {
+        if (!_ai.EnableCombinations || !obs.Combination.IsReceiver) return;
+
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+
+        if (obs.Combination.Kind == CombinationKind.ThirdPlayer)
+        {
+            if (_communication is null ||
+                !_communication.Runs.TryGetAdvertisement(obs.SelfTeam, obs.Combination.ThirdPlayerId, obs.Tick, out _) ||
+                !TryGetVisibleEntity(obs, obs.Combination.ThirdPlayerId, out _))
+            {
+                AbandonCombination(obs, CombinationEndReason.AbandonedByThirdRunner);
+                return;
+            }
+
+            if (EvaluateLaneClearance(ballXZ, obs.Combination.ReturnXZ, obs.VisiblePlayers, obs.SelfTeam) <
+                ThirdPlayerMinLaneClearance01)
+            {
+                AbandonCombination(obs, CombinationEndReason.AbandonedByReceiver);
+            }
+
+            return;
+        }
+
+        // A one-two: the initiator must still be a legal pass target and the return lane must still exist.
+        if (!TryGetVisibleEntity(obs, obs.Combination.InitiatorId, out PerceivedEntity initiator) ||
+            !IsPassTargetEligible(obs, initiator, ballXZ, offsideLineProjX, humanCalled: false, out _, out _))
+        {
+            AbandonCombination(obs, CombinationEndReason.AbandonedByReceiver);
+            return;
+        }
+
+        if (EvaluateLaneClearance(ballXZ, obs.Combination.ReturnXZ, obs.VisiblePlayers, obs.SelfTeam) <
+            OneTwoMinLaneClearance01)
+        {
+            AbandonCombination(obs, CombinationEndReason.AbandonedByReceiver);
+        }
+    }
+
+    private void AbandonCombination(in FootballerObservation obs, CombinationEndReason reason)
+    {
+        if (!obs.Combination.IsActive) return;
+
+        _communication?.Combinations.Abandon(obs.Combination.ContractId, obs.SelfId, reason, obs.Tick);
+    }
+
+    /// <summary>
+    /// A8.1's off-ball half. A one-two initiator runs into the frozen return region (the contract's region and
+    /// meeting tick, never a moving point), and any participant whose contract has been overtaken by the ball
+    /// abandons it. The run is a normal movement candidate with a stable identity, so commitment and the
+    /// switch rule work exactly as they do for every other off-ball action.
+    /// </summary>
+    private void AddCombinationCandidates(in FootballerObservation obs, float offsideLineProjX)
+    {
+        CombinationContext combination = obs.Combination;
+        if (!combination.IsActive) return;
+
+        // The ball has moved to somebody who is not part of the contract's plan: the move it was made for
+        // has gone. A ball in flight is not controlled, so a return on its way to the region never hits this.
+        if (obs.PossessingTeam == obs.SelfTeam && obs.BallControlState == BallControlState.Controlled &&
+            obs.BallControllingPlayerId is int carrierId)
+        {
+            if (combination.Role == CombinationRole.Receiver && carrierId != obs.SelfId)
+            {
+                AbandonCombination(obs, CombinationEndReason.AbandonedByReceiver);
+                return;
+            }
+
+            if (combination.Role == CombinationRole.Initiator &&
+                carrierId != obs.SelfId && carrierId != combination.ReceiverId)
+            {
+                AbandonCombination(obs, CombinationEndReason.AbandonedByInitiator);
+                return;
+            }
+        }
+
+        if (!combination.IsReturnRunner) return;
+
+        Vector2 region = combination.ReturnXZ;
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+
+        // "Any participant may abandon an invalid lane": the return region was chosen from this player's
+        // picture when he made the pass. If the line has now moved him offside, the region has slid off the
+        // pitch or a defender has taken the room, the lane is no longer valid and he stops running it. The
+        // contract ends on the same decision, so the receiver cannot be asked to play into a space nobody is
+        // going to.
+        bool insidePitch = MathF.Abs(region.X) <= _pitch.HalfLength - 3f &&
+                           MathF.Abs(region.Y) <= _pitch.HalfWidth - 2f;
+        bool onside = region.X * obs.AttackingDirectionX <=
+                      OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+        float space = EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam);
+        if (!insidePitch || !onside || space < CombinationReturnRunMinSpace01)
+        {
+            AbandonCombination(obs, CombinationEndReason.AbandonedByInitiator);
+            return;
+        }
+
+        Vector2 toRegion = region - selfXZ;
+        float distance = toRegion.Length();
+        Vector2 moveDir = distance > 0.4f
+            ? (toRegion / distance) * Math.Clamp(distance / 3.5f, 0.35f, 1.0f)
+            : Vector2.Zero;
+        Vector2 faceDir = SimMath.SafeNormalize(ballXZ - selfXZ, obs.SelfFacingXZ);
+        float utility = CombinationReturnRunBaseUtility
+                        + CombinationReturnRunConfidenceWeight * combination.Promise01(obs.Tick)
+                        + CombinationReturnRunSpaceWeight * space;
+
+        var command = new FootballerCommand(
+            moveDir, faceDir, distance > 3.5f, false, false, false, false, Vector3.Zero,
+            KickIntentType.None, Vector3.UnitX, 0f, 0f);
+
+        _lastCandidates.Add(new UtilityCandidate(CombinationReturnActionName, utility, command)
+        {
+            TargetXZ = new Vector3(region.X, 0f, region.Y),
+            Key = new CandidateKey(CandidateKind.Run, TargetTag: CombinationReturnTag)
+        });
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -2098,6 +2709,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         //     decision for the tick and replaces the duty; a supporting act competes with it.
         if (AddDefensiveCandidates(obs))
             return;
+
+        // A8.1: a live combination can ask this player for one more thing — a one-two's initiator must run
+        // into the frozen return region — and a participant whose move has gone abandons it. The candidate
+        // competes with the duty below rather than replacing it, so shape still has a say in whether the
+        // player actually goes.
+        if (_ai.EnableCombinations)
+            AddCombinationCandidates(obs, offsideLineProjX);
 
         // 2. Job-directed movement (audit F04). The team assigns a persistent job (outlet, third
         //    player, depth run, width, overlap, cover, marker, the defensive line...); score a couple

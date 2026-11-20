@@ -239,6 +239,22 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableArchetypes { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.1 — bounded combinations. A one-two or a third-player move is a contract between team-mates:
+    // participants, a return region, an expected arrival, a confidence and an expiry, published through the
+    // one communication channel. See CombinationCoordinator.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether players form one-two and third-player contracts (A8.1). <b>On by default</b>: this is the
+    /// behaviour the version ships, and the field exists so A9.2 can ablate the mechanism and so the evidence
+    /// probe can run the same worlds with it off. Off means the carrier never proposes a contract, the board
+    /// stays empty, every observation's <see cref="FootballerObservation.Combination"/> is neutral and no
+    /// candidate or score is touched — the version-46 build exactly, which is what makes the A/B two builds
+    /// rather than two tunings of the same decision.
+    /// </summary>
+    public bool EnableCombinations { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -254,7 +270,8 @@ public sealed class AiRuntimeConfig
         $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t) " +
         $"reception({(EnableReceptionPlanning ? "on" : "off")}) " +
         $"cognitive({(EnableCognitiveError ? "on" : "off")}) " +
-        $"archetypes({(EnableArchetypes ? "on" : "off")})";
+        $"archetypes({(EnableArchetypes ? "on" : "off")}) " +
+        $"combinations({(EnableCombinations ? "on" : "off")})";
 }
 
 /// <summary>
