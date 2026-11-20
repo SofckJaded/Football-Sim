@@ -17,6 +17,14 @@ public readonly record struct PlayerIntent(
     int StartTick,
     int ExpiryTick)
 {
+    /// <summary>
+    /// A7.3: the reception plan behind the command, when this intent is a first touch. The default is
+    /// <see cref="ReceptionPlan.None"/>, so every pre-A7.3 caller and every non-reception action keeps
+    /// the neutral value. It lives on the intent (not only on the observation) because the planned
+    /// touch survives until the ball actually arrives and A7.4 publishes it on the command boundary.
+    /// </summary>
+    public ReceptionPlan Reception { get; init; } = ReceptionPlan.None;
+
     /// <summary>True while <paramref name="tick"/> is inside the intent's half-open window.</summary>
     public bool IsLiveAt(int tick) => tick >= StartTick && tick < ExpiryTick;
 

@@ -59,6 +59,9 @@ public static class Program
             case "--calls":
                 return RunTeamCallEvidence(args) ? 0 : 1;
 
+            case "--receptions":
+                return RunReceptionEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -73,6 +76,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --keepers [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scans [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --calls [seeds] [halfSeconds] [on|off]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --receptions [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -1570,6 +1574,175 @@ public static class Program
             : "RESULT: incomplete, or the call channel did not appear (calls on with nothing published)");
         return ok;
     }
+
+    /// <summary>
+    /// A7.3 evidence: what reception planning actually does in real matches, measured rather than
+    /// asserted.
+    ///
+    /// Denominator: one completed 11v11 match per seed, sampled every <see cref="ReceptionSampleInterval"/>
+    /// ticks over players who are the <c>IntendedReceiverId</c> of a pass in flight — the decision A7.3
+    /// exists for. The plan counters come from the controller's own recorded decision
+    /// (<see cref="TacticalUtilityAiController.LastReceptionPlan"/>), so they measure what the receiver
+    /// chose, not a passive field. "Unknown pressure" counts plans made without any believed presser: the
+    /// milestone's "cannot say is a value" rule, visible as a number rather than a claim. "Heard a warning"
+    /// counts receiver-observations that carried a man-on call (A7.2's channel addressed to a receiver by
+    /// A7.3's producer).
+    ///
+    /// Passing <c>off</c> runs the same matches with <see cref="AiRuntimeConfig.EnableReceptionPlanning"/>
+    /// false: the A/B is then two invocations with identical squads, seeds and clocks, and the off run's
+    /// requirement is that no plan was ever formed (the pre-A7.3 intercept ray was chosen instead).
+    /// </summary>
+    private static bool RunReceptionEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+        bool planning = args.Length <= 3 || !args[3].Equals("off", StringComparison.OrdinalIgnoreCase);
+        var ai = new AiRuntimeConfig { EnableReceptionPlanning = planning };
+
+        Console.WriteLine($"=== A7.3 reception-planning evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s," +
+                          $" planning {(planning ? "ON" : "OFF")} ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Reception model    : {ReceptionPlanner.MaxOptions} (orientation, touch) pairs," +
+                          $" horizon {ReceptionPlanner.PlanHorizonSeconds:F1} s, pressure radius" +
+                          $" {ReceptionPlanner.PressureRadiusMeters:F0} m, man-on belief" +
+                          $" {ReceptionPlanner.ManOnPressure01:F2} +/- {ReceptionPlanner.ManOnUncertainty01:F2}");
+        Console.WriteLine($"AI configuration   : {ai.Describe()}");
+
+        int[] plansByKind = new int[Enum.GetValues(typeof(ReceptionTouchKind)).Length];
+        long receiverSamples = 0;
+        long planned = 0;
+        long unknownPressure = 0;
+        long heardWarnings = 0;
+        long optionSamples = 0;
+        double scoreSum = 0;
+        double arrivalSum = 0;
+        int matches = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack,
+                Ai = ai
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+            long seedReceiverSamples = 0;
+            long seedPlanned = 0;
+            long seedUnknown = 0;
+            long seedWarnings = 0;
+            long seedOptions = 0;
+            double seedScore = 0;
+            double seedArrival = 0;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+                if (engine.CurrentTick % ReceptionSampleInterval != 0) continue;
+
+                foreach (FootballerState player in engine.Players)
+                {
+                    if (!player.IsActiveOnPitch) continue;
+                    FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                    if (observation is null) continue;
+                    if (observation.IntendedReceiverId != player.Id) continue;
+                    if (observation.BallControlState != BallControlState.InFlightPass) continue;
+
+                    seedReceiverSamples++;
+                    if (observation.Calls.Kind == TeamCallKind.ManOn) seedWarnings++;
+
+                    if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+                    ReceptionPlan plan = controller.LastReceptionPlan;
+                    if (!plan.IsPlanned) continue;
+
+                    seedPlanned++;
+                    seedOptions += controller.LastCandidates.Count;
+                    plansByKind[(int)plan.TouchKind]++;
+                    if (!plan.PressureKnown) seedUnknown++;
+                    seedScore += plan.Score;
+                    seedArrival += plan.ArrivalSeconds;
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matches++;
+            receiverSamples += seedReceiverSamples;
+            planned += seedPlanned;
+            unknownPressure += seedUnknown;
+            heardWarnings += seedWarnings;
+            optionSamples += seedOptions;
+            scoreSum += seedScore;
+            arrivalSum += seedArrival;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
+                              $" score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} |" +
+                              $" {seedReceiverSamples} receiver looks, {seedPlanned} planned" +
+                              (seedPlanned == 0
+                                  ? string.Empty
+                                  : $" ({seedScore / seedPlanned:F2} mean score, {seedOptions / (double)seedPlanned:F1}" +
+                                    $" options, {seedArrival / seedPlanned:F2} s to arrival)") +
+                              $" | {seedWarnings} man-on warnings heard");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matches} completed, {receiverSamples} receiver looks) ===");
+        if (matches == 0 || receiverSamples == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        long shieldOrEscape = plansByKind[(int)ReceptionTouchKind.Shield]
+                              + plansByKind[(int)ReceptionTouchKind.EscapePressure];
+        Console.WriteLine($"Plans formed       : {planned} of {receiverSamples} receiver looks" +
+                          $" ({100.0 * planned / receiverSamples:F2} %) |" +
+                          (planned == 0
+                              ? " mean score n/a, mean arrival n/a"
+                              : $" mean score {scoreSum / planned:F2}, mean arrival {arrivalSum / planned:F2} s," +
+                                $" {optionSamples / (double)planned:F1} options per decision"));
+        Console.WriteLine($"By touch           : {DescribeReceptionKindCounts(plansByKind)}");
+        Console.WriteLine($"Cannot say         : {unknownPressure} plans formed with no believed presser" +
+                          (planned == 0 ? " (n/a)" : $" ({100.0 * unknownPressure / planned:F1} % of plans)"));
+        Console.WriteLine($"Receiver warnings  : {heardWarnings} in-flight receiver observations carried a man-on call");
+
+        bool ok = planning
+            ? matches == seedCount && planned > 0 && shieldOrEscape > 0
+            : matches == seedCount && planned == 0;
+        Console.WriteLine(ok
+            ? planning
+                ? "RESULT: receivers plan the first touch, including shield/escape under believed pressure"
+                : "RESULT: planning off means no reception plan and the pre-A7.3 intercept ray"
+            : "RESULT: incomplete, or the reception planner did not appear (planning on with no plan)");
+        return ok;
+    }
+
+    /// <summary>"Kill 120, OpenBody 88, ..." for the touch kinds that occurred, in enum order.</summary>
+    private static string DescribeReceptionKindCounts(int[] counts)
+    {
+        var parts = new List<string>();
+        for (int kind = 1; kind < counts.Length; kind++)
+        {
+            if (counts[kind] == 0) continue;
+            parts.Add($"{((ReceptionTouchKind)kind)} {counts[kind]}");
+        }
+
+        return parts.Count == 0 ? "none" : string.Join(", ", parts);
+    }
+
+    /// <summary>How often the reception probe samples receivers, in ticks (15 Hz).</summary>
+    private const int ReceptionSampleInterval = 4;
 
     /// <summary>Adds one team's current line band call shift to the probe's sample, if it has one.</summary>
     private static void SampleLineCallShift(

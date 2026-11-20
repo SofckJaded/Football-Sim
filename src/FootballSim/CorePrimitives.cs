@@ -458,12 +458,21 @@ public enum TeamId
 /// run candidates; a cover call changes the presser's depth; step and drop are the one line caller's
 /// bounded bias on the A6.3 line band. No call carries an opponent position, so the knowledge boundary is
 /// unchanged. Trajectories differ from version 40.</item>
+/// <item><c>AiBehaviour 42</c> — A7.3: <b>reception planning before arrival</b>. The intended receiver of an
+/// in-flight pass plans the first touch (<see cref="AI.ReceptionPlanner"/>): kill, open body, stride touch,
+/// shield or escape, evaluated as feasible (orientation, touch) pairs against the arrival time, the next
+/// action's reception value and the uncertainty of his own belief. The plan is a movement/orientation
+/// intent — the command vocabulary is unchanged — and A7.4 publishes it on the command boundary. A man-on
+/// call can now be addressed to the receiver by a team-mate who sees the presser closing from behind him,
+/// and the plan's shield/escape touches consume that belief. The on-ball candidate gate is height-aware, so
+/// a receiver under a dropping pass enters the receiving path instead of asking for kicks execution refuses.
+/// Trajectories differ from version 41.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 41;
+    public const int AiBehaviour = 42;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

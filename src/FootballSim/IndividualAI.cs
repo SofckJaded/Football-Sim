@@ -141,6 +141,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         _lastSelected = new UtilityCandidate("Idle", 0f, FootballerCommand.Idle) { Key = CandidateKey.None };
         _lastRunnerUp = null;
         _lastCandidateCount = 0;
+        // A7.3: a plan is about one arriving ball; a restart means that ball is history.
+        LastReceptionPlan = ReceptionPlan.None;
         _generator.ResetForPhase(reason);
         _executor.Clear();
         _debugSummary = $"Reset ({reason})";
@@ -204,7 +206,15 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         // built without a match (probes/tests).
         bool isPrimaryBallResponder = (obs.IsDesignatedBallResponder ?? ComputeLocalResponder(obs, ballXZ, ballVelXZ))
                                       && !teammateHasControl;
-        bool onBall = distToBall <= obs.SelfAttributes.ReachRadius * 1.35f && obs.AvailableToKick;
+
+        // A7.3: a ball above torso height is not "on the ball" — execution would refuse every kick for it
+        // as BallTooHigh. Recognising the height here is what sends the receiver of a dropping pass into
+        // the receiving branch (which plans the meeting) instead of asking for kicks it cannot execute.
+        // The gate is the execution layer's own contact rule, not a second reach number.
+        bool ballAtFeetHeight = BallContactRules.IsHeightReachable(
+            obs.PerceivedBallPosition.Y, obs.SelfPosition.Y,
+            BallContactRules.MaxContactHeight(keeperHandling: false, jumpingOrHeading: false));
+        bool onBall = distToBall <= obs.SelfAttributes.ReachRadius * 1.35f && obs.AvailableToKick && ballAtFeetHeight;
 
         if (onBall || (obs.BallLastTouchedByPlayerId == obs.SelfId && distToBall < 1.8f))
             _timeOnBall += dt;
@@ -305,8 +315,17 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         // any other choice ends it. A5.3: the adopted run is announced to the team on the same call.
         _generator.NoteDecision(obs, best.Key);
 
+        // A7.3: record the reception plan the candidate carried, if any (A7.4's seam). It is stored on
+        // the intent rather than only on the observation so the decision about the first touch survives
+        // the tick that made it — the ball may arrive ten ticks later.
+        ReceptionPlan receptionPlan = _generator.TryGetReceptionPlan(best.Key, out ReceptionPlan planned)
+            ? planned
+            : ReceptionPlan.None;
+        LastReceptionPlan = receptionPlan;
+
         _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";
-        StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job);
+        StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job,
+            receptionPlan);
         return best.Command;
     }
 
@@ -335,11 +354,24 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     public const float SwitchEpsilon = 1e-3f;
 
     /// <summary>
+    /// A7.3: the reception plan carried by the action this controller last chose, or
+    /// <see cref="ReceptionPlan.None"/>. Diagnostics, the inspector and the <c>--receptions</c> probe read
+    /// it; nothing in the decision path does. A7.4 publishes the same plan on the command boundary.
+    /// </summary>
+    public ReceptionPlan LastReceptionPlan { get; private set; } = ReceptionPlan.None;
+
+    /// <summary>
     /// Publishes the chosen action as an intent (A1.2). Recorded even when scheduling is off, so the
     /// executor's state always describes the last real decision rather than lagging behind a feature
     /// switch.
     /// </summary>
-    private void StoreIntent(int tick, CandidateKey key, string actionName, FootballerCommand command, bool isJob)
+    private void StoreIntent(
+        int tick,
+        CandidateKey key,
+        string actionName,
+        FootballerCommand command,
+        bool isJob,
+        ReceptionPlan reception = default)
     {
         _decisionsComputed++;
         float seconds = isJob ? _ai.JobCommitmentSeconds : _ai.ReactionCommitmentSeconds;
@@ -347,7 +379,10 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         // Ticks are absolute, so a suspended tick cannot extend an intent by accident.
         int start = Math.Max(0, tick);
-        _executor.Set(new PlayerIntent(key, actionName, command, start, start + ticks));
+        _executor.Set(new PlayerIntent(key, actionName, command, start, start + ticks)
+        {
+            Reception = reception
+        });
     }
 
     /// <summary>

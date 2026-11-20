@@ -225,6 +225,7 @@ public static class TeamCallPlanner
     public static bool TryBuild(in FootballerObservation obs, out TeamCallDraft draft)
     {
         if (TryBuildManOn(obs, out draft)) return true;
+        if (TryBuildManOnReceiver(obs, out draft)) return true;
         if (TryBuildTurn(obs, out draft)) return true;
         if (TryBuildSwitch(obs, out draft)) return true;
         if (TryBuildRun(obs, out draft)) return true;
@@ -234,6 +235,46 @@ public static class TeamCallPlanner
 
         draft = default;
         return false;
+    }
+
+    /// <summary>
+    /// "Man on" for a pass in flight: the caller sees an opponent closing on the team-mate who is the
+    /// intended receiver, so he warns that team-mate. A7.3's reception planner is the consumer — the
+    /// receiver cannot see the man arriving behind him while he faces the ball, and the plan's shield /
+    /// escape touches need the belief the shout provides.
+    ///
+    /// The shout is the same kind as the carrier's man-on because it is the same instruction: "somebody
+    /// is on you". It names the receiver as its target and carries no position, so it still cannot
+    /// become a sighting. A caller must see both the receiver and the fresh opponent from his own
+    /// picture (<see cref="CallSightRangeMeters"/> bounds how far away that judgement may be made).
+    /// </summary>
+    public static bool TryBuildManOnReceiver(in FootballerObservation obs, out TeamCallDraft draft)
+    {
+        draft = default;
+        if (obs.BallControlState != BallControlState.InFlightPass) return false;
+        if (obs.PossessingTeam != obs.SelfTeam) return false;
+        if (obs.IntendedReceiverId is not int receiverId || receiverId == obs.SelfId) return false;
+        if (!TryFindEntity(obs, receiverId, out PerceivedEntity receiver)) return false;
+        if (receiver.Team != obs.SelfTeam) return false;
+        if (DistanceXZ(obs.SelfPosition, receiver.EstimatedPosition) > CallSightRangeMeters) return false;
+
+        float nearest = float.MaxValue;
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity opponent = obs.VisiblePlayers[i];
+            if (opponent.Team == obs.SelfTeam || !IsFresh(opponent)) continue;
+
+            float distance = DistanceXZ(opponent.EstimatedPosition, receiver.EstimatedPosition);
+            if (distance > ManOnRadiusMeters || distance >= nearest) continue;
+            nearest = distance;
+        }
+
+        if (nearest == float.MaxValue) return false;
+
+        // The closer the man, the more urgent the warning — same scale as the carrier's man-on.
+        float urgency = 1f - nearest / ManOnRadiusMeters;
+        draft = new TeamCallDraft(TeamCallKind.ManOn, receiverId, 0, Clamp01(0.55f + 0.45f * urgency));
+        return true;
     }
 
     /// <summary>

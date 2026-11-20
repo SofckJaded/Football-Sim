@@ -195,10 +195,17 @@ public sealed class CandidateGenerator : IAiStateResettable
     private readonly PassPlanner _passPlanner;
     private readonly PassSuccessModel _passSuccess;
     private readonly ReceptionValueModel _receptionValue;
+    private readonly ReceptionPlanner _receptionPlanner;
     private readonly RunCandidateGenerator _runs;
     private readonly AiRuntimeConfig _ai;
     private readonly LocalPressureField _pressure = new();
     private readonly List<UtilityCandidate> _lastCandidates = new();
+
+    // A7.3 reception plans of the most recent decision, indexed the same way the reception candidates
+    // were added. Reused: a decision that is not a reception leaves the count at zero.
+    private readonly CandidateKey[] _receptionKeys = new CandidateKey[ReceptionPlanner.MaxOptions];
+    private readonly ReceptionPlan[] _receptionPlans = new ReceptionPlan[ReceptionPlanner.MaxOptions];
+    private int _receptionPlanCount;
 
     // Pass-target pre-rank buffer (A4.1 bound): ids in descending rank order, plus their ranks. Reused
     // so a decision allocates nothing.
@@ -229,6 +236,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _passPlanner = new PassPlanner(pitch);
         _passSuccess = new PassSuccessModel(_passPlanner);
         _receptionValue = new ReceptionValueModel(pitch);
+        _receptionPlanner = new ReceptionPlanner(pitch);
         // A5.3: the runs this player adopts are announced on the match's own communication board (null
         // when there is no match communication: a probe or a unit test built without one).
         _runs = new RunCandidateGenerator(pitch, communication?.Runs);
@@ -280,6 +288,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Clear();
         _rejectionCount = 0;
         _passTargetCount = 0;
+        _receptionPlanCount = 0;
     }
 
     /// <summary>
@@ -297,6 +306,7 @@ public sealed class CandidateGenerator : IAiStateResettable
     {
         _lastCandidates.Clear();
         _passTargetCount = 0;
+        _receptionPlanCount = 0;
         _tackleCooldown = 0f;
         _timeOnBall = 0f;
         _hasLastCarryDirection = false;
@@ -2035,7 +2045,19 @@ public sealed class CandidateGenerator : IAiStateResettable
                 return;
             }
 
-            // Receiving a friendly pass: step onto the pass ray and cushion it
+            // Receiving a friendly pass.
+            //
+            // A7.3: the intended receiver plans the first touch before the ball arrives. When the plan
+            // exists it replaces the single fixed intercept ray with the set of feasible
+            // (body orientation, touch) pairs — kill, open body, stride touch, shield, escape — each
+            // carrying its own meeting point, facing and sprint/shield flags. The command vocabulary is
+            // unchanged: A7.4 owns the command/execution boundary, so a plan can only express itself
+            // through movement and body orientation the player already has.
+            if (_ai.EnableReceptionPlanning && AddReceptionCandidates(obs, selfXZ, dirToBall))
+                return;
+
+            // The pre-A7.3 path, kept exactly as it was: with reception planning off (or no feasible
+            // plan) the receiver steps onto the pass ray and cushions it.
             Vector2 toIntercept = myInterceptXZ - selfXZ;
             float distIntercept = toIntercept.Length();
             Vector2 moveDir = distIntercept > 0.45f
@@ -2171,6 +2193,70 @@ public sealed class CandidateGenerator : IAiStateResettable
             Key = new CandidateKey(CandidateKind.Shape,
                 TargetTag: obs.PossessingTeam == obs.SelfTeam ? "support" : "defend")
         });
+    }
+
+    /// <summary>
+    /// A7.3: turns the reception plan into this decision's candidate set. Every feasible
+    /// (orientation, touch) pair becomes one candidate — the receiver's options are now the touches he
+    /// could take, not a single intercept ray — and the pair's score is its utility.
+    ///
+    /// Returns false when there is nothing to plan (not the intended receiver, the flight cannot be
+    /// predicted, or no pair is feasible). The caller then uses the exact pre-A7.3 command, so the
+    /// ablation reproduces the old build rather than a near-miss of it.
+    /// </summary>
+    private bool AddReceptionCandidates(in FootballerObservation obs, Vector2 selfXZ, Vector2 dirToBall)
+    {
+        if (!_receptionPlanner.TryPlan(obs, out _)) return false;
+
+        bool added = false;
+        for (int i = 0; i < _receptionPlanner.OptionCount; i++)
+        {
+            ReceptionOption option = _receptionPlanner.GetOption(i);
+            if (!option.Feasible) continue;
+
+            ReceptionPlan plan = _receptionPlanner.PlanForOption(i);
+            Vector2 toMeeting = plan.MeetingPointXZ - selfXZ;
+            float distance = toMeeting.Length();
+
+            // The same approach rule the legacy ray used: heading for the ball, with the near-field
+            // fallback when the player is already on top of it.
+            Vector2 moveDir = distance > 0.45f ? toMeeting / distance : dirToBall * 0.35f;
+            var command = new FootballerCommand(
+                moveDir, plan.FacingXZ, plan.Sprint && distance > 1.5f, plan.Shield,
+                false, false, false, Vector3.Zero,
+                KickIntentType.None, Vector3.UnitX, 0f, 0f);
+
+            CandidateKey key = new(CandidateKind.Intercept, TargetTag: ReceptionPlanner.TagOf(plan.TouchKind));
+            _lastCandidates.Add(new UtilityCandidate(ReceptionPlanner.NameOf(plan.TouchKind), plan.Score, command)
+            {
+                TargetXZ = new Vector3(plan.MeetingPointXZ.X, 0f, plan.MeetingPointXZ.Y),
+                Key = key
+            });
+
+            _receptionKeys[_receptionPlanCount] = key;
+            _receptionPlans[_receptionPlanCount] = plan;
+            _receptionPlanCount++;
+            added = true;
+        }
+
+        return added;
+    }
+
+    /// <summary>
+    /// A7.3: the plan behind one of this decision's reception candidates, if <paramref name="key"/>
+    /// names one. The controller records it on the intent (A7.4's seam) and the inspector/probe read it.
+    /// </summary>
+    public bool TryGetReceptionPlan(in CandidateKey key, out ReceptionPlan plan)
+    {
+        for (int i = 0; i < _receptionPlanCount; i++)
+        {
+            if (!_receptionKeys[i].Equals(key)) continue;
+            plan = _receptionPlans[i];
+            return true;
+        }
+
+        plan = ReceptionPlan.None;
+        return false;
     }
 
     /// <summary>

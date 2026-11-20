@@ -302,6 +302,13 @@ public partial class MatchClientNode : Node3D
             : $"\nCALLS (team, delayed): {observation.Calls.Describe()}" +
               $" | {_engine.Communication.Calls.VisibleCount(inspected.Team, _engine.CurrentTick)} live on the team board";
 
+        // A7.3: the receiver's plan for the first touch, recorded on the controller's last decision. It
+        // is shown as its own line because "which touch, facing where" is the decision A7.3 exists for
+        // and the candidate table alone only shows its score.
+        string receptionLine = controller is TacticalUtilityAiController aiController
+            ? $"\nRECEPTION (first touch): {aiController.LastReceptionPlan.Describe()}"
+            : "\nRECEPTION (first touch): not an AI player";
+
         // A3.1: the team context is several facts, so it is printed as several facts. Collapsing it
         // back to one label is exactly what the old TeamTacticalState did and what this replaced.
         TeamContext context = observation?.TacticalContext ?? _engine.Tactics.ContextFor(inspected.Team);
@@ -330,7 +337,7 @@ public partial class MatchClientNode : Node3D
         string turnoverLine = $"\nTURNOVER: {turnover.Describe()}";
 
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
-            return contextLine + bandLine + turnoverLine + scanLine + callsLine + beliefLine;
+            return contextLine + bandLine + turnoverLine + scanLine + callsLine + receptionLine + beliefLine;
 
         PressureCell cell = ai.PressureField.Read(
             new System.Numerics.Vector2(_engine.Ball.Position.X, _engine.Ball.Position.Z), out bool inside);
@@ -339,7 +346,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return contextLine + bandLine + turnoverLine + scanLine + callsLine + beliefLine + cellLine;
+        return contextLine + bandLine + turnoverLine + scanLine + callsLine + receptionLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 

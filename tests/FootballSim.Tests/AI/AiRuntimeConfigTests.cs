@@ -340,6 +340,25 @@ public sealed class AiRuntimeConfigTests
         });
     }
 
+    [Fact]
+    public void ReceptionPlanningDefault_IsOnAndStatedInTheDescription()
+    {
+        // A7.3 ships reception planning on: the switch is the A9.2 ablation and the --receptions A/B,
+        // not a hidden guard, and the artifact records which build produced its numbers.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableReceptionPlanning);
+        Assert.Contains("reception(on)", defaults.Describe());
+        Assert.Contains("reception(off)", new AiRuntimeConfig { EnableReceptionPlanning = false }.Describe());
+    }
+
+    [Fact]
+    public void TheReceptionAblation_IsALegalConfiguration()
+    {
+        // Turning the planner off restores the pre-A7.3 intercept ray exactly, so it is a supported
+        // configuration rather than a validation error.
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableReceptionPlanning = false });
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {

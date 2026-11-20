@@ -191,6 +191,21 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public int TeamCallCommunicationDelayTicks { get; init; } = 18;
 
+    // ---------------------------------------------------------------------------------------------
+    // A7.3 — reception planning. The intended receiver of a pass in flight plans the first touch
+    // (kill / open body / stride touch / shield / escape) before the ball arrives. See
+    // ReceptionPlanner.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the intended receiver plans the first touch (A7.3). <b>On by default</b>: this is the
+    /// behaviour the version ships, and the field exists so A9.2 can ablate it and so the evidence probe
+    /// can run the same worlds with it off. Off means the receiver keeps the pre-A7.3 intercept ray
+    /// exactly — one candidate, one facing, no plan — which is what makes the A/B two builds rather
+    /// than two tunings of the same decision.
+    /// </summary>
+    public bool EnableReceptionPlanning { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -203,7 +218,8 @@ public sealed class AiRuntimeConfig
         $"scan({(EnableScanning ? "on" : "off")} turn {ScanMaxHeadTurnDegrees:F0}deg " +
         $"rate {ScanTurnRateDegreesPerSecond:F0}deg/s hold {ScanHoldSeconds:F2}s " +
         $"range {ScanAttentionRangeMeters:F0}m) " +
-        $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t)";
+        $"calls({(EnableTeamCalls ? "on" : "off")} delay {TeamCallCommunicationDelayTicks}t) " +
+        $"reception({(EnableReceptionPlanning ? "on" : "off")})";
 }
 
 /// <summary>

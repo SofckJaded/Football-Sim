@@ -423,8 +423,108 @@ public sealed class TeamCallPlannerTests
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Man-on for a pass receiver (A7.3's producer half).
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void AReceiver_IsWarned_WhenTheCallerSeesAnOpponentClosingOnTheIntendedReceiver()
+    {
+        // The pass is in flight; the caller sees the receiver and a fresh opponent right on him. The
+        // receiver cannot see the man arriving behind him, so this is the shout A7.3's plan consumes.
+        FootballerObservation obs = ReceivingObservation(
+            selfId: SelfId, selfXZ: new Vector2(8f, 3f), receiverId: CarrierId,
+            visible: [Mate(CarrierId, 0f, 0f), Opponent(PresserId, 1.2f, 0.4f)]);
+
+        Assert.True(TeamCallPlanner.TryBuildManOnReceiver(obs, out TeamCallDraft draft));
+        Assert.Equal(TeamCallKind.ManOn, draft.Kind);
+        Assert.Equal(CarrierId, draft.TargetPlayerId);
+        Assert.InRange(draft.Strength01, 0f, 1f);
+    }
+
+    [Fact]
+    public void AReceiverWarning_NeedsAFreshSightingOfTheOpponent()
+    {
+        FootballerObservation stale = ReceivingObservation(
+            selfId: SelfId, selfXZ: new Vector2(8f, 3f), receiverId: CarrierId,
+            visible: [Mate(CarrierId, 0f, 0f), Opponent(PresserId, 1.2f, 0.4f, ageTicks: 120)]);
+        Assert.False(TeamCallPlanner.TryBuildManOnReceiver(stale, out _));
+
+        FootballerObservation faint = ReceivingObservation(
+            selfId: SelfId, selfXZ: new Vector2(8f, 3f), receiverId: CarrierId,
+            visible: [Mate(CarrierId, 0f, 0f), Opponent(PresserId, 1.2f, 0.4f, confidence: 0.15f)]);
+        Assert.False(TeamCallPlanner.TryBuildManOnReceiver(faint, out _));
+    }
+
+    [Fact]
+    public void AReceiverWarning_UsesTheSameManOnRadius()
+    {
+        FootballerObservation far = ReceivingObservation(
+            selfId: SelfId, selfXZ: new Vector2(8f, 3f), receiverId: CarrierId,
+            visible: [Mate(CarrierId, 0f, 0f), Opponent(PresserId, 6f, 0f)]);
+        Assert.False(TeamCallPlanner.TryBuildManOnReceiver(far, out _));
+    }
+
+    [Fact]
+    public void APlayerDoesNotWarnHimself_AboutThePassHeIsReceiving()
+    {
+        FootballerObservation obs = ReceivingObservation(
+            selfId: CarrierId, selfXZ: new Vector2(0f, 0f), receiverId: CarrierId,
+            visible: [Mate(SelfId, 8f, 3f), Opponent(PresserId, 1.2f, 0.4f)]);
+
+        Assert.False(TeamCallPlanner.TryBuildManOnReceiver(obs, out _));
+    }
+
+    [Fact]
+    public void AReceiverWarning_NeedsTheCallerCloseEnoughToSeeTheDetail()
+    {
+        // A caller 40 m from the receiver cannot judge who is on him; the rule has the same sight range
+        // bound as every other call.
+        FootballerObservation obs = ReceivingObservation(
+            selfId: SelfId, selfXZ: new Vector2(45f, 3f), receiverId: CarrierId,
+            visible: [Mate(CarrierId, 0f, 0f), Opponent(PresserId, 1.2f, 0.4f)]);
+
+        Assert.False(TeamCallPlanner.TryBuildManOnReceiver(obs, out _));
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Helpers: one picture, stated explicitly.
     // ---------------------------------------------------------------------------------------------
+
+    /// <summary>A caller whose own team has a planned pass in flight to <paramref name="receiverId"/>.</summary>
+    private static FootballerObservation ReceivingObservation(
+        int selfId,
+        Vector2 selfXZ,
+        int receiverId,
+        IReadOnlyList<PerceivedEntity> visible) => new()
+    {
+        SelfId = selfId,
+        SelfTeam = TeamId.Home,
+        SelfRole = TacticalRole.CentralMidfielder,
+        SelfPosition = new Vector3(selfXZ.X, 0f, selfXZ.Y),
+        SelfVelocity = Vector3.Zero,
+        SelfFacingXZ = new Vector2(1f, 0f),
+        Stamina01 = 1f,
+        AvailableToKick = true,
+        ControlQuality01 = 1f,
+        PerceivedBallPosition = new Vector3(0f, 0.11f, 0f),
+        PerceivedBallVelocity = new Vector3(-3f, 0f, 0f),
+        PossessingTeam = TeamId.Home,
+        BallLastTouchedByPlayerId = 102,
+        BallLastTouchedByTeam = TeamId.Home,
+        BallControlState = BallControlState.InFlightPass,
+        BallControllingPlayerId = null,
+        IntendedReceiverId = receiverId,
+        TacticalAnchorPosition = new Vector3(selfXZ.X, 0f, selfXZ.Y),
+        AttackingDirectionX = AttackDirX,
+        MatchTimeSeconds = 10f,
+        CurrentMatchPhase = MatchPhase.FirstHalf,
+        IsSetPieceTaker = false,
+        Tick = 500,
+        VisiblePlayers = visible,
+        TeamProfile = TeamTacticalProfile.PossessionControl,
+        SelfTendencies = PlayerTendencyProfile.ForRole(TacticalRole.CentralMidfielder),
+        SelfAttributes = new PlayerAttributes()
+    };
 
     private static FootballerObservation Observation(
         int selfId,
