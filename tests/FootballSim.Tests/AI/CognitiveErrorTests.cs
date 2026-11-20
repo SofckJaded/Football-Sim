@@ -69,6 +69,21 @@ public sealed class CognitiveErrorTests
         Assert.Equal(free.Ball.Position, pressed.Ball.Position);
     }
 
+    [Fact]
+    public void WithTheFeatureOff_AWrongAnticipationIsNotPenalised()
+    {
+        // A7.5's second half is ablated by the same switch: the plan still carries a meeting point, but the
+        // previous build had no way to act on it, so an accurate and a badly wrong plan touch identically.
+        ReceptionIntent accurate = new(ReceptionTouchKind.StrideTouch) { MeetingPointXZ = new Vector2(0.6f, 0f) };
+        ReceptionIntent wrong = new(ReceptionTouchKind.StrideTouch) { MeetingPointXZ = new Vector2(3.0f, 0f) };
+
+        FirstTouch right = RunFirstTouch(presserX: null, cognitiveError: false, intent: accurate);
+        FirstTouch blind = RunFirstTouch(presserX: null, cognitiveError: false, intent: wrong);
+
+        Assert.Equal(right.Ball.Velocity, blind.Ball.Velocity);
+        Assert.Equal(right.Ball.Position, blind.Ball.Position);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Observation error: a tired player's picture is blurrier, from the same draws.
     // ---------------------------------------------------------------------------------------------
@@ -188,7 +203,10 @@ public sealed class CognitiveErrorTests
     /// execution system, and — in the pressed variant — one opponent standing behind him, out of reach of
     /// the ball so he cannot contest it.
     /// </summary>
-    private static FirstTouch RunFirstTouch(float? presserX, bool cognitiveError = true)
+    private static FirstTouch RunFirstTouch(
+        float? presserX,
+        bool cognitiveError = true,
+        ReceptionIntent intent = default)
     {
         var pitch = new PitchDimensions();
         var receiver = Player(10, TeamId.Home, TacticalRole.CentralMidfielder, Vector3.Zero);
@@ -197,7 +215,8 @@ public sealed class CognitiveErrorTests
         receiver.LastCommand = FootballerCommand.Idle with
         {
             DesiredMoveDirectionXZ = new Vector2(1f, 0f),
-            DesiredFacingDirectionXZ = new Vector2(1f, 0f)
+            DesiredFacingDirectionXZ = new Vector2(1f, 0f),
+            ReceptionIntent = intent
         };
 
         FootballerState? presser = null;

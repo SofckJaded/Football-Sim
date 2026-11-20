@@ -78,6 +78,76 @@ public sealed class ReceptionIntentExecutionTests
     }
 
     // ---------------------------------------------------------------------------------------------
+    // (d) A7.5: an early guess can be wrong, and execution reacts to it.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void AWrongAnticipation_RealisesLessOfTheRehearsedTouch()
+    {
+        // The same legal contact and the same planned stride touch; the only difference is where the
+        // receiver's flight estimate said he would meet the ball. The accurate plan meets it at (0.6, 0),
+        // the wrong one expects it 2.4 m further on.
+        ReceptionIntent accurate = new(ReceptionTouchKind.StrideTouch) { MeetingPointXZ = new Vector2(0.6f, 0f) };
+        ReceptionIntent wrong = new(ReceptionTouchKind.StrideTouch) { MeetingPointXZ = new Vector2(3.0f, 0f) };
+
+        FirstTouch right = RunFirstTouch(accurate);
+        FirstTouch blind = RunFirstTouch(wrong);
+
+        Assert.StartsWith("FirstTouchCushion:StrideTouch", right.Receiver.LastExecutionDiagnostic, StringComparison.Ordinal);
+        Assert.StartsWith("FirstTouchCushion:StrideTouch", blind.Receiver.LastExecutionDiagnostic, StringComparison.Ordinal);
+
+        // Both contacts happened; the ball went measurably further ahead for the receiver who met it where
+        // he expected to. A wrong anticipation cannot be free.
+        Vector2 playerVel = new(right.Receiver.Velocity.X, right.Receiver.Velocity.Z);
+        float rightRun = Vector2.Dot(new Vector2(right.Ball.Velocity.X, right.Ball.Velocity.Z) - playerVel,
+            new Vector2(1f, 0f));
+        float blindRun = Vector2.Dot(new Vector2(blind.Ball.Velocity.X, blind.Ball.Velocity.Z) - playerVel,
+            new Vector2(1f, 0f));
+
+        Assert.True(rightRun > blindRun + 0.1f,
+            $"a wrong meeting point cost the touch only {rightRun - blindRun:F3} m/s; the plan's accuracy " +
+            "is not reaching execution");
+    }
+
+    [Fact]
+    public void AnAccurateAnticipation_ChangesNothing()
+    {
+        // A correct plan must be exactly the ai44 touch: the anticipation term is zero inside the contact
+        // tolerance, so this is the same arithmetic the previous build ran.
+        ReceptionIntent accurate = new(ReceptionTouchKind.StrideTouch) { MeetingPointXZ = new Vector2(0.6f, 0f) };
+        FirstTouch touch = RunFirstTouch(accurate);
+
+        Vector2 neutralCushion = NeutralCushionedFor(touch.Receiver);
+        float cap = NeutralCapFor(touch.Receiver);
+        if (neutralCushion.Length() > cap) neutralCushion *= cap / neutralCushion.Length();
+
+        Vector2 expected = ReceptionTouchModel.Resolve(
+            accurate, neutralCushion,
+            new Vector2(touch.Receiver.Velocity.X, touch.Receiver.Velocity.Z),
+            new Vector2(-6f, 0f), FirstTouchQuality(touch.Receiver), new Vector2(1f, 0f), cap);
+
+        Assert.True(MathF.Abs(expected.X - touch.Ball.Velocity.X) < 1e-3f &&
+                    MathF.Abs(expected.Y - touch.Ball.Velocity.Z) < 1e-3f,
+            $"expected ({expected.X:F3},{expected.Y:F3}) got ({touch.Ball.Velocity.X:F3},{touch.Ball.Velocity.Z:F3})" +
+            $" | quality {FirstTouchQuality(touch.Receiver):F4} control {touch.Receiver.ControlQuality01:F4}" +
+            $" balance {touch.Receiver.Balance01:F4} stamina {touch.Receiver.Stamina01:F4}" +
+            $" pos ({touch.Receiver.Position.X:F3},{touch.Receiver.Position.Z:F3})" +
+            $" vel ({touch.Receiver.Velocity.X:F3},{touch.Receiver.Velocity.Z:F3}) cap {cap:F3}");
+    }
+
+    [Fact]
+    public void AnUnplannedIntent_IgnoresTheMeetingPoint()
+    {
+        // No plan, no anticipation: the neutral cushion is untouched by whatever the field holds.
+        ReceptionIntent stray = new(ReceptionTouchKind.None) { MeetingPointXZ = new Vector2(40f, 20f) };
+        FirstTouch plain = RunFirstTouch(ReceptionIntent.None);
+        FirstTouch withStray = RunFirstTouch(stray);
+
+        Assert.Equal("FirstTouchCushion", plain.Receiver.LastExecutionDiagnostic);
+        Assert.Equal(plain.Ball.Velocity, withStray.Ball.Velocity);
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // (c) Neutral callers: the pre-A7.4 cushion, exactly.
     // ---------------------------------------------------------------------------------------------
 
@@ -91,29 +161,48 @@ public sealed class ReceptionIntentExecutionTests
         // The pre-A7.4 formula, written out: a neutral command must still produce exactly this.
         FootballerState receiver = touch.Receiver;
         Vector2 playerVel = new(receiver.Velocity.X, receiver.Velocity.Z);
+        Vector2 expected = NeutralCushionedFor(receiver);
+        float cap = NeutralCapFor(receiver);
+        if (expected.Length() > cap) expected *= cap / expected.Length();
+
+        Assert.Equal(expected.X, touch.Ball.Velocity.X, 3);
+        Assert.Equal(expected.Y, touch.Ball.Velocity.Z, 3);
+    }
+
+    /// <summary>
+    /// The pre-A7.4 first-touch cushion, before the speed clamp: the oracle for a neutral command.
+    /// </summary>
+    private static Vector2 NeutralCushionedFor(FootballerState receiver)
+    {
+        Vector2 playerVel = new(receiver.Velocity.X, receiver.Velocity.Z);
         Vector2 ballXZ = new(0.6f, 0f);
         Vector2 playerXZ = new(receiver.Position.X, receiver.Position.Z);
         Vector2 sweetSpot = playerXZ + new Vector2(1f, 0f) * 0.42f; // moving, not sprinting
         Vector2 toSweetSpot = sweetSpot - ballXZ;
 
         Vector2 incoming = new(-6f, 0f);
-        float quality = Math.Clamp(
-            0.50f * receiver.Attributes.FirstTouch01 +
-            0.30f * receiver.Balance01 +
-            0.20f * receiver.ControlQuality01, 0.15f, 1f);
-
+        float quality = FirstTouchQuality(receiver);
         Vector2 retained = incoming * ((1f - quality) * 0.30f);
+
         float distance = toSweetSpot.Length();
         Vector2 settleDir = distance > 1e-4f ? toSweetSpot / distance : Vector2.Zero;
         float settleSpeed = MathF.Min(0.9f, 0.35f + distance * 1.2f);
 
-        Vector2 expected = playerVel * 0.95f + settleDir * settleSpeed + retained;
-        float cap = playerVel.Length() + 1.2f + (1f - quality) * incoming.Length() * 0.15f;
-        if (expected.Length() > cap) expected *= cap / expected.Length();
-
-        Assert.Equal(expected.X, touch.Ball.Velocity.X, 3);
-        Assert.Equal(expected.Y, touch.Ball.Velocity.Z, 3);
+        return playerVel * 0.95f + settleDir * settleSpeed + retained;
     }
+
+    /// <summary>The neutral first-touch speed cap the execution layer applies.</summary>
+    private static float NeutralCapFor(FootballerState receiver)
+    {
+        Vector2 playerVel = new(receiver.Velocity.X, receiver.Velocity.Z);
+        float quality = FirstTouchQuality(receiver);
+        return playerVel.Length() + 1.2f + (1f - quality) * 6f * 0.15f;
+    }
+
+    private static float FirstTouchQuality(FootballerState receiver) => Math.Clamp(
+        0.50f * receiver.Attributes.FirstTouch01 +
+        0.30f * receiver.Balance01 +
+        0.20f * receiver.ControlQuality01, 0.15f, 1f);
 
     [Fact]
     public void TheLockedHumanCommand_CarriesNoReceptionIntent()

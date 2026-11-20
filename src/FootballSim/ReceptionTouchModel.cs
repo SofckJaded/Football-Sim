@@ -67,6 +67,26 @@ public static class ReceptionTouchModel
     public const float MaxRelativeTouchSpeed = 2.6f;
 
     /// <summary>
+    /// How far the ball can be from the planned meeting point before the plan counts as a wrong guess. The
+    /// contact happens anywhere inside the receiving reach (~1.2 m for a receive) and the body is a step away
+    /// from its own meeting point, so ordinary contact geometry puts the ball a metre off the plan; this
+    /// tolerance sits beyond a full reach so only a genuinely different arrival counts.
+    /// </summary>
+    public const float AnticipationToleranceMeters = 1.6f;
+
+    /// <summary>
+    /// How far off the plan has to be for the anticipation error to be complete (an unrehearsed touch).
+    /// Twice the tolerance, so the mechanism ramps over a range a mis-predicted flight actually occupies.
+    /// </summary>
+    public const float AnticipationFullErrorMeters = 3.2f;
+
+    /// <summary>
+    /// How much of the intended touch a completely wrong guess costs. Not 1: the touch still happens and
+    /// still follows the body's intent, it just cannot be the rehearsed one.
+    /// </summary>
+    public const float AnticipationPenalty01 = 0.6f;
+
+    /// <summary>
     /// Resolves the ball velocity a legal first touch produces.
     /// </summary>
     /// <param name="intent">The planned touch. A neutral intent returns <paramref name="neutralCushioned"/> unchanged.</param>
@@ -89,12 +109,22 @@ public static class ReceptionTouchModel
         Vector2 incomingXZ,
         float controlQuality01,
         Vector2 touchDirectionXZ,
-        float neutralCap)
+        float neutralCap,
+        float anticipationErrorMeters = 0f)
     {
         if (!intent.IsPlanned) return neutralCushioned;
 
         float quality = Math.Clamp(controlQuality01, 0f, 1f);
         TouchShape shape = ShapeOf(intent.TouchKind);
+
+        // A7.5: the plan was an early guess about where the ball would be. When the contact happens
+        // somewhere else, the touch the receiver rehearsed is not the touch the contact allows — the less
+        // so, the further the anticipation was off. Zero error (the normal case) changes nothing.
+        float anticipation01 = Math.Clamp(
+            (anticipationErrorMeters - AnticipationToleranceMeters) /
+            (AnticipationFullErrorMeters - AnticipationToleranceMeters), 0f, 1f);
+        float realisation = quality * (1f - AnticipationPenalty01 * anticipation01);
+        if (realisation <= 0f) return neutralCushioned;
 
         Vector2 direction = touchDirectionXZ.LengthSquared() > 1e-6f
             ? Vector2.Normalize(touchDirectionXZ)
@@ -106,8 +136,9 @@ public static class ReceptionTouchModel
                            + direction * shape.PushSpeed
                            + incomingXZ * ((1f - quality) * 0.30f * shape.RetentionScale);
 
-        // Realised only as far as his first touch allows: a poor touch stays a poor touch.
-        Vector2 blended = neutralCushioned + (intended - neutralCushioned) * quality;
+        // Realised only as far as his first touch (and his anticipation) allows: a poor touch, or a plan
+        // built on the wrong meeting point, stays a poor touch.
+        Vector2 blended = neutralCushioned + (intended - neutralCushioned) * realisation;
 
         // The allowance may add speed, never take any away: a stride touch on a hard pass must not be
         // clamped below what the neutral cushion already produced. The dribble spring's bound is the

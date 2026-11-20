@@ -485,12 +485,19 @@ public enum TeamId
 /// full stamina with reference composure, so a fresh fixture decides and touches as it did in version 43;
 /// <see cref="AI.AiRuntimeConfig.EnableCognitiveError"/> off is the version-43 build. Trajectories differ
 /// from version 43 as soon as a player is tired or pressed.</item>
+/// <item><c>AiBehaviour 45</c> — A7.5 completes: <b>an early guess can be wrong</b>.
+/// <see cref="ReceptionIntent"/> carries the meeting point the receiver's own flight estimate expected
+/// (<see cref="ReceptionIntent.MeetingPointXZ"/>), and the execution layer compares it with where the ball
+/// actually is at the contact: the further off the plan, the less of the rehearsed touch is realised
+/// (<see cref="Locomotion.ReceptionTouchModel.AnticipationToleranceMeters"/>). A plan that met the ball
+/// where it expected to is unchanged, and a command with no plan is unchanged. Trajectories differ from
+/// version 44 once a flight is mis-predicted.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 44;
+    public const int AiBehaviour = 45;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -808,6 +815,16 @@ public readonly record struct ReceptionIntent(ReceptionTouchKind TouchKind)
 {
     /// <summary>The neutral intent: no planned touch, the exact pre-A7.4 first-touch cushion.</summary>
     public static ReceptionIntent None => default;
+
+    /// <summary>
+    /// A7.5: the point the receiver's flight estimate said the ball would be when he met it — his own
+    /// <b>anticipation</b>, not a fact. Execution compares it with where the ball actually is at the contact;
+    /// a contact somewhere else means the plan was built on a wrong guess, and the rehearsed touch is only
+    /// partly realisable (<see cref="Locomotion.ReceptionTouchModel.AnticipationToleranceMeters"/>). Only
+    /// meaningful when <see cref="IsPlanned"/>. It is the planner's belief carried on the command, never a
+    /// second trajectory estimate.
+    /// </summary>
+    public Vector2 MeetingPointXZ { get; init; }
 
     /// <summary>True when a real touch was planned (and execution may shape a legal contact with it).</summary>
     public bool IsPlanned => TouchKind != ReceptionTouchKind.None;

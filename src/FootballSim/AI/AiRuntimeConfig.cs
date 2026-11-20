@@ -213,12 +213,14 @@ public sealed class AiRuntimeConfig
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Whether stamina and composure produce error at all (A7.5). <b>On by default</b>: this is the
-    /// behaviour the version ships, and the field exists so A9.2 can ablate the mechanism and so the
-    /// evidence probe can run the same worlds with it off. Off is exactly the pre-A7.5 build: the
-    /// distance-based observation noise, the attribute's own reaction delay, no evaluation error and no
-    /// fatigue or pressure term on a first touch — which is what makes the A/B two builds rather than two
-    /// tunings of the same numbers.
+    /// Whether A7.5's cognitive error model is active: stamina and composure producing observation noise,
+    /// evaluation error and reaction latency, pressure and fatigue degrading a first touch, and a reception
+    /// plan's anticipation being measurable against the contact it actually got. <b>On by default</b>: this
+    /// is the behaviour the version ships, and the field exists so A9.2 can ablate the mechanism and so the
+    /// evidence probe can run the same worlds with it off. Off is exactly the previous A7.4 build: the
+    /// distance-based observation noise, the attribute's own reaction delay, no evaluation error, no fatigue
+    /// or pressure term on a first touch and no anticipation penalty — which is what makes the A/B two
+    /// builds rather than two tunings of the same numbers.
     /// </summary>
     public bool EnableCognitiveError { get; init; } = true;
 

@@ -1789,6 +1789,9 @@ public static class Program
         double reactionSum = 0;
         long decisions = 0;
         long misjudged = 0;
+        long anticipated = 0;
+        long offTarget = 0;
+        double anticipationSum = 0;
         int[] touchCounts = new int[PressureBands];
         double[] touchPace = new double[PressureBands];
         double[] touchError = new double[PressureBands];
@@ -1817,6 +1820,9 @@ public static class Program
             long seedObservations = 0;
             long seedDecisions = 0;
             long seedMisjudged = 0;
+            long seedAnticipated = 0;
+            long seedOffTarget = 0;
+            double seedAnticipationSum = 0;
             int[] seedTouches = new int[PressureBands];
             double seedStamina = 0;
             double seedNoise = 0;
@@ -1872,6 +1878,18 @@ public static class Program
                     // the pass's pace survives it. (The *signed* run-ahead is the wrong column here - a bad
                     // touch sends the ball back the way it came, which reads as "behind the player".)
                     touchPace[band] += (ballVel - playerVel).Length();
+
+                    // A7.5: how far the ball was from the point the plan expected to meet it.
+                    ReceptionIntent intent = player.LastCommand.ReceptionIntent;
+                    if (intent.IsPlanned)
+                    {
+                        Vector2 ballNow = new(engine.Ball.Position.X, engine.Ball.Position.Z);
+                        float anticipation = Vector2.Distance(ballNow, intent.MeetingPointXZ);
+                        seedAnticipationSum += anticipation;
+                        seedAnticipated++;
+                        if (anticipation > ReceptionTouchModel.AnticipationToleranceMeters)
+                            seedOffTarget++;
+                    }
                 }
             }
 
@@ -1891,6 +1909,9 @@ public static class Program
             reactionSum += seedReaction;
             decisions += seedDecisions;
             misjudged += seedMisjudged;
+            anticipated += seedAnticipated;
+            offTarget += seedOffTarget;
+            anticipationSum += seedAnticipationSum;
 
             Console.WriteLine();
             Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
@@ -1929,6 +1950,14 @@ public static class Program
         else
         {
             Console.WriteLine("First touches      : none executed");
+        }
+
+        if (anticipated > 0)
+        {
+            Console.WriteLine($"Anticipation       : {anticipated} planned touches met the ball" +
+                              $" {anticipationSum / anticipated:F2} m from the planned meeting point |" +
+                              $" {offTarget} beyond the {ReceptionTouchModel.AnticipationToleranceMeters:F1} m" +
+                              " tolerance" + (cognitive ? " (the touch was realised less)" : " (not penalised: off)"));
         }
 
         bool ok = cognitive

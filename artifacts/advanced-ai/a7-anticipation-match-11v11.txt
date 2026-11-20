@@ -1,0 +1,16 @@
+=== 11v11 Headless Match in 67083 ms ===
+Simulation version: ai45-rs1 (seed 20260818)
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 325720 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 1 - 2 Away (Direct Counterattack)
+Possession Share  : Home 49.9% | Away 50.1%
+Controlled Ball   : Home 48.2% | Away 51.8%
+Passes Attempted  : Home 1061 | Away 1044
+Passes Completed  : Home 855 (81%) | Away 853 (82%)
+Shots Attempted   : Home 39 | Away 22
+Mean Team Width   : Home 47.0m | Away 43.0m
+Kicks (execution) : 2176 executed / 2214 requested | refused [OutOfReach, 28], [LostArbitration, 6], [BallHeld, 4]
+Run adverts (A5.3): 18230 published | 7807 withdrawn | 446 claims by a carrier
+Team calls (A7.2) : 42701 published | 1128689 suppressed | 42576 expired | ManOn 14831, Turn 17021, Switch 3243, Run 2676, Cover 1500, Step 1150, Drop 2280
+Airborne (A5.5)   : 1 crosses | 30 lofted | 98 driven executed
+Events Logged     : 69

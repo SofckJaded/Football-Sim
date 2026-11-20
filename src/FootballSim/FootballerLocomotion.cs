@@ -1285,9 +1285,19 @@ public sealed class FootballerExecutionSystem
                 Vector2 touchDirection = cmd.DesiredFacingDirectionXZ.LengthSquared() > 1e-6f
                     ? cmd.DesiredFacingDirectionXZ
                     : controlDirXZ;
+
+                // A7.5: how wrong the plan's anticipation was — the distance between where the receiver
+                // expected to meet the ball and where it actually is at this contact. Execution owns the
+                // ball's true position here; the intent owns only what the receiver believed. The whole
+                // A7.5 mechanism (four error sources and this) is ablated by EnableCognitiveError, so the
+                // off run is the previous build rather than a near-miss of it.
+                float anticipationError = _cognitiveError
+                    ? Vector2.Distance(ballXZ, receptionIntent.MeetingPointXZ)
+                    : 0f;
+
                 cushionedVel = ReceptionTouchModel.Resolve(
                     receptionIntent, cushionedVel, playerVelXZ, incomingXZ, controlQuality,
-                    touchDirection, maxFirstTouchSpeed);
+                    touchDirection, maxFirstTouchSpeed, anticipationError);
             }
 
             ball.Velocity = new Vector3(cushionedVel.X, MathF.Min(ball.Velocity.Y * 0.10f, 0.20f), cushionedVel.Y);

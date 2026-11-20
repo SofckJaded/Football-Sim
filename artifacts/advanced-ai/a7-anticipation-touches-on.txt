@@ -1,0 +1,16 @@
+=== A7.4 first-touch evidence: 3 seeds x 1200 s, planning ON ===
+Simulation version : ai45-rs1
+Touch model        : the planned touch is realised in proportion to first-touch quality, bounded at player + 2.6 m/s (the dribble spring's own allowance)
+AI configuration   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on)
+
+Seed 20260818: FT in 72247 ticks | score 0-0 | 323 first touches carried a plan, 54 were the neutral cushion
+
+Seed 20268737: FT in 72215 ticks | score 0-0 | 342 first touches carried a plan, 61 were the neutral cushion
+
+Seed 20276656: FT in 72405 ticks | score 1-0 | 336 first touches carried a plan, 62 were the neutral cushion
+
+=== Totals over 3 seeds (3 completed, 1178 first touches) ===
+First touches      : 1178 executed | 1001 carried a planned touch | 177 carried none
+By planned touch   : Kill 552 (+0.02 m/s run-ahead), OpenBody 11 (+0.13 m/s run-ahead), StrideTouch 21 (+0.60 m/s run-ahead), Shield 84 (-0.35 m/s run-ahead), EscapePressure 333 (+1.91 m/s run-ahead)
+Run-ahead          : kill 0.02 m/s vs stride/escape 1.91 m/s (ball velocity relative to the receiver, on his facing)
+RESULT: planned touches reach execution, and the forward touches send the ball ahead of the kill

@@ -2229,7 +2229,12 @@ public sealed class CandidateGenerator : IAiStateResettable
                 // A7.4: the plan crosses the command boundary here, as the shape of a legal contact.
                 // It never buys the contact itself — execution still resolves reach, height, facing and
                 // arbitration, and a poor first touch still only gets a fraction of the intended touch.
+                // A7.5: it carries the plan's meeting point too, so execution can tell a touch that met the
+                // ball where the receiver expected it from one built on a wrong guess.
                 ReceptionIntent = new ReceptionIntent(plan.TouchKind)
+                {
+                    MeetingPointXZ = plan.MeetingPointXZ
+                }
             };
 
             CandidateKey key = new(CandidateKind.Intercept, TargetTag: ReceptionPlanner.TagOf(plan.TouchKind));

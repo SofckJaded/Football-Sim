@@ -1,0 +1,15 @@
+=== A7.4 first-touch evidence: 3 seeds x 1200 s, planning OFF ===
+Simulation version : ai45-rs1
+Touch model        : the planned touch is realised in proportion to first-touch quality, bounded at player + 2.6 m/s (the dribble spring's own allowance)
+AI configuration   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(off) cognitive(on)
+
+Seed 20260818: FT in 72263 ticks | score 0-0 | 0 first touches carried a plan, 384 were the neutral cushion
+
+Seed 20268737: FT in 72215 ticks | score 0-0 | 0 first touches carried a plan, 419 were the neutral cushion
+
+Seed 20276656: FT in 72199 ticks | score 0-0 | 0 first touches carried a plan, 399 were the neutral cushion
+
+=== Totals over 3 seeds (3 completed, 1202 first touches) ===
+First touches      : 1202 executed | 0 carried a planned touch | 1202 carried none
+By planned touch   : none
+RESULT: planning off means no command carried an intent and every first touch was the old cushion
