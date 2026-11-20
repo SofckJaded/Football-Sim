@@ -28,9 +28,10 @@ namespace FootballSim.AI;
 /// </list>
 ///
 /// Teammates are deliberately still observed every tick: a team's shape is coordinated by the
-/// match-level job system, and modelling teammate belief properly is A7.2's delayed, expiring team
-/// calls. The hard invariant the plan states — an unseen <i>opponent</i>'s motion must not reach an
-/// estimate, score or assignment — is about the side a player can only see.
+/// match-level job system, and A7.2's delayed, expiring calls are an <i>instruction</i> channel (what a
+/// team-mate saw and is telling you), not a second teammate-position belief. The hard invariant the plan
+/// states — an unseen <i>opponent</i>'s motion must not reach an estimate, score or assignment — is about
+/// the side a player can only see.
 ///
 /// A7.1 adds the third piece: <b>the sight cone follows the head, not the body</b>. A
 /// <see cref="ScanPlanner"/> owns each player's head yaw and turns it at a bounded rate toward an attention
@@ -231,8 +232,9 @@ public sealed class PerceptionSystem
             if (_scanningEnabled && dist > 1e-3f)
                 facingDot = Vector2.Dot(toOther / dist, facing);
 
-            // Teammates are coordinated, not scouted (A7.2 owns teammate belief); an opponent has to be
-            // in front of the player, close enough to feel, or seen on the first look at the pitch.
+            // Teammates are coordinated, not scouted (A7.2's calls are a delayed instruction channel, not
+            // teammate-position belief); an opponent has to be in front of the player, close enough to
+            // feel, or seen on the first look at the pitch.
             bool inSight = firstLook ||
                            other.Team == self.Team ||
                            dist <= NearFieldMeters ||
