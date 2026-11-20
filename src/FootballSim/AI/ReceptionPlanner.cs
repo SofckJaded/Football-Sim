@@ -6,34 +6,6 @@ using FootballSim.Locomotion;
 namespace FootballSim.AI;
 
 /// <summary>
-/// A7.3: the touch a receiver has decided to take before the ball arrives.
-///
-/// It is a <b>touch kind</b>, not a command: the plan names what the first touch is for and where the
-/// body has to be when it happens. The command boundary (A7.4) is deliberately untouched — every field
-/// here is expressed through the movement/orientation vocabulary the player already has.
-/// </summary>
-public enum ReceptionTouchKind
-{
-    /// <summary>No plan (the neutral default of a fixture or a non-receiver).</summary>
-    None = 0,
-
-    /// <summary>Kill it: meet the ball slowly and stop it, body already open toward the next action.</summary>
-    Kill,
-
-    /// <summary>Open the body: meet the ball on the half-turn so the first touch can go up the pitch.</summary>
-    OpenBody,
-
-    /// <summary>Stride touch: keep the run going and touch the ball into the space ahead.</summary>
-    StrideTouch,
-
-    /// <summary>Shield it: get the body between the ball and the believed presser.</summary>
-    Shield,
-
-    /// <summary>Escape pressure: touch the ball away from the believed presser into the larger space.</summary>
-    EscapePressure
-}
-
-/// <summary>
 /// A7.3: what the reception is preparing to do with the ball next. The orientation in
 /// <see cref="ReceptionPlan"/> points at this action's target; "prepare pass/shot/cross" is exactly the
 /// difference between two otherwise identical plans.

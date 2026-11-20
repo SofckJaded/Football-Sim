@@ -742,6 +742,35 @@ public readonly record struct BallContactAttempt(
     public bool WantedContact => WantedKick || WantedTackle;
 }
 
+/// <summary>
+/// A7.3/A7.4: the touch a receiver has decided to take before the ball arrives.
+///
+/// It lives beside <see cref="FootballerCommand"/> rather than in the planner because it is the one
+/// piece of the reception plan that crosses the command boundary: the command carries it as a
+/// <see cref="ReceptionIntent"/>, and execution decides what a <i>legal</i> contact does differently
+/// because of it. The kind never decides <i>whether</i> a contact happens.
+/// </summary>
+public enum ReceptionTouchKind
+{
+    /// <summary>No plan (the neutral default of a fixture or a non-receiver).</summary>
+    None = 0,
+
+    /// <summary>Kill it: meet the ball slowly and stop it, body already open toward the next action.</summary>
+    Kill,
+
+    /// <summary>Open the body: meet the ball on the half-turn so the first touch can go up the pitch.</summary>
+    OpenBody,
+
+    /// <summary>Stride touch: keep the run going and touch the ball into the space ahead.</summary>
+    StrideTouch,
+
+    /// <summary>Shield it: get the body between the ball and the believed presser.</summary>
+    Shield,
+
+    /// <summary>Escape pressure: touch the ball away from the believed presser into the larger space.</summary>
+    EscapePressure
+}
+
 public readonly record struct FootballerCommand(
     Vector2 DesiredMoveDirectionXZ,
     Vector2 DesiredFacingDirectionXZ,
