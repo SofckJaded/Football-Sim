@@ -13,8 +13,11 @@ namespace FootballSim.AI;
 public sealed class AiRuntimeConfig
 {
     /// <summary>
-    /// The defaults. They are the values the controller used as literals before this type existed, so a
-    /// match built with <see cref="Default"/> reproduces the previous behaviour exactly.
+    /// The defaults. Where a value had a literal before this type existed it is that literal, so a match
+    /// built with <see cref="Default"/> reproduces the behaviour of the commit that introduced the field.
+    /// The exception is a deliberate behaviour milestone: A7.1's <see cref="EnableScanning"/> is on by
+    /// default because turning the head is the behaviour that version ships, and the switch is the A/B
+    /// ablation rather than a hidden guard.
     /// </summary>
     public static readonly AiRuntimeConfig Default = new();
 
@@ -124,6 +127,48 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableScheduledDecisions { get; init; }
 
+    // ---------------------------------------------------------------------------------------------
+    // A7.1 — scanning. A player's head is independent of his body: it turns at a bounded rate toward an
+    // attention target, holds, and returns. See ScanPlanner.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether players scan at all (A7.1). <b>On by default</b>: this is the behaviour A7.1 ships, and the
+    /// field exists so A9.2 can ablate it and so evidence can run the same worlds with the feature off —
+    /// with scanning off every player is back to the pre-A7.1 cone fixed to the body facing.
+    /// </summary>
+    public bool EnableScanning { get; init; } = true;
+
+    /// <summary>
+    /// How far the head may turn from the body facing, in degrees. A neck cannot spin all the way round;
+    /// with the sight cone's own half-angle this still lets a turned head see the space behind the shoulder.
+    /// </summary>
+    public float ScanMaxHeadTurnDegrees { get; init; } = 100f;
+
+    /// <summary>
+    /// Bounded head turn rate in degrees per second. This is the reason a scan costs something: the head
+    /// needs time to get to the target, so a very short pass can arrive before the glance completes.
+    /// </summary>
+    public float ScanTurnRateDegreesPerSecond { get; init; } = 600f;
+
+    /// <summary>How long the head holds a completed visual fix before returning to the body facing.</summary>
+    public float ScanHoldSeconds { get; init; } = 0.20f;
+
+    /// <summary>
+    /// How long the head spends back on the body facing after a fix before it may scan again. A scan is a
+    /// discrete glance, not permanent rear vision.
+    /// </summary>
+    public float ScanCooldownSeconds { get; init; } = 0.35f;
+
+    /// <summary>
+    /// A believed opponent not seen for this long is stale enough to be worth turning to refresh. Shorter
+    /// values make players scan more often; the value is a memory policy, not a scan speed.
+    /// </summary>
+    public float ScanRefreshAgeSeconds { get; init; } = 1.0f;
+
+    /// <summary>Furthest a believed opponent can be and still attract a scan, in metres.</summary>
+    public float ScanAttentionRangeMeters { get; init; } = 18f;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -132,7 +177,10 @@ public sealed class AiRuntimeConfig
         $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
         $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
         $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets}, " +
-        $"runs {MaxRunCandidates})";
+        $"runs {MaxRunCandidates}) " +
+        $"scan({(EnableScanning ? "on" : "off")} turn {ScanMaxHeadTurnDegrees:F0}deg " +
+        $"rate {ScanTurnRateDegreesPerSecond:F0}deg/s hold {ScanHoldSeconds:F2}s " +
+        $"range {ScanAttentionRangeMeters:F0}m)";
 }
 
 /// <summary>
@@ -152,6 +200,21 @@ public static class AiRuntimeConfigValidation
     /// player is frozen on its first action, which is an ablation rather than a tuning value.
     /// </summary>
     public const float MaxSwitchMargin = 5f;
+
+    /// <summary>Largest head turn a configuration may request, in degrees. Past this it is no longer a neck.</summary>
+    public const float MaxScanHeadTurnDegrees = 140f;
+
+    /// <summary>Fastest head turn rate a configuration may request, in degrees per second.</summary>
+    public const float MaxScanTurnRateDegreesPerSecond = 2000f;
+
+    /// <summary>Longest scan hold or return window a configuration may request, in seconds.</summary>
+    public const float MaxScanWindowSeconds = 3f;
+
+    /// <summary>Oldest sighting a configuration may call "fresh enough not to look again", in seconds.</summary>
+    public const float MaxScanRefreshAgeSeconds = 5f;
+
+    /// <summary>Furthest scan attention a configuration may request, in metres.</summary>
+    public const float MaxScanAttentionRangeMeters = 60f;
 
     public static void Validate(AiRuntimeConfig? config, string name = "AiRuntimeConfig")
     {
@@ -192,6 +255,32 @@ public static class AiRuntimeConfigValidation
         RequireCandidates(config.MaxCarrierCandidates, name, nameof(AiRuntimeConfig.MaxCarrierCandidates));
         RequireCandidates(config.MaxPassTargets, name, nameof(AiRuntimeConfig.MaxPassTargets));
         RequireCandidates(config.MaxRunCandidates, name, nameof(AiRuntimeConfig.MaxRunCandidates));
+
+        // A7.1 scanning. Zero is legal for the head turn and its rate (that is the "no scanning motion"
+        // ablation), but not for the attention range: a scan that can see nobody is not a configuration.
+        RequireFinite(config.ScanMaxHeadTurnDegrees, name, nameof(AiRuntimeConfig.ScanMaxHeadTurnDegrees));
+        RequireRange(config.ScanMaxHeadTurnDegrees, 0f, MaxScanHeadTurnDegrees, name,
+            nameof(AiRuntimeConfig.ScanMaxHeadTurnDegrees));
+
+        RequireFinite(config.ScanTurnRateDegreesPerSecond, name, nameof(AiRuntimeConfig.ScanTurnRateDegreesPerSecond));
+        RequireRange(config.ScanTurnRateDegreesPerSecond, 0f, MaxScanTurnRateDegreesPerSecond, name,
+            nameof(AiRuntimeConfig.ScanTurnRateDegreesPerSecond));
+
+        RequireFinite(config.ScanHoldSeconds, name, nameof(AiRuntimeConfig.ScanHoldSeconds));
+        RequireRange(config.ScanHoldSeconds, 0f, MaxScanWindowSeconds, name,
+            nameof(AiRuntimeConfig.ScanHoldSeconds));
+
+        RequireFinite(config.ScanCooldownSeconds, name, nameof(AiRuntimeConfig.ScanCooldownSeconds));
+        RequireRange(config.ScanCooldownSeconds, 0f, MaxScanWindowSeconds, name,
+            nameof(AiRuntimeConfig.ScanCooldownSeconds));
+
+        RequireFinite(config.ScanRefreshAgeSeconds, name, nameof(AiRuntimeConfig.ScanRefreshAgeSeconds));
+        RequireRange(config.ScanRefreshAgeSeconds, 0f, MaxScanRefreshAgeSeconds, name,
+            nameof(AiRuntimeConfig.ScanRefreshAgeSeconds));
+
+        RequireFinite(config.ScanAttentionRangeMeters, name, nameof(AiRuntimeConfig.ScanAttentionRangeMeters));
+        RequireRange(config.ScanAttentionRangeMeters, 1f, MaxScanAttentionRangeMeters, name,
+            nameof(AiRuntimeConfig.ScanAttentionRangeMeters));
     }
 
     private static void RequireFinite(float value, string owner, string field)

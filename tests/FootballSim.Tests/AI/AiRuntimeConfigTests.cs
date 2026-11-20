@@ -241,6 +241,58 @@ public sealed class AiRuntimeConfigTests
     }
 
     [Fact]
+    public void Defaults_EnableScanning_AndStateItsBound()
+    {
+        // A7.1: scanning is the shipped behaviour, not a hidden guard. Every number below is a bound the
+        // ScanPlannerTests read back out, so this is a contract between the settings and the model.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+
+        Assert.True(defaults.EnableScanning);
+        Assert.Equal(100f, defaults.ScanMaxHeadTurnDegrees);
+        Assert.Equal(600f, defaults.ScanTurnRateDegreesPerSecond);
+        Assert.Equal(0.20f, defaults.ScanHoldSeconds);
+        Assert.Equal(0.35f, defaults.ScanCooldownSeconds);
+        Assert.Equal(1.0f, defaults.ScanRefreshAgeSeconds);
+        Assert.Equal(18f, defaults.ScanAttentionRangeMeters);
+    }
+
+    [Fact]
+    public void Validator_RejectsImpossibleScanSettings()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanMaxHeadTurnDegrees = 180f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanTurnRateDegreesPerSecond = -1f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanHoldSeconds = 5f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanCooldownSeconds = -0.1f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanRefreshAgeSeconds = -1f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanAttentionRangeMeters = 0f }));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { ScanAttentionRangeMeters = float.NaN }));
+    }
+
+    [Fact]
+    public void TheScanningAblation_IsALegalConfiguration()
+    {
+        // A9.2 turns the feature off and may freeze the head: zero turn rate and zero hold are ablations,
+        // not typos, so they must validate (the attention range still needs a positive value).
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig
+        {
+            EnableScanning = false,
+            ScanMaxHeadTurnDegrees = 0f,
+            ScanTurnRateDegreesPerSecond = 0f,
+            ScanHoldSeconds = 0f,
+            ScanCooldownSeconds = 0f,
+            ScanRefreshAgeSeconds = 0f,
+            ScanAttentionRangeMeters = 1f
+        });
+    }
+
+    [Fact]
     public void Describe_StatesEveryConsumedValue()
     {
         string text = AiRuntimeConfig.Default.Describe();
@@ -249,6 +301,7 @@ public sealed class AiRuntimeConfigTests
         Assert.Contains("job", text);
         Assert.Contains("react", text);
         Assert.Contains("caps", text);
+        Assert.Contains("scan", text);
     }
 
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>

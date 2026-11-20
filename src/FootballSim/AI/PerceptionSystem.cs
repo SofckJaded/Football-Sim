@@ -31,6 +31,17 @@ namespace FootballSim.AI;
 /// match-level job system, and modelling teammate belief properly is A7.2's delayed, expiring team
 /// calls. The hard invariant the plan states — an unseen <i>opponent</i>'s motion must not reach an
 /// estimate, score or assignment — is about the side a player can only see.
+///
+/// A7.1 adds the third piece: <b>the sight cone follows the head, not the body</b>. A
+/// <see cref="ScanPlanner"/> owns each player's head yaw and turns it at a bounded rate toward an attention
+/// target (a stale believed opponent, or the blind space behind him before a reception), so the cone that
+/// decides what is seen this tick points where the head looks. A body standing on the sight line blocks it
+/// (simple occlusion). Sightings still go into the same <see cref="PlayerMemory"/>: this is a new way to
+/// <i>see</i>, not a second memory.
+///
+/// The scan model is opt-in for callers that supply an <see cref="AiRuntimeConfig"/>: a standalone
+/// <c>new PerceptionSystem()</c> (fixtures, probes) keeps the pre-A7.1 model exactly — gaze is the body
+/// facing, every profile-length check is unchanged, and no scan state exists.
 /// </summary>
 public sealed class PerceptionSystem
 {
@@ -41,9 +52,9 @@ public sealed class PerceptionSystem
     private const float TeleportResetDistance = 15f;
 
     /// <summary>
-    /// Widest angle off the facing direction at which an opponent is still seen. Human peripheral
-    /// vision is roughly ±100°, and players are not expected to lose a man standing beside them. A7.1
-    /// replaces this with head/gaze direction and attention targets.
+    /// Widest angle off the gaze direction at which an opponent is still seen. Human peripheral vision is
+    /// roughly ±100°, and players are not expected to lose a man standing beside them. A7.1 points the cone
+    /// at the head's gaze instead of the body facing, so turning the head moves the whole cone.
     /// </summary>
     private const float SightConeMinFacingDot = -0.17f;
 
@@ -53,17 +64,69 @@ public sealed class PerceptionSystem
     /// </summary>
     private const float NearFieldMeters = 2.5f;
 
+    /// <summary>
+    /// A body can only occlude a sight line it stands close to. A7.1's simple occlusion considers the few
+    /// bodies nearest the observer: a body 16 m away subtends about two degrees, so it can only hide a
+    /// target that is almost exactly behind it, and the observer's own close surroundings are what matter.
+    /// </summary>
+    private const float OcclusionRangeMeters = 16f;
+
+    /// <summary>How far off the sight line a body still blocks it, in metres (a torso is ~0.5 m wide).</summary>
+    private const float OcclusionRadiusMeters = 0.55f;
+
+    /// <summary>Bound on occluders tested per sight line (A9.3: perception work stays linear and small).</summary>
+    private const int MaxOccluders = 4;
+
+    /// <summary>A loose ball within this distance makes the team's elected responder scan before committing.</summary>
+    private const float LooseBallContestMeters = 12f;
+
     private readonly Dictionary<int, List<(Vector3 Position, Vector3 Velocity)>> _ballHistory = new();
     private readonly Dictionary<int, float> _historyTimestamp = new();
     private readonly Dictionary<int, PlayerMemory> _memories = new();
     private readonly ScoutingReport? _scouting;
+    private readonly ScanPlanner _scanPlanner;
+
+    /// <summary>
+    /// True when the match supplied an AI configuration and scanning is on. A standalone
+    /// <see cref="PerceptionSystem"/> is off by construction, so fixtures that predate A7.1 are unchanged.
+    /// </summary>
+    private readonly bool _scanningEnabled;
+
+    private long _scanTicks;
+    private long _observerTicks;
+    private long _revealedByGaze;
+    private long _occludedByBody;
 
     /// <param name="scouting">
     /// Pre-match scouting knowledge of the squads (A2.3). Null (the default) publishes the generic
     /// capability assumption for every other player, which is what standalone controllers and tests get:
     /// a conservative band, never the authoritative attributes.
     /// </param>
-    public PerceptionSystem(ScoutingReport? scouting = null) => _scouting = scouting;
+    /// <param name="ai">
+    /// The match's validated AI configuration (A7.1). Null — the default for standalone controllers,
+    /// fixtures and probes — keeps the pre-A7.1 sight model: the gaze is the body facing and nothing is
+    /// occluded. The match always passes its validated configuration, so <see cref="AiRuntimeConfig.EnableScanning"/>
+    /// decides whether its players turn their heads.
+    /// </param>
+    public PerceptionSystem(ScoutingReport? scouting = null, AiRuntimeConfig? ai = null)
+    {
+        _scouting = scouting;
+        _scanningEnabled = ai?.EnableScanning == true;
+        _scanPlanner = new ScanPlanner(ai ?? AiRuntimeConfig.Default);
+    }
+
+    /// <summary>
+    /// A7.1 match-level scan telemetry: how often heads turned, how much of the picture only the gaze
+    /// revealed, and how often a body blocked a sight line. Diagnostics only — no decision reads it.
+    /// </summary>
+    public ScanTelemetry ScanStats => new(
+        _scanPlanner.ScanStarts,
+        _scanPlanner.ThreatScanStarts,
+        _scanPlanner.DangerScanStarts,
+        _scanTicks,
+        _observerTicks,
+        _revealedByGaze,
+        _occludedByBody);
 
     public static int ReactionDelayTicks(float reactionDelaySeconds) =>
         Math.Clamp((int)MathF.Round(reactionDelaySeconds / SimConstants.FixedDeltaTime), 0, MaxReactionDelayTicks);
@@ -92,15 +155,17 @@ public sealed class PerceptionSystem
         _ballHistory.Remove(playerId);
         _historyTimestamp.Remove(playerId);
         _memories.Remove(playerId);
+        _scanPlanner.Forget(playerId);
         foreach (PlayerMemory memory in _memories.Values)
             memory.Forget(playerId);
     }
 
-    /// <summary>Forgets every player's ball-reaction history and memory.</summary>
+    /// <summary>Forgets every player's ball-reaction history, memory and head state.</summary>
     public void Clear()
     {
         _ballHistory.Clear();
         _historyTimestamp.Clear();
+        _scanPlanner.Clear();
         foreach (PlayerMemory memory in _memories.Values)
             memory.Clear();
     }
@@ -132,6 +197,25 @@ public sealed class PerceptionSystem
         BallPossessionSnapshot ballPossession = possession ?? InferPossession(ball);
         PlayerMemory memory = GetMemory(self.Id);
         bool firstLook = !memory.IsInitialised;
+        Vector2 facing = SimMath.SafeNormalize(self.FacingXZ, Vector2.UnitX);
+
+        // A7.1: the head decides where the eyes point before the sight filter runs, so this tick's sight is
+        // filtered by this tick's gaze. With scanning off (a standalone PerceptionSystem) the gaze is the
+        // body facing and none of this is evaluated — the pre-A7.1 model, exactly.
+        ScanStatus scan = ScanStatus.None;
+        Vector2 gaze = facing;
+        Span<int> occluderIds = stackalloc int[MaxOccluders];
+        Span<float> occluderDistances = stackalloc float[MaxOccluders];
+        Span<Vector2> occluderOffsets = stackalloc Vector2[MaxOccluders];
+        int occluderCount = 0;
+        _observerTicks++;
+        if (_scanningEnabled)
+        {
+            scan = ChooseScan(self, ball, ballPossession, isDesignatedBallResponder, memory, tick);
+            gaze = scan.GazeFrom(self.FacingXZ);
+            if (scan.IsScanning) _scanTicks++;
+            occluderCount = CollectOccluders(self, allPlayers, occluderIds, occluderDistances, occluderOffsets);
+        }
 
         var visible = new List<PerceivedEntity>(allPlayers.Count - 1);
         int knowledgeAgeTicks = 0;
@@ -141,14 +225,27 @@ public sealed class PerceptionSystem
 
             Vector2 toOther = new(other.Position.X - self.Position.X, other.Position.Z - self.Position.Z);
             float dist = toOther.Length();
-            float facingDot = dist > 1e-3f ? Vector2.Dot(toOther / dist, self.FacingXZ) : 1f;
+            float gazeDot = dist > 1e-3f ? Vector2.Dot(toOther / dist, gaze) : 1f;
+            float facingDot = gazeDot;
+            if (_scanningEnabled && dist > 1e-3f)
+                facingDot = Vector2.Dot(toOther / dist, facing);
 
             // Teammates are coordinated, not scouted (A7.2 owns teammate belief); an opponent has to be
             // in front of the player, close enough to feel, or seen on the first look at the pitch.
             bool inSight = firstLook ||
                            other.Team == self.Team ||
                            dist <= NearFieldMeters ||
-                           facingDot >= SightConeMinFacingDot;
+                           gazeDot >= SightConeMinFacingDot;
+
+            // A7.1 simple occlusion: a body standing on the sight line hides a distant opponent. The near
+            // field is exempt (contact and voice) and a teammate is never hidden.
+            if (inSight && !firstLook && dist > NearFieldMeters && other.Team != self.Team &&
+                IsOccluded(toOther * (1f / dist), dist, other.Id,
+                    occluderCount, occluderIds, occluderDistances, occluderOffsets))
+            {
+                inSight = false;
+                _occludedByBody++;
+            }
 
             if (inSight)
             {
@@ -171,6 +268,13 @@ public sealed class PerceptionSystem
                 {
                     Capability = CapabilityOf(other.Id)
                 });
+
+                // Evidence for A7.1: this opponent is in the picture only because the head turned.
+                if (_scanningEnabled && !firstLook && other.Team != self.Team &&
+                    gazeDot >= SightConeMinFacingDot && facingDot < SightConeMinFacingDot)
+                {
+                    _revealedByGaze++;
+                }
                 continue;
             }
 
@@ -209,6 +313,7 @@ public sealed class PerceptionSystem
             SelfPosition = self.Position,
             SelfVelocity = self.Velocity,
             SelfFacingXZ = self.FacingXZ,
+            Scan = scan,
             Stamina01 = self.Stamina01,
             AvailableToKick = self.AvailableToKick,
             ControlQuality01 = self.ControlQuality01,
@@ -248,6 +353,135 @@ public sealed class PerceptionSystem
             SelfTendencies = self.Tendencies,
             SelfAttributes = self.Attributes
         };
+    }
+
+    /// <summary>
+    /// A7.1: one player's scan decision for the tick. The inputs are the ball's state (a planned pass to
+    /// this player, or a loose ball this team's elected responder is contesting) and the nearest believed
+    /// opponent whose sighting has gone stale. No authoritative player position is read here: the threat
+    /// comes from <see cref="PlayerMemory"/>, so a player turns to look where he remembers someone.
+    /// </summary>
+    private ScanStatus ChooseScan(
+        FootballerState self,
+        BallState ball,
+        BallPossessionSnapshot possession,
+        bool? isDesignatedBallResponder,
+        PlayerMemory memory,
+        int tick)
+    {
+        bool receiving = possession.State == BallControlState.InFlightPass &&
+                         possession.IntendedReceiverId == self.Id;
+
+        if (!receiving && possession.State == BallControlState.Loose && isDesignatedBallResponder == true)
+        {
+            Vector2 toBall = new(ball.Position.X - self.Position.X, ball.Position.Z - self.Position.Z);
+            receiving = toBall.Length() <= LooseBallContestMeters;
+        }
+
+        bool isCarrier = possession.ControllingPlayerId == self.Id &&
+                         possession.State is BallControlState.Controlled or BallControlState.KeeperHeld;
+
+        PerceivedEntity threat = default;
+        bool staleThreat = false;
+        if (!isCarrier)
+        {
+            staleThreat = memory.TryFindStaleOpponent(
+                self.Team, tick, self.Position, _scanPlanner.RefreshAgeTicks,
+                _scanPlanner.AttentionRangeMeters, out threat);
+        }
+
+        Vector2 threatDirection = default;
+        float threatDistance = float.MaxValue;
+        if (staleThreat)
+        {
+            threatDirection = new Vector2(
+                threat.EstimatedPosition.X - self.Position.X,
+                threat.EstimatedPosition.Z - self.Position.Z);
+            threatDistance = threatDirection.Length();
+        }
+
+        return _scanPlanner.Think(new ScanSituation(
+            self.Id, tick, self.FacingXZ, receiving, isCarrier,
+            staleThreat, threatDirection, threatDistance));
+    }
+
+    /// <summary>
+    /// A7.1: the bodies near the observer that could stand on a sight line, nearest first, bounded to
+    /// <see cref="MaxOccluders"/>. Choosing them once per observer keeps occlusion linear — a sight line is
+    /// tested against at most four bodies rather than against the whole squad.
+    /// </summary>
+    private static int CollectOccluders(
+        FootballerState self,
+        IReadOnlyList<FootballerState> allPlayers,
+        Span<int> ids,
+        Span<float> distances,
+        Span<Vector2> offsets)
+    {
+        int count = 0;
+        foreach (FootballerState other in allPlayers)
+        {
+            if (other.Id == self.Id || !other.IsActiveOnPitch) continue;
+
+            Vector2 offset = new(other.Position.X - self.Position.X, other.Position.Z - self.Position.Z);
+            float distance = offset.Length();
+            if (distance > OcclusionRangeMeters || distance <= 1e-3f) continue;
+
+            int slot;
+            if (count < MaxOccluders)
+            {
+                slot = count;
+                count++;
+            }
+            else
+            {
+                if (distance >= distances[MaxOccluders - 1]) continue;
+                slot = MaxOccluders - 1;
+            }
+
+            while (slot > 0 && distances[slot - 1] > distance)
+            {
+                distances[slot] = distances[slot - 1];
+                ids[slot] = ids[slot - 1];
+                offsets[slot] = offsets[slot - 1];
+                slot--;
+            }
+
+            distances[slot] = distance;
+            ids[slot] = other.Id;
+            offsets[slot] = offset;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// A7.1 simple occlusion: a body blocks the sight line when it is between the observer and the target
+    /// and within <see cref="OcclusionRadiusMeters"/> of that line. The caller exempts the observer's near
+    /// field (contact and voice) and teammates, so this is only asked about distant opponents.
+    /// </summary>
+    private static bool IsOccluded(
+        in Vector2 direction,
+        float targetDistance,
+        int targetId,
+        int occluderCount,
+        ReadOnlySpan<int> ids,
+        ReadOnlySpan<float> distances,
+        ReadOnlySpan<Vector2> offsets)
+    {
+        for (int i = 0; i < occluderCount; i++)
+        {
+            if (ids[i] == targetId) continue;
+            if (distances[i] >= targetDistance) continue; // the body is past the target from here
+
+            Vector2 offset = offsets[i];
+            float along = Vector2.Dot(offset, direction);
+            if (along <= 0f || along >= targetDistance) continue;
+
+            float lateral = MathF.Abs(offset.X * direction.Y - offset.Y * direction.X);
+            if (lateral < OcclusionRadiusMeters) return true;
+        }
+
+        return false;
     }
 
     /// <summary>

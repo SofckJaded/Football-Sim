@@ -285,6 +285,16 @@ public partial class MatchClientNode : Node3D
                             $" | oldest {belief.OldestAgeTicks} ticks" +
                             (observation is null ? string.Empty : $" | this look {observation.KnowledgeAgeTicks} ticks");
 
+        // A7.1: what the inspected player's head is doing. The yaw is shown off the body facing because that
+        // is what a scan is — a neutral state (yaw 0, attention None) is the pre-A7.1 fixed cone.
+        string scanLine = observation is null
+            ? "\nSCAN (player belief): no observation yet"
+            : $"\nSCAN (player belief): head {observation.Scan.HeadYawDegrees:+0;-0;0}° off facing" +
+              $" | attention {observation.Scan.Attention}" +
+              (observation.Scan.Attention == ScanAttentionKind.None
+                  ? " (neutral)"
+                  : observation.Scan.IsScanning ? " (fixed)" : " (turning)");
+
         // A3.1: the team context is several facts, so it is printed as several facts. Collapsing it
         // back to one label is exactly what the old TeamTacticalState did and what this replaced.
         TeamContext context = observation?.TacticalContext ?? _engine.Tactics.ContextFor(inspected.Team);
@@ -313,7 +323,7 @@ public partial class MatchClientNode : Node3D
         string turnoverLine = $"\nTURNOVER: {turnover.Describe()}";
 
         if (controller is not TacticalUtilityAiController ai || !ai.PressureField.HasBuild)
-            return contextLine + beliefLine;
+            return contextLine + scanLine + beliefLine;
 
         PressureCell cell = ai.PressureField.Read(
             new System.Numerics.Vector2(_engine.Ball.Position.X, _engine.Ball.Position.Z), out bool inside);
@@ -322,7 +332,7 @@ public partial class MatchClientNode : Node3D
               $" | arrivals {DescribeArrival(cell.MyArrivalSeconds)} vs {DescribeArrival(cell.OpponentArrivalSeconds)}"
             : "\nPRESSURE @ball — outside this player's local window";
 
-        return contextLine + bandLine + turnoverLine + beliefLine + cellLine;
+        return contextLine + bandLine + turnoverLine + scanLine + beliefLine + cellLine;
         static string DescribeArrival(float seconds) => seconds < 0f ? "out of reach" : $"{seconds:F2}s";
     }
 

@@ -216,8 +216,9 @@ public sealed class MatchSimulationEngine
 
         // A2.3: scouting knowledge is built once, from the squad as it is at kickoff, and never
         // refreshed. A scorer therefore receives an estimate with a confidence band instead of a live
-        // read of an opponent's attributes.
-        _perceptionSystem = new PerceptionSystem(ScoutingReport.FromSquad(_players));
+        // read of an opponent's attributes. A7.1: the same validated configuration owns the scan model,
+        // so a fixture's `Ai` block decides whether its players turn their heads.
+        _perceptionSystem = new PerceptionSystem(ScoutingReport.FromSquad(_players), _config.Ai);
     }
 
     public int CurrentTick { get; private set; }
@@ -282,6 +283,12 @@ public sealed class MatchSimulationEngine
 
     /// <summary>Player currently elected as the ball responder for a team, if any.</summary>
     public int? GetBallResponder(TeamId team) => _ballResponderElection.GetResponder(team);
+
+    /// <summary>
+    /// A7.1 scanning evidence: completed head turns, how much of the picture only the gaze revealed, and
+    /// how often a body blocked a sight line. Diagnostics only — nothing in a decision path reads it.
+    /// </summary>
+    public ScanTelemetry ScanStats => _perceptionSystem.ScanStats;
 
     /// <summary>Team-level off-ball job assignments for the current tick (audit F04).</summary>
     public TeamJobCoordinator TeamJobs => _teamJobs;

@@ -157,6 +157,43 @@ public sealed class PlayerMemory
         return true;
     }
 
+    /// <summary>
+    /// A7.1 scan attention: the nearest believed opponent whose sighting is at least
+    /// <paramref name="minAgeTicks"/> old, within <paramref name="maxRangeMeters"/> of
+    /// <paramref name="from"/>. The position returned is the memory's <i>prediction</i> (no live state is
+    /// read), so a player turns to look where he remembers someone, not where the world has him. Returns
+    /// false when there is none — a player nobody has seen cannot attract attention, which is why an
+    /// unseen rear threat needs a danger-space scan instead of a refresh.
+    /// </summary>
+    public bool TryFindStaleOpponent(
+        TeamId selfTeam,
+        int nowTick,
+        Vector3 from,
+        int minAgeTicks,
+        float maxRangeMeters,
+        out PerceivedEntity found)
+    {
+        found = default;
+        float bestDistance = float.MaxValue;
+        bool any = false;
+
+        foreach (PlayerBelief belief in _beliefs.Values)
+        {
+            if (belief.Team == selfTeam) continue;
+            if (belief.AgeTicks(nowTick) < minAgeTicks) continue;
+            if (!TryPredict(belief.PlayerId, nowTick, out PerceivedEntity predicted)) continue;
+
+            float distance = Vector3.Distance(predicted.EstimatedPosition, from);
+            if (distance > maxRangeMeters || distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            found = predicted;
+            any = true;
+        }
+
+        return any;
+    }
+
     /// <summary>Oldest age among the players this memory holds, in ticks; 0 when empty.</summary>
     public int OldestAgeTicks(int nowTick)
     {

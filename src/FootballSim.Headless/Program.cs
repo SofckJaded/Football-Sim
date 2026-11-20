@@ -53,6 +53,9 @@ public static class Program
             case "--keepers":
                 return RunKeeperEvidence(args) ? 0 : 1;
 
+            case "--scans":
+                return RunScanEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -65,6 +68,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --lines [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --turnovers [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --keepers [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scans [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -1221,6 +1225,166 @@ public static class Program
             : "RESULT: incomplete, or no keeper decision was ever evaluated");
         return ok;
     }
+
+    /// <summary>How often the scan probe samples receiver knowledge age, in ticks (0.1 s).</summary>
+    private const int ScanSampleInterval = 6;
+
+    /// <summary>How near an opponent must be to a receiver to count as part of his reception picture.</summary>
+    private const float ScanReceiverNeighbourMeters = 15f;
+
+    /// <summary>
+    /// A7.1 evidence: what the head actually does in a real match, measured rather than asserted.
+    ///
+    /// Denominator: one completed 11v11 match per seed. Scan counts are player-ticks from the perception
+    /// system (one observation build per active player per live tick). The <b>receiver picture</b> column is
+    /// sampled every <see cref="ScanSampleInterval"/> ticks over players who are the
+    /// <c>IntendedReceiverId</c> of a pass in flight — the moment A7.1's scan utility exists for — and reports
+    /// the mean age of every opponent sighting within <see cref="ScanReceiverNeighbourMeters"/> of that
+    /// receiver, so it measures whether the head turns become fresher knowledge before the ball arrives.
+    /// Passing <c>off</c> as the third argument runs the same matches with
+    /// <see cref="AiRuntimeConfig.EnableScanning"/> false: the A/B is then two invocations of this probe with
+    /// identical squads, seeds and clocks.
+    /// </summary>
+    private static bool RunScanEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 4;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+        bool scanning = args.Length <= 3 || !args[3].Equals("off", StringComparison.OrdinalIgnoreCase);
+        var ai = new AiRuntimeConfig { EnableScanning = scanning };
+
+        Console.WriteLine($"=== A7.1 scanning evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s," +
+                          $" scanning {(scanning ? "ON" : "OFF")} ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Scan model         : head turn {ai.ScanMaxHeadTurnDegrees:F0}° at" +
+                          $" {ai.ScanTurnRateDegreesPerSecond:F0}°/s, hold {ai.ScanHoldSeconds:F2} s, return" +
+                          $" {ai.ScanCooldownSeconds:F2} s, refresh age {ai.ScanRefreshAgeSeconds:F2} s, attention" +
+                          $" range {ai.ScanAttentionRangeMeters:F0} m");
+        Console.WriteLine("Perception         : ±100° cone around the gaze, nearest 4 bodies within 16 m occlude");
+
+        long scanStarts = 0;
+        long threatScans = 0;
+        long dangerScans = 0;
+        long scanTicks = 0;
+        long observerTicks = 0;
+        long revealed = 0;
+        long occluded = 0;
+        int matches = 0;
+        int receiverSamples = 0;
+        long receiverAgeSum = 0;
+        int receiverNeighbourSamples = 0;
+        int receiverWorstAge = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack,
+                Ai = ai
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+            int seedReceiverSamples = 0;
+            long seedReceiverAge = 0;
+            int seedNeighbours = 0;
+            int seedWorstAge = 0;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+                if (engine.CurrentTick % ScanSampleInterval != 0) continue;
+
+                foreach (FootballerState player in engine.Players)
+                {
+                    if (!player.IsActiveOnPitch) continue;
+                    FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                    // The receiver of a pass in flight is exactly the "scan before reception" case.
+                    if (observation is null || observation.IntendedReceiverId != player.Id) continue;
+
+                    seedReceiverSamples++;
+                    foreach (PerceivedEntity entity in observation.VisiblePlayers)
+                    {
+                        // Only the opponents close enough to affect the reception are the question: an old
+                        // sighting of somebody 40 m away is not a reception risk.
+                        if (entity.Team == player.Team) continue;
+                        float dx = entity.EstimatedPosition.X - player.Position.X;
+                        float dz = entity.EstimatedPosition.Z - player.Position.Z;
+                        if (dx * dx + dz * dz > ScanReceiverNeighbourMeters * ScanReceiverNeighbourMeters) continue;
+
+                        seedNeighbours++;
+                        seedReceiverAge += entity.ObservedAgeTicks;
+                        if (entity.ObservedAgeTicks > seedWorstAge) seedWorstAge = entity.ObservedAgeTicks;
+                    }
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matches++;
+
+            ScanTelemetry stats = engine.ScanStats;
+            scanStarts += stats.ScanStarts;
+            threatScans += stats.ThreatScanStarts;
+            dangerScans += stats.DangerScanStarts;
+            scanTicks += stats.ScanTicks;
+            observerTicks += stats.ObserverTicks;
+            revealed += stats.RevealedByGaze;
+            occluded += stats.OccludedByBody;
+            receiverSamples += seedReceiverSamples;
+            receiverNeighbourSamples += seedNeighbours;
+            receiverAgeSum += seedReceiverAge;
+            if (seedWorstAge > receiverWorstAge) receiverWorstAge = seedWorstAge;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
+                              $" score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} |" +
+                              $" scans {stats.ScanStarts} (threat {stats.ThreatScanStarts}, danger" +
+                              $" {stats.DangerScanStarts}) | revealed {stats.RevealedByGaze} |" +
+                              $" occluded {stats.OccludedByBody} | {seedReceiverSamples} receiver looks," +
+                              $" {seedNeighbours} near-opponent ages at {MeanAge(seedReceiverAge, seedNeighbours)} mean");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matches} completed, {observerTicks} player-ticks) ===");
+        if (matches == 0 || observerTicks == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        var totals = new ScanTelemetry((int)scanStarts, (int)threatScans, (int)dangerScans,
+            scanTicks, observerTicks, revealed, occluded);
+        Console.WriteLine($"Scan fixes         : {scanStarts} completed (threat {threatScans}, danger {dangerScans})" +
+                          $" | {totals.ScansPerPlayerMinute:F2} per player-minute |" +
+                          $" {totals.ScanTickShare01:P1} of observed player-ticks holding a fix");
+        Console.WriteLine($"Gaze-only sightings: {revealed} opponent observations inside the gaze cone but outside" +
+                          " the body-facing cone");
+        Console.WriteLine($"Occlusion          : {occluded} opponent observations suppressed by a body on the line");
+        Console.WriteLine($"Receiver picture   : {receiverSamples} receiver looks, {receiverNeighbourSamples}" +
+                          $" near-opponent ages (within {ScanReceiverNeighbourMeters:F0} m) at" +
+                          $" {MeanAge(receiverAgeSum, receiverNeighbourSamples)} mean age (worst" +
+                          $" {receiverWorstAge} ticks)");
+
+        bool ok = matches == seedCount && (scanning ? scanStarts > 0 && revealed > 0 : scanStarts == 0);
+        Console.WriteLine(ok
+            ? scanning
+                ? "RESULT: the head turns, the gaze changes what is seen, and reception knowledge refreshes"
+                : "RESULT: scanning off means no head turn and no gaze-only sighting"
+            : "RESULT: incomplete, or the scan model did not appear (scanning on with no scan/reveal)");
+        return ok;
+    }
+
+    /// <summary>Mean knowledge age in ticks, or "n/a" when nothing was sampled.</summary>
+    private static string MeanAge(long sum, int count) => count == 0 ? "n/a" : $"{sum / (double)count:F1}";
 
     /// <summary>Mean and deepest standoff off the keeper's own goal line for one possession phase.</summary>
     private static string StandoffReport(double sum, int count, float worst) =>

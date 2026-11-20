@@ -441,12 +441,20 @@ public enum TeamId
 /// ball, an owned loose ball and an unstated last play (M8/M9/L39); a zero tick budget is legal (L41); and a
 /// flight that never enters the keeper's hands band falls through to the sweep (L25). Trajectories differ
 /// from version 38.</item>
+/// <item><c>AiBehaviour 40</c> — A7.1: a player's <b>gaze is not his body facing</b>. Every player owns a
+/// head that turns at a bounded rate toward an attention target, holds the fix for a bounded window and
+/// returns through a cooldown (<see cref="AI.ScanPlanner"/>), and the sight cone A2.2 filters with points
+/// where the <i>head</i> looks. A player about to receive a pass (or contest a loose ball) glances at the one
+/// believed opponent whose sighting has gone stale, or into the blind space behind him on alternating
+/// shoulders; a body standing on the sight line also blocks it (simple occlusion). Sightings still go into
+/// the A2.2 <see cref="AI.PlayerMemory"/>, so an unscanned rear threat stays an aged estimate while a
+/// scanned one is fresh. Trajectories differ from version 39.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 39;
+    public const int AiBehaviour = 40;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -848,6 +856,22 @@ public sealed class FootballerObservation
     public required Vector3 SelfPosition { get; init; }
     public required Vector3 SelfVelocity { get; init; }
     public required Vector2 SelfFacingXZ { get; init; }
+
+    /// <summary>
+    /// A7.1: this player's head/gaze state — where the head points relative to the body, what attention
+    /// turned it, and whether it is holding a completed fix. The default is the neutral state (head not
+    /// turned), so an observation built by a fixture that knows nothing about scanning behaves exactly as
+    /// it did before A7.1 and a standalone controller never gets a gaze it was not given.
+    /// </summary>
+    public AI.ScanStatus Scan { get; init; } = AI.ScanStatus.None;
+
+    /// <summary>
+    /// Where the head/eyes point in the XZ plane (A7.1). With a neutral <see cref="Scan"/> this is exactly
+    /// <see cref="SelfFacingXZ"/> — the pre-A7.1 sight direction — which is what makes scanning an explicit
+    /// difference between two otherwise identical observations.
+    /// </summary>
+    public Vector2 EffectiveGazeXZ => Scan.GazeFrom(SelfFacingXZ);
+
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }
     public required float ControlQuality01 { get; init; }
