@@ -1233,6 +1233,20 @@ public sealed class FootballerExecutionSystem
             float maxFirstTouchSpeed = playerVelXZ.Length() + 1.2f + (1f - controlQuality) * incomingSpeed * 0.15f;
             cushionedVel = ClampVectorLength(cushionedVel, maxFirstTouchSpeed);
 
+            // A7.4: the planned touch shapes a contact that already passed reach, height, orientation and
+            // arbitration. A neutral intent (the locked human, training, replay, every fixture) skips this
+            // branch entirely, so the pre-A7.4 cushion is reproduced bit for bit.
+            ReceptionIntent receptionIntent = cmd.ReceptionIntent;
+            if (receptionIntent.IsPlanned)
+            {
+                Vector2 touchDirection = cmd.DesiredFacingDirectionXZ.LengthSquared() > 1e-6f
+                    ? cmd.DesiredFacingDirectionXZ
+                    : controlDirXZ;
+                cushionedVel = ReceptionTouchModel.Resolve(
+                    receptionIntent, cushionedVel, playerVelXZ, incomingXZ, controlQuality,
+                    touchDirection, maxFirstTouchSpeed);
+            }
+
             ball.Velocity = new Vector3(cushionedVel.X, MathF.Min(ball.Velocity.Y * 0.10f, 0.20f), cushionedVel.Y);
 
             // The cushion may nudge the ball a few centimetres onto the foot, never by the old 55 %
@@ -1241,7 +1255,9 @@ public sealed class FootballerExecutionSystem
             ball.Position = new Vector3(ballXZ.X + correction.X, MathF.Min(ball.Position.Y, 0.15f), ballXZ.Y + correction.Y);
 
             player.DribbleTouchTimer = 0.07f;
-            player.LastExecutionDiagnostic = "FirstTouchCushion";
+            player.LastExecutionDiagnostic = receptionIntent.IsPlanned
+                ? $"FirstTouchCushion:{receptionIntent.Describe()}"
+                : "FirstTouchCushion";
         }
         else
         {

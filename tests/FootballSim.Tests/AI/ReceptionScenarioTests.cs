@@ -218,6 +218,65 @@ public sealed class ReceptionScenarioTests
     }
 
     // ---------------------------------------------------------------------------------------------
+    // A7.4: the plan crosses the command boundary and reaches execution.
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ThePlan_ReachesExecution_AsTheTouchTheReceiverActuallyTook()
+    {
+        var engine = new MatchSimulationEngine(RearReception(PlanningOn));
+        var receiver = (TacticalUtilityAiController)engine.GetController(ReceiverId);
+
+        string? diagnosticWithIntent = null;
+        for (int tick = 1; tick <= 240 && diagnosticWithIntent is null; tick++)
+        {
+            engine.StepTick();
+
+            foreach (FootballerState player in engine.Players)
+            {
+                if (player.Id != ReceiverId) continue;
+                if (!player.LastExecutionDiagnostic.StartsWith("FirstTouchCushion:", StringComparison.Ordinal))
+                    continue;
+
+                diagnosticWithIntent = player.LastExecutionDiagnostic;
+
+                // The command that took the touch carried the plan, and it is the plan the controller
+                // decided on this tick — not a stale copy from an earlier decision.
+                Assert.True(receiver.LastReceptionPlan.IsPlanned,
+                    "the touch carried an intent but the controller recorded no plan");
+                Assert.Equal(receiver.LastReceptionPlan.TouchKind, player.LastCommand.ReceptionIntent.TouchKind);
+            }
+        }
+
+        Assert.NotNull(diagnosticWithIntent);
+    }
+
+    [Fact]
+    public void PlanningOff_LeavesEveryFirstTouchNeutral()
+    {
+        var engine = new MatchSimulationEngine(RearReception(PlanningOff));
+
+        bool touched = false;
+        for (int tick = 1; tick <= 240; tick++)
+        {
+            engine.StepTick();
+
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.LastExecutionDiagnostic.StartsWith("FirstTouchCushion", StringComparison.Ordinal))
+                    continue;
+
+                Assert.Equal("FirstTouchCushion", player.LastExecutionDiagnostic);
+                Assert.False(player.LastCommand.ReceptionIntent.IsPlanned,
+                    $"player {player.Id} took an intended first touch with planning off");
+                touched = true;
+            }
+        }
+
+        Assert.True(touched, "the fixture never produced a first touch, so the ablation proved nothing");
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Determinism.
     // ---------------------------------------------------------------------------------------------
 

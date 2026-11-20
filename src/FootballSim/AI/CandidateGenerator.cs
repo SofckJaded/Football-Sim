@@ -2224,7 +2224,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             var command = new FootballerCommand(
                 moveDir, plan.FacingXZ, plan.Sprint && distance > 1.5f, plan.Shield,
                 false, false, false, Vector3.Zero,
-                KickIntentType.None, Vector3.UnitX, 0f, 0f);
+                KickIntentType.None, Vector3.UnitX, 0f, 0f)
+            {
+                // A7.4: the plan crosses the command boundary here, as the shape of a legal contact.
+                // It never buys the contact itself — execution still resolves reach, height, facing and
+                // arbitration, and a poor first touch still only gets a fraction of the intended touch.
+                ReceptionIntent = new ReceptionIntent(plan.TouchKind)
+            };
 
             CandidateKey key = new(CandidateKind.Intercept, TargetTag: ReceptionPlanner.TagOf(plan.TouchKind));
             _lastCandidates.Add(new UtilityCandidate(ReceptionPlanner.NameOf(plan.TouchKind), plan.Score, command)

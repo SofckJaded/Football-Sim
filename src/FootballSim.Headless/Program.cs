@@ -62,6 +62,9 @@ public static class Program
             case "--receptions":
                 return RunReceptionEvidence(args) ? 0 : 1;
 
+            case "--firsttouch":
+                return RunFirstTouchEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -77,6 +80,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scans [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --calls [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --receptions [seeds] [halfSeconds] [on|off]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --firsttouch [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -1728,9 +1732,173 @@ public static class Program
         return ok;
     }
 
-    /// <summary>"Kill 120, OpenBody 88, ..." for the touch kinds that occurred, in enum order.</summary>
-    private static string DescribeReceptionKindCounts(int[] counts)
+    /// <summary>
+    /// A7.4 evidence: does the reception plan reach execution, and does it change what a legal first
+    /// touch does?
+    ///
+    /// Denominator: every first-touch contact (<see cref="BallContactKind.Collection"/> with the
+    /// execution layer's own <c>FirstTouchCushion</c> diagnostic) in real 11v11 matches. Each one is
+    /// counted by the reception intent the *command that took it* carried — the command, not a passive
+    /// field, so a count here is the plan reaching the command boundary and coming out as physics.
+    ///
+    /// "Run-ahead" is the ball's velocity relative to the receiver projected on his own facing, measured
+    /// one solver step after the contact: a kill should sit near zero (the ball stays with the body), a
+    /// stride or escape touch should be clearly positive (the ball is sent into the space ahead). Neutral
+    /// touches are the pre-A7.4 cushion and are reported separately for comparison.
+    ///
+    /// Passing <c>off</c> runs the same matches with <see cref="AiRuntimeConfig.EnableReceptionPlanning"/>
+    /// false: no plan, so no command may carry an intent and every first touch must be the old cushion.
+    /// </summary>
+    private static bool RunFirstTouchEvidence(string[] args)
     {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+        bool planning = args.Length <= 3 || !args[3].Equals("off", StringComparison.OrdinalIgnoreCase);
+        var ai = new AiRuntimeConfig { EnableReceptionPlanning = planning };
+
+        Console.WriteLine($"=== A7.4 first-touch evidence: {seedCount} seeds x {halfSeconds * 2f:F0} s," +
+                          $" planning {(planning ? "ON" : "OFF")} ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine($"Touch model        : the planned touch is realised in proportion to first-touch" +
+                          $" quality, bounded at player + {ReceptionTouchModel.MaxRelativeTouchSpeed:F1} m/s" +
+                          " (the dribble spring's own allowance)");
+        Console.WriteLine($"AI configuration   : {ai.Describe()}");
+
+        int kindCount = Enum.GetValues(typeof(ReceptionTouchKind)).Length;
+        int[] touchesByKind = new int[kindCount];
+        double[] runAheadSum = new double[kindCount];
+        long plannedTouches = 0;
+        long neutralTouches = 0;
+        int matches = 0;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            var config = new PreMatchConfig
+            {
+                Seed = seed,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = halfSeconds,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack,
+                Ai = ai
+            };
+
+            var engine = new MatchSimulationEngine(config);
+            int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+            var playersById = new Dictionary<int, FootballerState>(engine.Players.Count);
+            foreach (FootballerState player in engine.Players)
+                playersById[player.Id] = player;
+
+            int seedPlanned = 0;
+            int seedNeutral = 0;
+
+            while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+            {
+                engine.StepTick();
+                if (engine.Rules.Phase == MatchPhase.FullTime) break;
+
+                IReadOnlyList<BallContactEvent> log = engine.ContactLog;
+                for (int i = log.Count - 1; i >= 0; i--)
+                {
+                    BallContactEvent contact = log[i];
+                    if (contact.Tick != engine.CurrentTick) break;
+                    if (contact.Kind != BallContactKind.Collection) continue;
+                    if (!playersById.TryGetValue(contact.PlayerId, out FootballerState? player)) continue;
+                    if (!player.LastExecutionDiagnostic.StartsWith("FirstTouchCushion", StringComparison.Ordinal))
+                        continue;
+
+                    ReceptionTouchKind kind = player.LastCommand.ReceptionIntent.TouchKind;
+                    if (kind == ReceptionTouchKind.None)
+                    {
+                        seedNeutral++;
+                    }
+                    else
+                    {
+                        seedPlanned++;
+                        touchesByKind[(int)kind]++;
+                        Vector2 ballVel = new(engine.Ball.Velocity.X, engine.Ball.Velocity.Z);
+                        Vector2 playerVel = new(player.Velocity.X, player.Velocity.Z);
+                        runAheadSum[(int)kind] += Vector2.Dot(ballVel - playerVel, player.FacingXZ);
+                    }
+                }
+            }
+
+            bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+            if (completed) matches++;
+            plannedTouches += seedPlanned;
+            neutralTouches += seedNeutral;
+
+            Console.WriteLine();
+            Console.WriteLine($"Seed {seed}: {(completed ? "FT" : "INCOMPLETE")} in {engine.CurrentTick} ticks |" +
+                              $" score {engine.Analytics.HomeGoals}-{engine.Analytics.AwayGoals} |" +
+                              $" {seedPlanned} first touches carried a plan, {seedNeutral} were the neutral cushion");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ({matches} completed, {plannedTouches + neutralTouches}" +
+                          $" first touches) ===");
+        if (matches == 0 || plannedTouches + neutralTouches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"First touches      : {plannedTouches + neutralTouches} executed |" +
+                          $" {plannedTouches} carried a planned touch | {neutralTouches} carried none");
+        Console.WriteLine($"By planned touch   : {DescribeFirstTouchKinds(touchesByKind, runAheadSum)}");
+
+        float strideMean = MeanRunAhead(ReceptionTouchKind.StrideTouch, touchesByKind, runAheadSum);
+        float escapeMean = MeanRunAhead(ReceptionTouchKind.EscapePressure, touchesByKind, runAheadSum);
+        float killMean = MeanRunAhead(ReceptionTouchKind.Kill, touchesByKind, runAheadSum);
+        bool forwarding = touchesByKind[(int)ReceptionTouchKind.Kill] > 0 &&
+                          touchesByKind[(int)ReceptionTouchKind.StrideTouch] +
+                          touchesByKind[(int)ReceptionTouchKind.EscapePressure] > 0;
+        if (forwarding)
+        {
+            Console.WriteLine($"Run-ahead          : kill {killMean:F2} m/s vs stride/escape" +
+                              $" {MathF.Max(strideMean, escapeMean):F2} m/s (ball velocity relative to the" +
+                              " receiver, on his facing)");
+        }
+
+        bool ok = planning
+            ? matches == seedCount && plannedTouches > 0 && (!forwarding || MathF.Max(strideMean, escapeMean) > killMean)
+            : matches == seedCount && plannedTouches == 0 && neutralTouches > 0;
+        Console.WriteLine(ok
+            ? planning
+                ? "RESULT: planned touches reach execution, and the forward touches send the ball ahead of the kill"
+                : "RESULT: planning off means no command carried an intent and every first touch was the old cushion"
+            : planning
+                ? "RESULT: incomplete, or no planned touch reached execution (or the forward touches do not outrun the kill)"
+                : "RESULT: incomplete, or a command carried a reception intent with planning off");
+        return ok;
+    }
+
+    /// <summary>Mean run-ahead in m/s for one touch kind, or NaN when it never happened.</summary>
+    private static float MeanRunAhead(ReceptionTouchKind kind, int[] counts, double[] sums) =>
+        counts[(int)kind] == 0 ? float.NaN : (float)(sums[(int)kind] / counts[(int)kind]);
+
+    /// <summary>"Kill 12 (+0.10 m/s), Stride 40 (+0.83 m/s), ..." for the planned touches that occurred.</summary>
+    private static string DescribeFirstTouchKinds(int[] counts, double[] runAheadSum)
+    {
+        var parts = new List<string>();
+        for (int kind = 1; kind < counts.Length; kind++)
+        {
+            if (counts[kind] == 0) continue;
+            parts.Add($"{((ReceptionTouchKind)kind)} {counts[kind]}" +
+                      $" ({runAheadSum[kind] / counts[kind]:+0.00;-0.00} m/s run-ahead)");
+        }
+
+        return parts.Count == 0 ? "none" : string.Join(", ", parts);
+    }
+
+    /// <summary>"Kill 120, OpenBody 88, ..." for the touch kinds that occurred, in enum order.</summary>
+    private static string DescribeReceptionKindCounts(int[] counts)    {
         var parts = new List<string>();
         for (int kind = 1; kind < counts.Length; kind++)
         {

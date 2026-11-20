@@ -467,12 +467,20 @@ public enum TeamId
 /// and the plan's shield/escape touches consume that belief. The on-ball candidate gate is height-aware, so
 /// a receiver under a dropping pass enters the receiving path instead of asking for kicks execution refuses.
 /// Trajectories differ from version 41.</item>
+/// <item><c>AiBehaviour 43</c> — A7.4: the reception plan crosses the <b>command boundary</b>. A
+/// <see cref="FootballerCommand"/> carries an optional <see cref="ReceptionIntent"/> (absent by default, so
+/// the locked human, training drills, replay and every fixture keep the pre-A7.4 cushion exactly), and the
+/// execution layer's first touch uses it: kill, open body, stride, shield and escape now differ in how much
+/// of the pass's pace the touch keeps and where it sends the ball, realised in proportion to the receiver's
+/// own first-touch quality (<see cref="Locomotion.ReceptionTouchModel"/>). Reach, contact height, body
+/// orientation and the contact arbitration are untouched, so an intent can never manufacture a contact.
+/// Trajectories differ from version 42.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 42;
+    public const int AiBehaviour = 43;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -771,6 +779,33 @@ public enum ReceptionTouchKind
     EscapePressure
 }
 
+/// <summary>
+/// A7.4: the reception intent a command carries — "if this body gets a <i>legal</i> touch on that ball,
+/// make it this touch".
+///
+/// <b>The intent never buys a contact.</b> Reach, contact height, body orientation, recovery and the
+/// contact arbitration are decided exactly as before (<c>BallContactRules</c> plus the execution
+/// layer's own arbitration); a plan to meet a ball the body cannot reach does nothing at all. What the
+/// intent may change is what a contact that <i>did</i> happen does to the ball: how much of the
+/// incoming pace is kept and which way the touch sends it, realised in proportion to the receiver's own
+/// first-touch quality, so a bad touch still cannot be made good by intending it
+/// (<see cref="Locomotion.ReceptionTouchModel"/>).
+///
+/// The neutral value is <see cref="None"/>, so the locked human, training drills, replay and every
+/// fixture keep the pre-A7.4 cushion bit for bit.
+/// </summary>
+public readonly record struct ReceptionIntent(ReceptionTouchKind TouchKind)
+{
+    /// <summary>The neutral intent: no planned touch, the exact pre-A7.4 first-touch cushion.</summary>
+    public static ReceptionIntent None => default;
+
+    /// <summary>True when a real touch was planned (and execution may shape a legal contact with it).</summary>
+    public bool IsPlanned => TouchKind != ReceptionTouchKind.None;
+
+    /// <summary>Compact text form for the execution diagnostic, the inspector or a trace.</summary>
+    public string Describe() => IsPlanned ? TouchKind.ToString() : "none";
+}
+
 public readonly record struct FootballerCommand(
     Vector2 DesiredMoveDirectionXZ,
     Vector2 DesiredFacingDirectionXZ,
@@ -792,6 +827,13 @@ public readonly record struct FootballerCommand(
     /// no longer have to infer the receiver from "whoever is nearest" (audit F10/F11).
     /// </summary>
     public int? IntendedReceiverId { get; init; }
+
+    /// <summary>
+    /// A7.4: the touch this player planned for an arriving ball (A7.3's plan, published on the command
+    /// boundary). Defaults to <see cref="ReceptionIntent.None"/>, which is the exact pre-A7.4 execution
+    /// path — the command is a readonly record struct, so no existing call site had to change.
+    /// </summary>
+    public ReceptionIntent ReceptionIntent { get; init; } = ReceptionIntent.None;
 
     public static FootballerCommand Idle => new(
         Vector2.Zero, new Vector2(1f, 0f), false, false, false, false, false,
