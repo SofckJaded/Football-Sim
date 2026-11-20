@@ -1,0 +1,22 @@
+=== A7.2 team-call evidence: 4 seeds x 2400 s, calls ON ===
+Simulation version : ai41-rs1
+Call model         : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t)
+
+Seed 20260818: FT in 144440 ticks | score 2-0 | calls 16525 published, 429293 suppressed, 16493 expired, 2 evicted | 177940 player-observations heard one | 78978 carrier decisions
+
+Seed 20268737: FT in 144470 ticks | score 2-1 | calls 16281 published, 424802 suppressed, 16224 expired, 1 evicted | 169995 player-observations heard one | 81765 carrier decisions
+
+Seed 20276656: FT in 144346 ticks | score 1-0 | calls 16213 published, 439148 suppressed, 16168 expired, 8 evicted | 170950 player-observations heard one | 81520 carrier decisions
+
+Seed 20284575: FT in 144536 ticks | score 2-0 | calls 15917 published, 415624 suppressed, 15871 expired, 1 evicted | 168753 player-observations heard one | 78622 carrier decisions
+
+=== Totals over 4 seeds (4 completed, 12711336 player-observations) ===
+Calls published    : 64936 | 1708867 repeated shouts suppressed | 64756 expired | 12 evicted from the bounded board
+Received           : 687638 player-observations carried a call (5.41 %) | 2140611 carried a step/drop line instruction
+By kind            : ManOn 19425, Turn 26913, Switch 5595, Run 4693, Cover 2570, Step 2040, Drop 3700
+Heard by kind      : ManOn 123848, Turn 150453, Switch 55155, Run 281174, Cover 77008
+Line band shift    : 184747 defending samples with a call shift (mean -0.87 m, range -2.00..1.50 m) | read from the band the allocator placed the line from
+Carrier decisions  : 320885 | 49497 under a man-on call | 130875 run choices while told to run
+Carrier actions    : DriveWithBall 299029, ShieldBall 11219, Job:BallResponder 3568
+Under man-on       : DriveWithBall 36091, ShieldBall 11219, Pass(GroundPass)To#19 129
+RESULT: the channel is alive, heard after its delay, expires, and reaches the allocator

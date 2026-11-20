@@ -1,0 +1,22 @@
+=== A7.2 team-call evidence: 4 seeds x 2400 s, calls OFF ===
+Simulation version : ai41-rs1
+Call model         : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(off delay 18t)
+
+Seed 20260818: FT in 144246 ticks | score 3-0 | calls 0 published, 0 suppressed, 0 expired, 0 evicted | 0 player-observations heard one | 95025 carrier decisions
+
+Seed 20268737: FT in 144124 ticks | score 0-0 | calls 0 published, 0 suppressed, 0 expired, 0 evicted | 0 player-observations heard one | 95711 carrier decisions
+
+Seed 20276656: FT in 144248 ticks | score 2-0 | calls 0 published, 0 suppressed, 0 expired, 0 evicted | 0 player-observations heard one | 96481 carrier decisions
+
+Seed 20284575: FT in 144220 ticks | score 0-0 | calls 0 published, 0 suppressed, 0 expired, 0 evicted | 0 player-observations heard one | 93953 carrier decisions
+
+=== Totals over 4 seeds (4 completed, 12690348 player-observations) ===
+Calls published    : 0 | 0 repeated shouts suppressed | 0 expired | 0 evicted from the bounded board
+Received           : 0 player-observations carried a call (0.00 %) | 0 carried a step/drop line instruction
+By kind            : none
+Heard by kind      : none
+Line band shift    : 0 defending samples with a call shift | read from the band the allocator placed the line from
+Carrier decisions  : 381170 | 0 under a man-on call | 0 run choices while told to run
+Carrier actions    : DriveWithBall 370600, Job:BallResponder 3959, OnsideSupportLane 3276
+Under man-on       : none
+RESULT: calls off means no call, no heard instruction and a neutral observation
