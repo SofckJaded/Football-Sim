@@ -70,7 +70,8 @@ public static class DefenderResponseModel
 
     /// <summary>
     /// Attack-relative projection at which a region is as dangerous as it gets, in metres (22.5 m from the
-    /// opponent's goal line). A run toward the halfway line pulls nobody.
+    /// opponent's goal line). A run toward the halfway line still pulls at half strength (L22: the danger
+    /// weight has a 0.5 floor), so it is priced, just priced least.
     /// </summary>
     public const float DangerProjXMeters = 30f;
 

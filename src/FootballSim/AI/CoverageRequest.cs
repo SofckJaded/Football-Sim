@@ -139,7 +139,10 @@ public sealed class CoverageRequest
         Reason = reason;
     }
 
-    /// <summary>Records one candidate's bid, in ascending player id order; extras beyond the table are dropped.</summary>
+    /// <summary>
+    /// Records one candidate's bid, in call order (L19). The single caller iterates its players id-ordered, so
+    /// the table is ascending in practice; on overflow the extras are dropped in call order, not by score.
+    /// </summary>
     internal void AddBid(in CoverageBid bid)
     {
         if (BidCount >= MaxBids) return;

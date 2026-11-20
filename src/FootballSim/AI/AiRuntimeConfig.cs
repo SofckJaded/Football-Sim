@@ -55,11 +55,12 @@ public sealed class AiRuntimeConfig
     public float SwitchRelativeMargin { get; init; } = 0.04f;
 
     // ---------------------------------------------------------------------------------------------
-    // Declared now, consumed by A1.2 / A4 / A9.
+    // Declared here so the plan's cadence table and candidate caps live in one place rather than being
+    // invented inside the consumers.
     //
-    // These are validated here so the plan's cadence table and candidate caps live in one place rather
-    // than being invented inside a scheduler that does not exist yet. Nothing reads them at the moment:
-    // the current engine decides and perceives every live tick. Do not describe them as active.
+    // The candidate caps below (MaxPassTargets, MaxCarrierCandidates, MaxOffBallCandidates) are read by the
+    // current build. The scheduler fields are read by AiScheduler and only take effect when
+    // EnableScheduledDecisions is on, so they are the part that is declared ahead of its default.
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>Live ticks between perception refreshes (plan §3: 15 Hz, i.e. every 4 ticks).</summary>

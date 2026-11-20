@@ -282,7 +282,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         _passTargetCount = 0;
     }
 
-    /// <summary>Advances the timers this object owns. Called once per decision.</summary>
+    /// <summary>
+    /// Advances the timers this object owns. Called once per live tick, not once per decision (L7): the
+    /// tackle cooldown is a reaction timer, and slowing the utility cadence must not slow it down.
+    /// </summary>
     public void TickTimers(float dt) => _tackleCooldown = MathF.Max(0f, _tackleCooldown - dt);
 
     /// <summary>
@@ -401,7 +404,11 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         float targetZ = oppGkZ >= 0f ? -2.95f : 2.95f;
         Vector3 shotTarget = new(oppGoalCenter.X, 1.0f, targetZ);
-        Vector2 shotDir2D = Vector2.Normalize(new Vector2(shotTarget.X - obs.SelfPosition.X, shotTarget.Z - obs.SelfPosition.Z));
+        // L9: SafeNormalize, not a raw Normalize — a shooter standing exactly on the aim point would otherwise
+        // put a NaN direction into the command (measure-zero, but every other aim in this file is guarded).
+        Vector2 shotDir2D = SimMath.SafeNormalize(
+            new Vector2(shotTarget.X - obs.SelfPosition.X, shotTarget.Z - obs.SelfPosition.Z),
+            new Vector2(obs.AttackingDirectionX, 0f));
         float laneClearance = EvaluateLaneClearance(selfXZ, new Vector2(shotTarget.X, shotTarget.Z), obs.VisiblePlayers, obs.SelfTeam);
 
         float shotValue = ActionValueScale.ShotValue(distToGoal, laneClearance);

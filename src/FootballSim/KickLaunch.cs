@@ -31,7 +31,11 @@ public static class KickLaunchModel
     /// <summary>Ball height at a kick: the resting centre height is the radius.</summary>
     public const float LaunchHeight = 0.11f;
 
-    /// <summary>Speed of a ground pass at <paramref name="power01"/>; exposed because the planner shares it.</summary>
+    /// <summary>
+    /// Speed of a ground pass at <paramref name="power01"/>; exposed because the planner shares it. The power
+    /// is clamped to [<see cref="MinPower"/>, 1], so the real band is 9.725–19.5 m/s — the 8.0 m/s floor is
+    /// unreachable and exists only as the lower clamp (L30).
+    /// </summary>
     public static float GroundPassSpeed(float power01) =>
         Math.Clamp(8.0f + Math.Clamp(power01, MinPower, MaxPower) * 11.5f, 8.0f, 19.5f);
 

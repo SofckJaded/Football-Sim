@@ -193,10 +193,11 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
                                   && obs.BallControllingPlayerId is int controllingId
                                   && controllingId != obs.SelfId;
 
-        // Only treat the ball as a kicked pass if it is traveling faster than sprint speed (> 9.5 m/s) and away from the kicker
+        // Only the receiving branch of the off-ball candidate set reads this (a press target comes from the
+        // press model), so the defending fallback is the ball's own position and carries no lead.
         Vector2 myInterceptXZ = obs.PossessingTeam == obs.SelfTeam
             ? ComputeBallInterceptTarget(ReachKinematics.FromObservation(obs), ballXZ, ballVelXZ, _pitch)
-            : ballXZ + ballVelXZ * 0.12f; // Defenders aim directly at the ball carrier!
+            : ballXZ;
 
         // Audit F10: responder election is match-level (one per team, time-to-reach + hysteresis,
         // human not counted as a rival AI). The local estimate is only a fallback for a controller

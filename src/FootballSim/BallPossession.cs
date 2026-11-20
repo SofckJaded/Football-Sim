@@ -71,7 +71,8 @@ public sealed class BallPossessionTracker
         // following it keeps the same claim it would have had after a real kick.
         _lastPlayTeam = snapshot.PossessionTeam;
 
-        // A seeded in-flight pass is allowed to settle immediately; a seeded control is not.
+        // A seeded control and a seeded pass both start their own clock at zero: the pass therefore cannot
+        // settle for SettledPassGraceSeconds (L31 — the old comment claimed it could settle immediately).
         _elapsedInState = 0f;
     }
 

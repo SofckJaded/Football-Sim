@@ -24,7 +24,10 @@ public readonly record struct RestDefence(
     float CentralAccess01,
     /// <summary>How open the opponent's first outlet — from the ball to their most advanced teammate — is.</summary>
     float OutletExposure01,
-    /// <summary>Share of the believed opponents goal-side of the ball and near our goal.</summary>
+    /// <summary>
+    /// How many believed opponents are goal-side of the ball and near our goal, saturating at three such
+    /// players (L21: it is a count, not the share of the believed opponents the old sentence claimed).
+    /// </summary>
     float Threat01,
     /// <summary>Aggregate: 1 fully secure, 0 completely exposed.</summary>
     float Security01)

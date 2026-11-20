@@ -614,6 +614,10 @@ public sealed class FootballerExecutionSystem
 
             bool wantedContact = p.LastCommand.KickType != KickIntentType.None || p.LastCommand.RequestTackle;
 
+            // L28: clear the published control quality before any skip. A player the arbitration skips for a
+            // whole possession used to keep publishing the quality of a touch he made earlier.
+            p.ControlQuality01 = 0f;
+
             // The player who just controlled the ball has a short exclusive claim on it: a plain
             // touch from anybody else (team-mate or opponent) is not allowed; a deliberate kick or a
             // tackle is. This is what stops two players on the same spot from taking turns to
@@ -673,8 +677,6 @@ public sealed class FootballerExecutionSystem
             float maxVerticalReach = BallContactRules.MaxContactHeight(
                 keeperMayHandle,
                 p.IsJumping || p.LastCommand.KickType == KickIntentType.Header);
-
-            p.ControlQuality01 = 0f;
 
             if (planarDist > effectiveReach)
             {

@@ -45,8 +45,10 @@ public readonly record struct ReceptionValueTerms(
 ///   already has (<see cref="PassSuccessTerms.DefenderPressure01"/> for a pass, the local pressure window
 ///   for a carry). This model never computes a second one.</item>
 /// <item><b>Structure</b> — does the reception keep the shape the profile asked for? A wide side values a
-///   wide reception; a narrow one values a central one. It is the same width expression
-///   <see cref="Tactics.JobRegionScoring"/> uses, so the two cannot drift apart.</item>
+///   wide reception. It is the same width expression <see cref="Tactics.JobRegionScoring"/> uses, so the two
+///   cannot drift apart — and that expression's narrow denominator saturates by |z| ≈ 18.7 m, so a narrow
+///   side is not indifferent to a wide reception either (L10: the code rewards it, the old sentence here
+///   claimed the opposite).</item>
 /// </list>
 ///
 /// <b>Transition risk is not here.</b> The pass score owns it through its loss term, which rises in the

@@ -67,8 +67,9 @@ public sealed class FixedCommandController : IFootballerController
 
 /// <summary>
 /// Replays a per-decision command sequence, then falls back to a fixed command. Decisions are counted
-/// from zero, one per live tick this player is asked to decide — scenarios do not suspend play, so
-/// decision ordinal equals elapsed live tick.
+/// from zero, one per live tick this player is asked to decide. A scenario can suspend play (a restart's
+/// pause, a stoppage) and those ticks make no decision, so the ordinal is <i>not</i> the elapsed tick: a
+/// scripted fixture drifts after the first restart and fires nothing while suspended (L38).
 /// </summary>
 public sealed class ScriptedCommandController : IFootballerController
 {

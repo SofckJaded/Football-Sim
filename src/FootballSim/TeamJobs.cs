@@ -957,18 +957,6 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
-    /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
-    ///
-    /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
-    /// move the job â€” but responsibility for a threat belongs to the defender whose place in the formation is
-    /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
-    /// another slot â€” by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
-    /// â€” the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
-    /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
-    /// distances so the handover can be explained after the fact. At most
-    /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
-    /// </summary>
-    /// <summary>
     /// The held marker of one threat, found in player order so the scan cannot depend on hash order. Only a
     /// player still in <paramref name="taken"/> holds a job in this pass; anyone else is being re-selected.
     /// </summary>
@@ -1023,9 +1011,11 @@ public sealed class TeamJobCoordinator
         float incumbentSlotDistance = Vector2.Distance(
             new Vector2(incumbentSlot.X, incumbentSlot.Z), threat.PositionXZ);
 
-        // The zone owner is normally a defender *on the line* â€” held this pass, so not in `available`. The
-        // handover is allowed to take him off the line (the released marker takes his place on it), which is
-        // what "pick him up" means; anyone with a contextual duty of his own is not a candidate.
+        // The zone owner is normally a defender *on the line* — held this pass, so not in `available`. The
+        // handover is allowed to take him off the line, which is what "pick him up" means; anyone with a
+        // contextual duty of his own is not a candidate. L17: the released marker does *not* always take his
+        // place — a defensive midfielder cannot join the line (the line loop admits CB/FB only), so when he
+        // is the one released the side is a man short there until the next pass re-forms it.
         FootballerState? owner = null;
         bool ownerOnTheLine = false;
         float ownerSlotDistance = float.MaxValue;
