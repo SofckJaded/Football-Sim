@@ -417,9 +417,14 @@ public static class DefensiveLineModel
         return ProjFor(band, anchorZ, ballZ);
     }
 
-    /// <summary>Roles that hold a place in the defensive line.</summary>
+    /// <summary>
+    /// Roles the band's depth is averaged from. The same roles the line assignment places on the band (M7):
+    /// a defensive midfielder holds a vacancy slot of his own (the coverage request's job), not a place on
+    /// the back line, so averaging his anchor into the band pulled the back four 1.6–2.6 m upfield on every
+    /// defending pass while he himself never stood there.
+    /// </summary>
     public static bool HoldsLineSlot(TacticalRole role) =>
-        role is TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder;
+        role is TacticalRole.CenterBack or TacticalRole.FullBack;
 
     // ---------------------------------------------------------------------------------------------
     // Inputs.
@@ -430,6 +435,12 @@ public static class DefensiveLineModel
     /// players. 0.5 is "cannot say" (no carrier, or one nobody on this team has seen), which is the value
     /// that leaves the line where the anchors put it.
     /// </summary>
+    /// <remarks>
+    /// M6: an <i>unseen</i> carrier answers "cannot say" (0.5), not 0.35. The old value was a guess dressed
+    /// as a measurement and it moved the whole line 1.2 m for a player this team knows nothing about, which is
+    /// the opposite of what the paragraph above promises. The unpressed case is different and stays at 0.25:
+    /// seeing a carrier nobody can close down <i>is</i> a fact — nobody is pressing him — so the line drops.
+    /// </remarks>
     private static float PasserPressure01(
         IReadOnlyList<FootballerState> players,
         TeamId team,
@@ -444,7 +455,7 @@ public static class DefensiveLineModel
             return 0.5f;
         }
 
-        if (!TryBelieved(opponents, carrierId, out TeamBelief.Opponent carrier)) return 0.35f;
+        if (!TryBelieved(opponents, carrierId, out TeamBelief.Opponent carrier)) return 0.5f;
 
         float best = float.MaxValue;
         for (int i = 0; i < players.Count; i++)

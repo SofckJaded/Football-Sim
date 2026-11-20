@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
 
@@ -287,10 +288,20 @@ public sealed class MatchScenario
     }
 
     /// <summary>The ownership snapshot a scenario starts from, or a loose ball.</summary>
+    /// <remarks>
+    /// A loose ball still names its claim when the fixture states a deliberate last play (M9): in real play a
+    /// kick leaves the ball loose with <c>_lastPlayTeam</c> set to the kicker's team, and a fixture that
+    /// starts "nobody has it, but a named team-mate just kicked it" must seed the same state or the first
+    /// tick's turnover response reads a ball nobody has ever played.
+    /// </remarks>
     public BallPossessionSnapshot CreatePossessionSnapshot()
     {
         if (BallSetup == ScenarioBallSetup.Loose)
-            return BallPossessionSnapshot.Loose;
+        {
+            return BallLastPlayPlayerId is int playedById
+                ? new BallPossessionSnapshot(BallControlState.Loose, FindPlayer(playedById).Team, null, null)
+                : BallPossessionSnapshot.Loose;
+        }
 
         ScenarioPlayer owner = FindPlayer(BallOwnerPlayerId
             ?? throw new InvalidOperationException($"Scenario '{Name}' needs BallOwnerPlayerId for {BallSetup}."));
@@ -357,6 +368,23 @@ public sealed class MatchScenario
                 throw new ArgumentException(
                     $"Scenario '{Name}' player #{player.Id} has stamina {player.Stamina01:F2}; expected 0..1.", nameof(Players));
 
+            // M8(b): a human controller installed only through a spec is never registered as the match's
+            // locked human, so the responder election could hand that player the ball and the human-lock
+            // guards (removal, OverrideController) would not see him.
+            if (player.Controller is HumanInputController human && human.LockedPlayerId != player.Id)
+            {
+                throw new ArgumentException(
+                    $"Scenario '{Name}' gives player #{player.Id} a HumanInputController locked to " +
+                    $"#{human.LockedPlayerId}.", nameof(Players));
+            }
+            if (player.Controller is HumanInputController && HumanPlayerId != player.Id)
+            {
+                throw new ArgumentException(
+                    $"Scenario '{Name}' gives player #{player.Id} a HumanInputController but does not lock the " +
+                    "human to him; the engine would install it without registering the lock. Set HumanPlayerId.",
+                    nameof(HumanPlayerId));
+            }
+
             SimulationConfigValidation.ValidatePlayerAttributes(player.Attributes, $"Scenario player #{player.Id}");
             if (player.Tendencies is not null)
                 SimulationConfigValidation.ValidateTendencies(player.Tendencies, $"Scenario player #{player.Id}");
@@ -375,9 +403,43 @@ public sealed class MatchScenario
             !SimMath.IsFinite(BallAngularVelocity))
             throw new ArgumentException($"Scenario '{Name}' has a non-finite ball state.", nameof(BallPosition));
 
+        // L39: an off-pitch ball silently turns the fixture into a boundary restart, and a loose ball with a
+        // stale owner throws from inside the engine. Both are the scenario's to get wrong, so both are
+        // rejected here rather than producing a different match.
+        if (BallPosition.X < -Pitch.HalfLength || BallPosition.X > Pitch.HalfLength ||
+            BallPosition.Z < -Pitch.HalfWidth || BallPosition.Z > Pitch.HalfWidth)
+        {
+            throw new ArgumentException(
+                $"Scenario '{Name}' starts the ball off the pitch at ({BallPosition.X:F1}, {BallPosition.Z:F1}).",
+                nameof(BallPosition));
+        }
+
+        if (BallSetup == ScenarioBallSetup.Loose && BallOwnerPlayerId is int looseOwner)
+        {
+            throw new ArgumentException(
+                $"Scenario '{Name}' names BallOwnerPlayerId {looseOwner} on a loose ball; a loose ball has no " +
+                "owner. Use BallLastPlayPlayerId to state who played it.", nameof(BallOwnerPlayerId));
+        }
+
+        if (BallLastPlayPlayerId is int playedById && !ids.Contains(playedById))
+        {
+            throw new ArgumentException(
+                $"Scenario '{Name}' states a last play by player #{playedById}, who is not in the scenario.",
+                nameof(BallLastPlayPlayerId));
+        }
+
         if (HumanPlayerId is int humanId && !ids.Contains(humanId))
             throw new ArgumentException(
                 $"Scenario '{Name}' locks the human to player #{humanId}, who is not in the scenario.", nameof(HumanPlayerId));
+
+        // M8(a): a per-spec controller on the locked human silently wins over the lock, so the scenario's two
+        // views of that player disagree and a controller replacement later throws.
+        if (HumanPlayerId is int lockedHumanId && FindPlayer(lockedHumanId).Controller is not null)
+        {
+            throw new ArgumentException(
+                $"Scenario '{Name}' locks the human to player #{lockedHumanId} and also installs a controller on " +
+                "him; the spec controller would win and the lock would be ignored.", nameof(HumanPlayerId));
+        }
 
         if (BallSetup != ScenarioBallSetup.Loose)
         {

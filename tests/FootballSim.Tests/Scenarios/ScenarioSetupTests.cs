@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using FootballSim;
 using FootballSim.Core;
+using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Scenarios;
 using Xunit;
@@ -167,6 +168,131 @@ public sealed class ScenarioSetupTests
 
         ArgumentException error = Assert.Throws<ArgumentException>(() => new MatchSimulationEngine(scenario));
         Assert.Contains("starts off the pitch", error.Message);
+    }
+
+    /// <summary>
+    /// M8 — the two views of the human lock must agree before the match starts. A per-spec controller on the
+    /// locked player wins silently over the lock, and a human controller installed only through a spec is
+    /// never registered as the locked human (so the responder election could elect him and the removal and
+    /// override guards would not see him). Both are rejected at construction.
+    /// </summary>
+    [Fact]
+    public void Scenario_RejectsALockedHumanWithASpecController()
+    {
+        MatchScenario scenario = ThreeVersusTwo(
+            homeCmController: new FixedCommandController(ScenarioCommands.Hold(), label: "spec"));
+        MatchScenario withLock = new()
+        {
+            Name = scenario.Name,
+            Seed = scenario.Seed,
+            BallPosition = scenario.BallPosition,
+            BallSetup = scenario.BallSetup,
+            BallOwnerPlayerId = scenario.BallOwnerPlayerId,
+            HumanPlayerId = HomeCm
+        };
+        foreach (ScenarioPlayer player in scenario.Players) withLock.Add(player);
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => new MatchSimulationEngine(withLock));
+        Assert.Contains("also installs a controller", error.Message);
+    }
+
+    /// <summary>M8(b)/M9 — a human controller needs the lock, and a loose ball may state its last play.</summary>
+    [Fact]
+    public void Scenario_RejectsAHumanControllerWithoutTheLock()
+    {
+        MatchScenario scenario = ThreeVersusTwo(homeCmController: new HumanInputController(HomeCm));
+
+        ArgumentException error = Assert.Throws<ArgumentException>(() => new MatchSimulationEngine(scenario));
+        Assert.Contains("does not lock the human", error.Message);
+    }
+
+    [Fact]
+    public void Scenario_AStatedLastPlay_SeedsTheClaimOnALooseBall()
+    {
+        var loose = new MatchScenario
+        {
+            Name = "loose ball off a clearance",
+            Seed = 99UL,
+            BallPosition = new Vector3(-4.4f, 0f, 8f),
+            BallSetup = ScenarioBallSetup.Loose,
+            BallLastPlayPlayerId = HomeCb,
+            BallLastPlayKind = BallContactKind.Kick,
+            BallLastPlayIntent = KickIntentType.Clearance
+        };
+        loose.Add(MatchScenario.Player(HomeGk, TeamId.Home, TacticalRole.Goalkeeper, new Vector3(-48f, 0f, 0f), 1));
+        loose.Add(MatchScenario.Player(HomeCb, TeamId.Home, TacticalRole.CenterBack, new Vector3(-20f, 0f, -4f), 4));
+        loose.Add(MatchScenario.Player(AwayCb, TeamId.Away, TacticalRole.CenterBack, new Vector3(10f, 0f, 0f), 4));
+
+        BallPossessionSnapshot seeded = loose.CreatePossessionSnapshot();
+        Assert.Equal(BallControlState.Loose, seeded.State);
+        Assert.Equal(TeamId.Home, seeded.PossessionTeam);
+        Assert.Null(seeded.ControllingPlayerId);
+
+        var engine = new MatchSimulationEngine(loose);
+        Assert.Equal(BallControlState.Loose, engine.Possession.State);
+        Assert.Equal(TeamId.Home, engine.Possession.PossessionTeam);
+    }
+
+    /// <summary>L39 — the scenario's own ball state is validated before the engine can act on it.</summary>
+    [Fact]
+    public void Scenario_RejectsAnOffPitchBallOrALooseBallWithAnOwner()
+    {
+        MatchScenario offPitch = new()
+        {
+            Name = "ball off the pitch",
+            BallPosition = new Vector3(60f, 0f, 0f)
+        };
+        offPitch.Add(MatchScenario.Player(HomeCb, TeamId.Home, TacticalRole.CenterBack, new Vector3(-20f, 0f, -4f), 4));
+        offPitch.Add(MatchScenario.Player(AwayCb, TeamId.Away, TacticalRole.CenterBack, new Vector3(10f, 0f, 0f), 4));
+        ArgumentException offPitchError = Assert.Throws<ArgumentException>(() => new MatchSimulationEngine(offPitch));
+        Assert.Contains("off the pitch", offPitchError.Message);
+
+        MatchScenario ownedLoose = new()
+        {
+            Name = "owned loose ball",
+            BallPosition = new Vector3(-4.4f, 0f, 8f),
+            BallSetup = ScenarioBallSetup.Loose,
+            BallOwnerPlayerId = HomeCb
+        };
+        ownedLoose.Add(MatchScenario.Player(HomeCb, TeamId.Home, TacticalRole.CenterBack, new Vector3(-5f, 0f, 8f), 4));
+        ownedLoose.Add(MatchScenario.Player(AwayCb, TeamId.Away, TacticalRole.CenterBack, new Vector3(10f, 0f, 0f), 4));
+        ArgumentException ownedLooseError = Assert.Throws<ArgumentException>(() => new MatchSimulationEngine(ownedLoose));
+        Assert.Contains("loose ball has no owner", ownedLooseError.Message);
+    }
+
+    /// <summary>L41 — a zero tick budget runs nothing instead of throwing from the shared loop.</summary>
+    [Fact]
+    public void ScenarioRunner_AcceptsAZeroTickBudget()
+    {
+        ScenarioRunResult none = ScenarioRunner.Run(ThreeVersusTwo(), 0);
+        Assert.Equal(0, none.TicksRun);
+
+        ScenarioRunResult some = ScenarioRunner.Run(ThreeVersusTwo(), 5);
+        Assert.Equal(5, some.TicksRun);
+    }
+
+    /// <summary>
+    /// L2 — a fixture that starts with the keeper holding the ball starts with the catch's own hold delay, so
+    /// he cannot distribute on tick 1. The seed used to set zero while claiming the catch's delay applied.
+    /// </summary>
+    [Fact]
+    public void Scenario_KeeperHeld_StartsWithTheCatchHoldDelay()
+    {
+        var scenario = new MatchScenario
+        {
+            Name = "keeper holding",
+            Seed = 7UL,
+            BallPosition = new Vector3(-44f, 1.1f, 0f),
+            BallSetup = ScenarioBallSetup.KeeperHeld,
+            BallOwnerPlayerId = HomeGk
+        };
+        scenario.Add(MatchScenario.Player(HomeGk, TeamId.Home, TacticalRole.Goalkeeper, new Vector3(-44f, 0f, 0f), 1));
+        scenario.Add(MatchScenario.Player(HomeCb, TeamId.Home, TacticalRole.CenterBack, new Vector3(-20f, 0f, -4f), 4));
+        scenario.Add(MatchScenario.Player(AwayCb, TeamId.Away, TacticalRole.CenterBack, new Vector3(10f, 0f, 0f), 4));
+
+        var engine = new MatchSimulationEngine(scenario);
+        Assert.Equal(BallContactRules.KeeperHoldSeconds, engine.Ball.HeldReleaseDelaySeconds);
+        Assert.Equal(HomeGk, engine.Ball.HeldByPlayerId);
     }
 
     [Fact]

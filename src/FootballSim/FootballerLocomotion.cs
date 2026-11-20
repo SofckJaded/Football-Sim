@@ -129,6 +129,13 @@ public static class BallContactRules
         KeeperCatchSpeedLimit * Math.Clamp(reflex01, 0.1f, 1f);
 
     /// <summary>
+    /// How long a keeper holds a caught ball before he may release it. One owner (L2): the catch and the
+    /// scenario seed both use it, so a seeded <c>KeeperHeld</c> fixture starts in the same state a real
+    /// catch does instead of letting the keeper distribute on tick 1.
+    /// </summary>
+    public const float KeeperHoldSeconds = 0.55f;
+
+    /// <summary>
     /// Planar reach for the player's current action, in metres.
     ///
     /// A6.6: <paramref name="keeperHandling"/> is the keeper's <i>lawful</i> handling privilege, not his
@@ -914,7 +921,7 @@ public sealed class FootballerExecutionSystem
                     ball.Velocity = Vector3.Zero;
                     ball.AngularVelocity = Vector3.Zero;
                     ball.HeldByPlayerId = player.Id;
-                    ball.HeldReleaseDelaySeconds = 0.55f;
+                    ball.HeldReleaseDelaySeconds = BallContactRules.KeeperHoldSeconds;
                     ball.LastTouchedByPlayerId = player.Id;
                     ball.LastTouchedByTeam = player.Team;
                     player.KickRecoveryTimer = 0.15f;
@@ -972,7 +979,7 @@ public sealed class FootballerExecutionSystem
                 ball.Velocity = Vector3.Zero;
                 ball.AngularVelocity = Vector3.Zero;
                 ball.HeldByPlayerId = player.Id;
-                ball.HeldReleaseDelaySeconds = 0.55f;
+                ball.HeldReleaseDelaySeconds = BallContactRules.KeeperHoldSeconds;
                 ball.LastTouchedByPlayerId = player.Id;
                 ball.LastTouchedByTeam = player.Team;
                 player.KickRecoveryTimer = 0.15f;
@@ -998,7 +1005,7 @@ public sealed class FootballerExecutionSystem
                 ball.LastTouchedByTeam = player.Team;
                 player.KickRecoveryTimer = 0.45f;
                 player.LastExecutionDiagnostic = "GK:PunchClear";
-                EmitContact(player, BallContactKind.Save, ball, isParry: true);
+                EmitContact(player, BallContactKind.Save, ball, isParry: true, punchedClearance: true);
             }
 
             return;
@@ -1385,12 +1392,16 @@ public sealed class FootballerExecutionSystem
         BallState ball,
         KickIntentType intent = KickIntentType.None,
         int? intendedReceiverId = null,
-        bool isParry = false)
+        bool isParry = false,
+        bool punchedClearance = false)
     {
         // A6.6: the ball's play history moves with its last touch, so a law that distinguishes a
         // deliberate kick from a deflection (the keeper's back-pass restriction) reads the same fact the
         // ownership model does. One write per contact, in the one place every contact passes through.
-        ball.LastPlay = new BallLastPlay(kind, intent, player.Id, player.Team);
+        ball.LastPlay = new BallLastPlay(kind, intent, player.Id, player.Team)
+        {
+            PunchedClearance = punchedClearance
+        };
 
         ContactEvents.Add(new BallContactEvent(_currentTick, kind, player.Id, player.Team, ball.Position)
         {

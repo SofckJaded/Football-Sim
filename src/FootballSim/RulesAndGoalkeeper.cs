@@ -237,7 +237,16 @@ public sealed class GoalkeeperController : IFootballerController
 
             if (claim.ShouldAttack) return DecideClaim(obs, claim);
             if (claim.Reason is GoalkeeperClaimReason.KeeperFirst or GoalkeeperClaimReason.Contested
-                or GoalkeeperClaimReason.OpponentFirst or GoalkeeperClaimReason.KeeperCannotReach)
+                or GoalkeeperClaimReason.OpponentFirst)
+            {
+                return DecidePositioning(obs, ownGoalX);
+            }
+
+            // L25: "cannot reach it with the hands" is only final when the ball is up where the hands are.
+            // A flight that never enters the hands band is the below-torso ball the sweep is documented to
+            // own; finalising it here made the keeper ignore a ball arriving at his feet.
+            if (claim.Reason == GoalkeeperClaimReason.KeeperCannotReach &&
+                verticalDelta >= BallContactRules.TorsoContactHeight)
             {
                 return DecidePositioning(obs, ownGoalX);
             }
@@ -400,7 +409,12 @@ public sealed class GoalkeeperController : IFootballerController
         // carrier's target gate keeps — every other ball in the match already does, and this one alone could
         // give away an indirect free kick in the keeper's own half. A goal kick is the one restart Law 11
         // exempts the receiver from, so there the gate is off (infinity never rejects).
-        float offsideLineProjX = obs.CurrentMatchPhase == MatchPhase.GoalKick
+        //
+        // M5: read from the *armed restart*, not from the phase. Controllers are only asked for a decision on
+        // a live tick, and a restart's pause resets the phase before play resumes, so a controller never sees
+        // MatchPhase.GoalKick — the exemption was dead code while it read the phase.
+        bool goalKick = GoalkeeperDecisionModel.IsGoalKickRestart(obs);
+        float offsideLineProjX = goalKick
             ? float.PositiveInfinity
             : OffsideTactics.BelievedLineProjX(obs, _pitch.HalfLength);
 

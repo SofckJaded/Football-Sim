@@ -98,11 +98,16 @@ public static class GoalkeeperLawModel
         if (!IsInsideOwnPenaltyArea(pitch, ownGoalX, ballPosition))
             return new GoalkeeperHandlingVerdict(false, GoalkeeperHandlingReason.OutsideOwnPenaltyArea);
 
-        if (lastPlay.IsDeliberateKick && lastPlay.Team == keeperTeam && lastPlay.PlayerId is int playedById)
+        // A play by his own team. His *own* release bars his hands however it left them — a goal kick, a
+        // throw, a clearance or a punch (M4) — while a team-mate's deliberate kick is the back-pass clause.
+        // A parry is a Save, not a release, so the keeper may gather his own deflection.
+        if (lastPlay.Team == keeperTeam && lastPlay.PlayerId is int playedById)
         {
-            return playedById == keeperId
-                ? new GoalkeeperHandlingVerdict(false, GoalkeeperHandlingReason.SecondHandling)
-                : new GoalkeeperHandlingVerdict(false, GoalkeeperHandlingReason.TeamMateDeliberateKick);
+            if (playedById == keeperId && lastPlay.IsOwnRelease)
+                return new GoalkeeperHandlingVerdict(false, GoalkeeperHandlingReason.SecondHandling);
+
+            if (playedById != keeperId && lastPlay.IsDeliberateKick)
+                return new GoalkeeperHandlingVerdict(false, GoalkeeperHandlingReason.TeamMateDeliberateKick);
         }
 
         return GoalkeeperHandlingVerdict.Allowed;

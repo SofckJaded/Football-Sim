@@ -446,7 +446,11 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     private FootballerCommand EvaluateSetPieceRestart(in FootballerObservation obs, Vector3 oppGoalCenter)
     {
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
-        if (obs.CurrentMatchPhase == MatchPhase.PenaltyKick)
+        // M5: the phase checks below used to be dead — a restart's pause resets the phase before the first
+        // live tick, so a controller never observes MatchPhase.PenaltyKick or CornerKick. The armed restart
+        // is what the player actually knows he is taking.
+        RestartContext restart = obs.TacticalContext.Restart;
+        if (restart.IsFor(obs.SelfTeam) && restart.Kind == RestartKind.PenaltyKick)
         {
             Vector2 goalAim = Vector2.Normalize(new Vector2(oppGoalCenter.X - selfXZ.X, 2.1f - selfXZ.Y));
             return new FootballerCommand(
@@ -514,7 +518,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         Vector2 dir = Vector2.Normalize(targetXZ - selfXZ);
         float dist = Vector2.Distance(selfXZ, targetXZ);
-        KickIntentType kickType = obs.CurrentMatchPhase == MatchPhase.CornerKick || dist > 22.0f
+        KickIntentType kickType = (restart.IsFor(obs.SelfTeam) && restart.Kind == RestartKind.CornerKick) ||
+                                  dist > 22.0f
             ? KickIntentType.LoftedPass
             : KickIntentType.GroundPass;
 

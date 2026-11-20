@@ -84,10 +84,12 @@ public static class ScenarioRunner
             traceDecisions);
     }
 
-    /// <summary>
-    /// Runs until <paramref name="stopCondition"/> is true, full time is reached, or the tick budget is
-    /// exhausted. The stop condition is evaluated after each step.
-    /// </summary>
+    /// <summary>Runs until <paramref name="stopCondition"/> is true, full time is reached, or the tick budget is
+    /// exhausted. The stop condition is evaluated after each step.</summary>
+    /// <remarks>
+    /// A zero budget is legal and runs nothing (L41): <see cref="Run"/> admits it, so the shared loop must
+    /// too, instead of throwing from a differently-named parameter than the caller used.
+    /// </remarks>
     public static ScenarioRunResult RunUntil(
         MatchScenario scenario,
         Func<MatchSimulationEngine, bool> stopCondition,
@@ -97,7 +99,7 @@ public static class ScenarioRunner
     {
         ArgumentNullException.ThrowIfNull(scenario);
         ArgumentNullException.ThrowIfNull(stopCondition);
-        if (maxTicks < 1) throw new ArgumentOutOfRangeException(nameof(maxTicks), maxTicks, "Tick budget must be positive.");
+        if (maxTicks < 0) throw new ArgumentOutOfRangeException(nameof(maxTicks), maxTicks, "Tick budget cannot be negative.");
 
         var match = engine ?? new MatchSimulationEngine(scenario);
         if (traceDecisions) match.DecisionTrace.IsEnabled = true;

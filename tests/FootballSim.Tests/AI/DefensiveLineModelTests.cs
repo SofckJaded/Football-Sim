@@ -25,6 +25,7 @@ public sealed class DefensiveLineModelTests
     private const int HomeCbA = 102;   // holds the negative-Z slot
     private const int HomeCbB = 103;   // holds the positive-Z slot
     private const int HomeFbA = 104;
+    private const int HomeDm = 105;
     private const int AwayCarrierId = 201;
     private const int AwayRunnerId = 202;
 
@@ -141,8 +142,9 @@ public sealed class DefensiveLineModelTests
         DefensiveLineBand band = Evaluate(players, ballX: -10f, Belief(), possession);
 
         Assert.True(band.IsValid);
-        Assert.InRange(band.PasserPressure01, 0f, 0.36f);
-        Assert.True(MathF.Abs(band.PressureShiftMeters) < 3f);
+        // "Cannot say" is 0.5 (M6): an unknown carrier leaves the line where the anchors put it.
+        Assert.Equal(0.5f, band.PasserPressure01);
+        Assert.Equal(0f, band.PressureShiftMeters, precision: 3);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -411,6 +413,33 @@ public sealed class DefensiveLineModelTests
             Assert.True(share > previous);
             previous = share;
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // One definition of "line player" (M7)
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The band's depth is averaged from the players the line assignment actually puts on the band (M7). The
+    /// defensive midfielder used to be averaged in and then never placed there, so his anchor — nine to
+    /// thirteen metres ahead of the back four — pulled the back line upfield on every defending pass.
+    /// </summary>
+    [Fact]
+    public void TheBandAnchors_AreThePlayersTheLinePlaces()
+    {
+        List<FootballerState> backFour = LineAt(-25f);
+        var withMidfielder = new List<FootballerState>(backFour)
+        {
+            Player(HomeDm, TeamId.Home, TacticalRole.DefensiveMidfielder, -13f, 0f)
+        };
+
+        DefensiveLineBand plain = Evaluate(backFour, ballX: -10f, Belief(), new BallPossessionSnapshot(
+            BallControlState.Controlled, TeamId.Away, AwayCarrierId, null));
+        DefensiveLineBand withDm = Evaluate(withMidfielder, ballX: -10f, Belief(), new BallPossessionSnapshot(
+            BallControlState.Controlled, TeamId.Away, AwayCarrierId, null));
+
+        Assert.False(DefensiveLineModel.HoldsLineSlot(TacticalRole.DefensiveMidfielder));
+        Assert.Equal(plain.AnchorMeanProjX, withDm.AnchorMeanProjX, precision: 3);
     }
 
     // ---------------------------------------------------------------------------------------------

@@ -207,9 +207,10 @@ public sealed class MatchSimulationEngine
             if (scenario.BallSetup == ScenarioBallSetup.KeeperHeld)
             {
                 // A keeper holding the ball is the same state a catch produces, so the physics step is
-                // skipped and the release delay applies exactly as it would after one.
+                // skipped and the release delay applies exactly as it would after one. The delay is the
+                // catch's own constant (L2): seeding zero let a fixture's keeper distribute on tick 1.
                 Ball.HeldByPlayerId = seeded.ControllingPlayerId;
-                Ball.HeldReleaseDelaySeconds = 0f;
+                Ball.HeldReleaseDelaySeconds = BallContactRules.KeeperHoldSeconds;
             }
         }
 
@@ -356,23 +357,6 @@ public sealed class MatchSimulationEngine
     }
 
     /// <summary>
-    /// Replaces a footballer's controller.
-    ///
-    /// Audit F21: the pre-match human lock is an invariant of the match, not of the optional initial
-    /// config, and the engine's authoritative <see cref="LockedHumanController"/> reference must always
-    /// describe the controller that is actually installed:
-    /// <list type="bullet">
-    /// <item>the id must belong to this match (no accidental new players in the dictionary);</item>
-    /// <item>a <see cref="HumanInputController"/> may only drive the player it is locked to;</item>
-    /// <item>after kickoff a human controller may only be installed for the player that was locked at
-    /// construction — a match created without a human can never gain one mid-match;</item>
-    /// <item>after kickoff the locked human player cannot be handed to a non-human controller, so live
-    /// input, the responder election and spectator fast-forward keep pointing at a real object.</item>
-    /// </list>
-    /// Pre-match (before the first tick) any controller may be installed, including a labelled
-    /// <see cref="ControllerSourceType.HumanPreMatchLocked"/> replay used by determinism tests.
-    /// </summary>
-    /// <summary>
     /// Builds the squads from the scenario's explicit player specs.
     ///
     /// Unlike <see cref="InitializeSquads"/> nothing is inferred from a formation table: role, shirt,
@@ -436,6 +420,23 @@ public sealed class MatchSimulationEngine
         }
     }
 
+    /// <summary>
+    /// Replaces a footballer's controller.
+    ///
+    /// Audit F21: the pre-match human lock is an invariant of the match, not of the optional initial
+    /// config, and the engine's authoritative <see cref="LockedHumanController"/> reference must always
+    /// describe the controller that is actually installed:
+    /// <list type="bullet">
+    /// <item>the id must belong to this match (no accidental new players in the dictionary);</item>
+    /// <item>a <see cref="HumanInputController"/> may only drive the player it is locked to;</item>
+    /// <item>after kickoff a human controller may only be installed for the player that was locked at
+    /// construction — a match created without a human can never gain one mid-match;</item>
+    /// <item>after kickoff the locked human player cannot be handed to a non-human controller, so live
+    /// input, the responder election and spectator fast-forward keep pointing at a real object.</item>
+    /// </list>
+    /// Pre-match (before the first tick) any controller may be installed, including a labelled
+    /// <see cref="ControllerSourceType.HumanPreMatchLocked"/> replay used by determinism tests.
+    /// </summary>
     public void OverrideController(int playerId, IFootballerController controller)
     {
         ArgumentNullException.ThrowIfNull(controller);
@@ -530,8 +531,15 @@ public sealed class MatchSimulationEngine
 
         if (LockedHumanController != null && !LockedHumanController.IsSpectatorMode)
         {
-            var humanPlayer = _players.First(p => p.Id == LockedHumanController.LockedPlayerId);
-            if (!humanPlayer.IsActiveOnPitch)
+            // L4: no LINQ in the per-tick path; the id is known and the loop is bounded by the squad.
+            FootballerState? humanPlayer = null;
+            for (int index = 0; index < _players.Count; index++)
+            {
+                if (_players[index].Id != LockedHumanController.LockedPlayerId) continue;
+                humanPlayer = _players[index];
+                break;
+            }
+            if (humanPlayer is not null && !humanPlayer.IsActiveOnPitch)
                 LockedHumanController.NotifyPlayerUnavailableForMatch();
         }
 

@@ -141,6 +141,18 @@ public sealed class GoalkeeperLawTests
             TeamId.Home, HomeGoalX, InsideHomeArea,
             new BallLastPlay(BallContactKind.Collection, KickIntentType.None, MateId, TeamId.Home));
         Assert.True(afterAMate.MayUseHands);
+
+        // M4: the punch is a Save with IsParry, so Kind alone cannot tell it from a dive parry. A parry may be
+        // gathered; a punched clearance is a release and bars the hands until somebody touches the ball.
+        var parry = new BallLastPlay(BallContactKind.Save, KickIntentType.None, KeeperId, TeamId.Home);
+        Assert.True(EvaluateHandling(TeamId.Home, HomeGoalX, InsideHomeArea, parry).MayUseHands);
+
+        var punch = parry with { PunchedClearance = true };
+        Assert.False(punch.IsDeliberateKick, "a punch must not become a Law 11 deliberate play");
+        GoalkeeperHandlingVerdict afterThePunch =
+            EvaluateHandling(TeamId.Home, HomeGoalX, InsideHomeArea, punch);
+        Assert.False(afterThePunch.MayUseHands);
+        Assert.Equal(GoalkeeperHandlingReason.SecondHandling, afterThePunch.Reason);
     }
 
     /// <summary>An opponent's play never restricts the keeper: the back-pass clause is about team-mates.</summary>

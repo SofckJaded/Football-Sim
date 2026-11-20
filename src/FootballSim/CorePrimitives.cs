@@ -431,12 +431,22 @@ public enum TeamId
 /// ball or cutback (M2); a coverage request no longer overwrites the elected ball responder's <c>Presser</c>
 /// duty, so the side keeps pressing (M3); and a raised restart delivery reports its own lane verdict, so the
 /// taker's "open route first" tier ranks it correctly (L8). Trajectories differ from version 37.</item>
+/// <item><c>AiBehaviour 39</c> — audit bugfix batch 43 (M4–M9 + L2/L4/L25/L39/L41). A punched clearance is
+/// recorded as a release, so the keeper may not gather his own punch while a parry stays gatherable (M4);
+/// the goal-kick exemption of the keeper's distribution gate is read from the armed restart, not the phase,
+/// where it was dead code (M5, latent); an unseen carrier reads "cannot say" (0.5) for passer pressure, so
+/// an unknown opponent no longer moves the line 1.2 m (M6); the band averages the same roles the line
+/// assignment places on it, so a defensive midfielder no longer pulls the back four upfield (M7); the
+/// scenario API rejects a locked human with a spec controller, a spec human without the lock, an off-pitch
+/// ball, an owned loose ball and an unstated last play (M8/M9/L39); a zero tick budget is legal (L41); and a
+/// flight that never enters the keeper's hands band falls through to the sweep (L25). Trajectories differ
+/// from version 38.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 38;
+    public const int AiBehaviour = 39;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -644,6 +654,23 @@ public readonly record struct BallLastPlay(
     /// </summary>
     public bool IsDeliberateKick =>
         Kind == BallContactKind.Kick && Intent != KickIntentType.Header;
+
+    /// <summary>
+    /// True when the ball was punched clear rather than caught or parried (A6.5b/M4). A punch is a
+    /// <see cref="BallContactKind.Save"/> with <c>IsParry</c>, so <see cref="Kind"/> alone cannot tell it
+    /// apart from a dive parry — and the two need different laws: the keeper may gather his own parry, but a
+    /// punch is a release into play with nobody having touched it since.
+    /// </summary>
+    public bool PunchedClearance { get; init; }
+
+    /// <summary>
+    /// True when this play was the keeper's own release — a kick, a throw, a clearance or a punched
+    /// clearance — so nobody has touched the ball since he put it into play (M4). Deliberately <b>not</b>
+    /// <see cref="IsDeliberateKick"/>: a punch must bar his hands without becoming a Law 11 deliberate play,
+    /// and a parry must bar nothing at all.
+    /// </summary>
+    public bool IsOwnRelease =>
+        (Kind == BallContactKind.Kick && Intent != KickIntentType.Header) || PunchedClearance;
 }
 
 /// <summary>

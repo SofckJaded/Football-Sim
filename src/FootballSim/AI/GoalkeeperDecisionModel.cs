@@ -389,6 +389,20 @@ public static class GoalkeeperDecisionModel
     }
 
     /// <summary>
+    /// True when this observation is a goal kick the keeper is taking — the one restart Law 11 exempts a
+    /// receiver from (M5).
+    /// </summary>
+    /// <remarks>
+    /// Read from the <b>armed restart</b>, never from <see cref="FootballerObservation.CurrentMatchPhase"/>.
+    /// A restart's pause runs with the phase set to the restart and is reset before the first live tick, so a
+    /// controller never observes <c>MatchPhase.GoalKick</c>: the phase test that used to guard the keeper's
+    /// distribution gate was dead code, and the gate stayed on for a ball the referee would allow.
+    /// </remarks>
+    public static bool IsGoalKickRestart(in FootballerObservation obs) =>
+        obs.TacticalContext.Restart.IsFor(obs.SelfTeam) &&
+        obs.TacticalContext.Restart.Kind == RestartKind.GoalKick;
+
+    /// <summary>
     /// Whether the keeper should come and take a delivery out of the air, and what he will do with it if he
     /// gets there (A6.5b).
     ///
