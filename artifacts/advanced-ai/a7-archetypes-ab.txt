@@ -1,0 +1,58 @@
+﻿=== A7.6 archetype evidence: same-seed A/B, 3 seeds x 1200 s -- default squad vs the uniform pre-A7.6 squad ===
+Simulation version : ai46-rs1
+Preference model   : role tendencies +/- archetype deltas (clamped 0..1); run-kind preference
+                     x0.05 on the run score; scan refresh x(1.35 - 0.70*appetite); keeper contest
+                     margin x(0.60 + 0.80*aggression) and support depth x(0.50 + 1.00*aggression).
+                     No candidate set, sight cone, reach or contact rule differs - only weights and attention.
+Archetypes ON      : 7 fielded -- 1:SweeperKeeper, 2:InvertedFullBack, 6:BallWinner, 7:TouchlineWinger, 8:Playmaker, 9:TargetForward, 11:InsideForward
+Archetypes OFF     : none (uniform role squad)
+
+Seed 20260818:
+  ON  : FT        | 72199 ticks, score 0-0, passes 256/235 attempted (211/194 completed), shots 14/10, crosses 0
+  OFF : FT        | 72247 ticks, score 0-0, passes 221/219 attempted (178/180 completed), shots 10/6, crosses 0
+Seed 20268737:
+  ON  : FT        | 72355 ticks, score 2-0, passes 223/230 attempted (179/194 completed), shots 22/11, crosses 1
+  OFF : FT        | 72215 ticks, score 0-0, passes 258/207 attempted (213/170 completed), shots 12/10, crosses 0
+Seed 20276656:
+  ON  : FT        | 72215 ticks, score 0-0, passes 224/237 attempted (179/194 completed), shots 9/7, crosses 1
+  OFF : FT        | 72405 ticks, score 1-0, passes 231/240 attempted (179/188 completed), shots 20/13, crosses 1
+
+=== Totals over 3 seeds ===
+metric                              ON         OFF
+completed matches                    3           3
+live ticks                      216769      216867
+passes attempted                  1405        1376
+passes completed                  1151        1108
+shots                               73          71
+crosses executed                     2           1
+lofted executed                     20          21
+driven executed                     59          71
+team calls                       28262       27808
+run adoptions                    10977       11040
+sweep commitments                   46          41
+keeper support depth m           11.06        9.80
+scan starts                       7200        7212
+scan tick share                 0.0151      0.0152
+
+Archetypes fielded : 7 distinct, 42 players (on) | 0 players (off)
+Preferred runs     : 4148 of 10977 adoptions were a kind the player's archetype prefers (positive run preference)
+
+Run adoptions by archetype (ON; kind count):
+  Playmaker       : HoldWidth 17, CheckShort 497, InBehind 392, Overlap 12, Underlap 227, RecycleSupport 375, LateBoxArrival 62, BlindSideArrival 46, Pin 81, Decoy 47
+  BallWinner      : HoldWidth 8, CheckShort 190, InBehind 88, Overlap 9, Underlap 89, RecycleSupport 289, Decoy 19
+  InvertedFullBack: HoldWidth 203, CheckShort 98, InBehind 63, Overlap 46, Underlap 38, RecycleSupport 86, Decoy 1
+  TouchlineWinger : HoldWidth 705, CheckShort 190, InBehind 497, Overlap 8, Underlap 71, RecycleSupport 55, LateBoxArrival 18, BlindSideArrival 23, Pin 58, Decoy 18
+  InsideForward   : HoldWidth 467, CheckShort 205, InBehind 768, Overlap 11, Underlap 99, RecycleSupport 66, LateBoxArrival 16, BlindSideArrival 23, Pin 39, Decoy 34
+  TargetForward   : HoldWidth 9, CheckShort 329, InBehind 670, Overlap 7, Underlap 143, RecycleSupport 134, LateBoxArrival 49, BlindSideArrival 135, Pin 275, Decoy 82
+
+Chosen player-ticks by archetype (ON; action kind share):
+  Playmaker       : Shot 2 (0 %), Pass 35 (0 %), Carry 2058 (3 %), Press 3468 (5 %), Intercept 2355 (3 %), Shape 43016 (60 %), Job 3538 (5 %), Shield 108 (0 %), Run 17376 (24 %)
+  BallWinner      : Pass 26 (0 %), Carry 1173 (2 %), Press 4204 (6 %), Intercept 1201 (2 %), Shape 40428 (56 %), Challenge 728 (1 %), Job 16783 (23 %), Shield 83 (0 %), Run 7330 (10 %)
+  InvertedFullBack: Pass 22 (0 %), Carry 2137 (3 %), Press 3720 (5 %), Intercept 810 (1 %), Shape 27288 (38 %), Job 31746 (44 %), Shield 44 (0 %), Run 6189 (9 %)
+  TouchlineWinger : Pass 15 (0 %), Carry 4175 (6 %), Press 3850 (5 %), Intercept 1630 (2 %), Shape 43726 (61 %), Job 1515 (2 %), Shield 26 (0 %), Run 17019 (24 %)
+  InsideForward   : Shot 3 (0 %), Pass 19 (0 %), Carry 3927 (5 %), Press 3967 (6 %), Intercept 2164 (3 %), Shape 43619 (61 %), Job 1429 (2 %), Dribble 2 (0 %), Shield 57 (0 %), Run 16769 (23 %)
+  TargetForward   : Shot 10 (0 %), Pass 20 (0 %), Carry 1420 (2 %), Press 4673 (6 %), Intercept 2399 (3 %), Shape 42711 (59 %), Job 3617 (5 %), Shield 190 (0 %), Run 16916 (24 %)
+
+Crosses by kicker archetype (ON): InsideForward 1
+
+RESULT: PASS -- the default squad fields all seven archetypes as preferences and the uniform squad none; the sweeper keeper stands deeper in possession, and the preferred run kinds and actions are live without a candidate, sight or limit changing
