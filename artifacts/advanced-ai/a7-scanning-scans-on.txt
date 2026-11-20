@@ -1,0 +1,19 @@
+=== A7.1 scanning evidence: 4 seeds x 1200 s, scanning ON ===
+Simulation version : ai40-rs1
+Scan model         : head turn 100° at 600°/s, hold 0.20 s, return 0.35 s, refresh age 1.00 s, attention range 18 m
+Perception         : ±100° cone around the gaze, nearest 4 bodies within 16 m occlude
+
+Seed 20260818: FT in 72163 ticks | score 2-0 | scans 2261 (threat 1606, danger 655) | revealed 157492 | occluded 1143100 | 3996 receiver looks, 10699 near-opponent ages at 9.4 mean
+
+Seed 20268737: FT in 72103 ticks | score 0-0 | scans 2176 (threat 1542, danger 634) | revealed 153420 | occluded 1142863 | 3742 receiver looks, 9503 near-opponent ages at 9.7 mean
+
+Seed 20276656: FT in 72119 ticks | score 0-0 | scans 2180 (threat 1503, danger 677) | revealed 152623 | occluded 1109758 | 3518 receiver looks, 8890 near-opponent ages at 8.8 mean
+
+Seed 20284575: FT in 72183 ticks | score 0-0 | scans 2357 (threat 1658, danger 699) | revealed 164376 | occluded 1169323 | 4045 receiver looks, 11684 near-opponent ages at 9.5 mean
+
+=== Totals over 4 seeds (4 completed, 6333976 player-ticks) ===
+Scan fixes         : 8974 completed (threat 6309, danger 2665) | 5.10 per player-minute | 1.4% of observed player-ticks holding a fix
+Gaze-only sightings: 627911 opponent observations inside the gaze cone but outside the body-facing cone
+Occlusion          : 4565044 opponent observations suppressed by a body on the line
+Receiver picture   : 15301 receiver looks, 40776 near-opponent ages (within 15 m) at 9.4 mean age (worst 293 ticks)
+RESULT: the head turns, the gaze changes what is seen, and reception knowledge refreshes

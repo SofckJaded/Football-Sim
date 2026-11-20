@@ -1,0 +1,19 @@
+=== A7.1 scanning evidence: 4 seeds x 1200 s, scanning OFF ===
+Simulation version : ai40-rs1
+Scan model         : head turn 100° at 600°/s, hold 0.20 s, return 0.35 s, refresh age 1.00 s, attention range 18 m
+Perception         : ±100° cone around the gaze, nearest 4 bodies within 16 m occlude
+
+Seed 20260818: FT in 72257 ticks | score 3-0 | scans 0 (threat 0, danger 0) | revealed 0 | occluded 0 | 3866 receiver looks, 10207 near-opponent ages at 45.6 mean
+
+Seed 20268737: FT in 72243 ticks | score 1-1 | scans 0 (threat 0, danger 0) | revealed 0 | occluded 0 | 3545 receiver looks, 9292 near-opponent ages at 56.4 mean
+
+Seed 20276656: FT in 72149 ticks | score 0-1 | scans 0 (threat 0, danger 0) | revealed 0 | occluded 0 | 3230 receiver looks, 7733 near-opponent ages at 53.1 mean
+
+Seed 20284575: FT in 72119 ticks | score 0-0 | scans 0 (threat 0, danger 0) | revealed 0 | occluded 0 | 3869 receiver looks, 10120 near-opponent ages at 44.6 mean
+
+=== Totals over 4 seeds (4 completed, 6333976 player-ticks) ===
+Scan fixes         : 0 completed (threat 0, danger 0) | 0.00 per player-minute | 0.0% of observed player-ticks holding a fix
+Gaze-only sightings: 0 opponent observations inside the gaze cone but outside the body-facing cone
+Occlusion          : 0 opponent observations suppressed by a body on the line
+Receiver picture   : 14510 receiver looks, 37352 near-opponent ages (within 15 m) at 49.6 mean age (worst 5513 ticks)
+RESULT: scanning off means no head turn and no gaze-only sighting
