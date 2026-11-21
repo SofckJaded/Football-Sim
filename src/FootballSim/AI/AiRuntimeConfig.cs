@@ -288,6 +288,20 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableSwitchRecognition { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.4 — short trap contracts. The defending side commits to a short, coordinated trap — pressure, screening
+    // and cover — around a carrier pinned to a touchline. See TrapCoordinator / TrapPolicy.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the defending team raises short trap contracts (A8.4). <b>On by default</b>: this is the behaviour
+    /// the version ships, and the field exists so A9.2 can ablate the mechanism and so the evidence probe can run
+    /// the same worlds with it off. Off means the trap board never raises anything, every observation's
+    /// <see cref="FootballerObservation.Trap"/> is neutral, and no candidate or point is touched — the version-49
+    /// build exactly, which is what makes the A/B two builds rather than two tunings of the same decision.
+    /// </summary>
+    public bool EnableTrapContracts { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -306,7 +320,8 @@ public sealed class AiRuntimeConfig
         $"archetypes({(EnableArchetypes ? "on" : "off")}) " +
         $"combinations({(EnableCombinations ? "on" : "off")}) " +
         $"search({(EnableShallowSearch ? "on" : "off")}) " +
-        $"switchrec({(EnableSwitchRecognition ? "on" : "off")})";
+        $"switchrec({(EnableSwitchRecognition ? "on" : "off")}) " +
+        $"traps({(EnableTrapContracts ? "on" : "off")})";
 }
 
 /// <summary>

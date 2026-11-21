@@ -629,6 +629,20 @@ public sealed class MatchSimulationEngine
             int? homeSupportPresser = ElectSupportPresser(TeamId.Home, possession, humanPlayerId);
             int? awaySupportPresser = ElectSupportPresser(TeamId.Away, possession, humanPlayerId);
 
+            // A8.4: one short trap contract per team, elected once from the same shared inputs (own exact
+            // positions, the team belief, the presser, the second man and the allocator's assignments). The trap
+            // is kept or ended here, so every player's observation this tick sees the same contract.
+            _communication.Traps.Update(
+                TeamId.Home, _players, _homeBelief, possession,
+                _ballResponderElection.GetResponder(TeamId.Home), homeSupportPresser, _teamJobs,
+                humanPlayerId, homeDirX, _config.HomeProfile.Compactness01, _pitch, CurrentTick,
+                _config.Ai.EnableTrapContracts);
+            _communication.Traps.Update(
+                TeamId.Away, _players, _awayBelief, possession,
+                _ballResponderElection.GetResponder(TeamId.Away), awaySupportPresser, _teamJobs,
+                humanPlayerId, -homeDirX, _config.AwayProfile.Compactness01, _pitch, CurrentTick,
+                _config.Ai.EnableTrapContracts);
+
             foreach (var p in _players)
             {
                 if (!p.IsActiveOnPitch) continue;
@@ -653,7 +667,11 @@ public sealed class MatchSimulationEngine
                     _communication.Combinations.TryGetContext(p.Team, p.Id, CurrentTick,
                         out CombinationContext combination)
                         ? combination
-                        : CombinationContext.None);
+                        : CombinationContext.None,
+                    // A8.4: the short trap this player is part of, if any. Read once here from the match's own
+                    // board, like the combination above, so every decision sees the same contract and no scorer
+                    // reads the board directly.
+                    _communication.Traps.ContextFor(p.Team, p.Id, CurrentTick));
                 _latestObservations[p.Id] = obs;
 
                 // A7.2: the player's own shout, decided from the observation he just built. Only an AI
@@ -882,6 +900,9 @@ public sealed class MatchSimulationEngine
             // A8.1: a contract he was part of ends with him — an inactive player must not keep owning a
             // contract or a return region.
             _communication.Combinations.ReleasePlayer(player.Id, CurrentTick);
+            // A8.4: the same rule for a trap role: an inactive player must not keep owning the press, the
+            // screen or the cover inside a live contract.
+            _communication.Traps.ReleasePlayer(player.Id, CurrentTick);
             LastAiResetReason = AiResetReason.PlayerRemoved;
             LastAiResetTick = CurrentTick;
         }
@@ -915,6 +936,11 @@ public sealed class MatchSimulationEngine
         // on every reset is the honest statement rather than an assumption about how long the promise would
         // have lasted — the same rule A7.2's calls follow (and for the same reason: the ball is re-placed).
         _communication.Combinations.ClearAll(CurrentTick);
+
+        // A8.4: a trap is a commitment about one picture of one passage; the restart re-places the ball and the
+        // teams, so no trap survives it. Clearing also clears the recovery windows: a new passage is a new
+        // chance to trap.
+        _communication.Traps.ClearAll(CurrentTick);
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

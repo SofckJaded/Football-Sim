@@ -46,6 +46,13 @@ public sealed class MatchCommunicationContext
     /// </summary>
     public AI.CombinationCoordinator Combinations { get; } = new();
 
+    /// <summary>
+    /// The teams' short-trap board (A8.4). The same match-owned object that carries the human's call, A5.3's run
+    /// advertisements, A7.2's calls and A8.1's contracts now carries the bounded trap a team commits to when its
+    /// shared picture shows an opponent carrier pinned on a line. One channel, extended — never a second one.
+    /// </summary>
+    public AI.TrapCoordinator Traps { get; } = new();
+
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
     /// <summary>True when the active call came from <paramref name="team"/>, i.e. is this team's own shout.</summary>

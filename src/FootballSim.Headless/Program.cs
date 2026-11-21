@@ -30,7 +30,7 @@ public static class Program
                 return RunHeadlessMatch(playersPerTeam: 5, halfDurationSeconds: 300f, seed: 101UL) ? 0 : 1;
 
             case "--match-11v11":
-                return RunHeadlessMatch(11, 2700f, 20260818UL, switchRecognition: !IsOffArgument(args)) ? 0 : 1;
+                return RunHeadlessMatch(11, 2700f, 20260818UL, trapContracts: !IsOffArgument(args)) ? 0 : 1;
 
             case "--tactical-batch":
                 return RunTacticalComparisonBatch() ? 0 : 1;
@@ -80,6 +80,9 @@ public static class Program
             case "--switches":
                 return RunSwitchEvidence(args) ? 0 : 1;
 
+            case "--traps":
+                return RunTrapEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -101,6 +104,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --combinations [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --search [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --switches [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --traps [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -116,8 +120,8 @@ public static class Program
 
     /// <summary>
     /// True when the optional argument after a mode is <c>off</c>. Used by the ablation argument of
-    /// <c>--match-11v11</c>: A8.3's <c>off</c> run is the version-48 build exactly, which is how the switch-off
-    /// equivalence is proved against the recorded <c>ai48</c> match.
+    /// <c>--match-11v11</c>: A8.4's <c>off</c> run is the version-49 build exactly, which is how the
+    /// trap-off equivalence is proved against the recorded <c>ai49</c> match.
     /// </summary>
     private static bool IsOffArgument(string[] args) =>
         args.Length > 1 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase);
@@ -2303,7 +2307,7 @@ public static class Program
         int playersPerTeam,
         float halfDurationSeconds,
         ulong seed,
-        bool switchRecognition = true)
+        bool trapContracts = true)
     {
         var config = new PreMatchConfig
         {
@@ -2312,7 +2316,9 @@ public static class Program
             HalfDurationSeconds = halfDurationSeconds,
             HomeProfile = TeamTacticalProfile.PossessionControl,
             AwayProfile = TeamTacticalProfile.DirectCounterattack,
-            Ai = new AiRuntimeConfig { EnableSwitchRecognition = switchRecognition }
+            // The `off` ablation disables the newest behaviour (A8.4's trap contracts), which is the version-49
+            // build exactly: every earlier feature keeps its shipped default.
+            Ai = new AiRuntimeConfig { EnableTrapContracts = trapContracts }
         };
 
         var engine = new MatchSimulationEngine(config);
@@ -3343,6 +3349,232 @@ public static class Program
 
         player = null;
         return false;
+    }
+
+    /// <summary>
+    /// A8.4 evidence: <b>short trap contracts</b>, measured as a same-seed A/B between the default build and the
+    /// build with <see cref="AiRuntimeConfig.EnableTrapContracts"/> off.
+    ///
+    /// The off run is the version-49 build exactly, so every difference the columns show is the trap mechanism
+    /// and nothing else: both builds offer the same candidates, price them with the same models and execute them
+    /// through the same contact layer. The on build names a presser, a screener and the allocator's cover in a
+    /// short contract, gives the screener one bounded preference on the same screen act and gives the presser
+    /// A6.2's angled point — no candidate, reach, sight or contact is added.
+    ///
+    /// What the columns are, and the consumer each one proves is live:
+    /// <list type="bullet">
+    /// <item><b>traps raised</b> - live contracts accepted on the board: zero in the off build by construction,
+    /// which is the trap's neutrality proof;</item>
+    /// <item><b>trap ticks</b> - decision ticks a trap was live (the exposure the mechanism actually had);</item>
+    /// <item><b>won / escaped / loose / expired</b> - the lifecycle endings, from the board's own counters:
+    /// the exit gate needs a trap that can be escaped, and the recovery counter proves the side re-forms after
+    /// a failed one;</item>
+    /// <item><b>screener/presser/cover decisions</b> - participant decisions made with the trap's role, and how
+    /// many of the screener's were the Screen act: the exit gate's "pressure, screening, cover" reaching the
+    /// live controllers;</item>
+    /// <item><b>passes, shots, ticks</b> - the aggregate match the traps ran in, so the two worlds are compared
+    /// rather than only their trap tables.</item>
+    /// </list>
+    ///
+    /// The verdict does not require the aggregate match to be "better" (A9 owns tuning); it requires both
+    /// builds to complete every seed, the on build to run traps with both a win and an escape, the screener to
+    /// actually screen, and the off build to raise none — single-fixture inversions are expected, as with every
+    /// A8 probe.
+    /// </summary>
+    private static bool RunTrapEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A8.4 short-trap evidence: same-seed A/B, {seedCount} seeds x " +
+                          $"{halfSeconds * 2f:F0} s -- traps on vs off ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Trap model         : from the defending team's shared picture (own exact positions, its");
+        Console.WriteLine("                     belief of the carrier, the elected presser/second man and the allocator's");
+        Console.WriteLine("                     cover), a carrier pinned to a touchline is trapped for 1.5 s by three named");
+        Console.WriteLine("                     players: the presser takes A6.2's angled point, the screener (a shape-duty");
+        Console.WriteLine("                     man) gets one bounded preference on the existing Screen act, and the");
+        Console.WriteLine("                     allocator's cover stays behind the press. A trap ends once - won, escaped,");
+        Console.WriteLine("                     loose, expired, presser/cover lost, participant removed or reset - and a");
+        Console.WriteLine("                     failed trap puts the side into a 0.5 s recovery before it re-commits.");
+        Console.WriteLine($"Traps ON           : {new AiRuntimeConfig { EnableTrapContracts = true }.Describe()}");
+        Console.WriteLine($"Traps OFF          : {new AiRuntimeConfig { EnableTrapContracts = false }.Describe()}");
+        Console.WriteLine();
+
+        var on = new TrapEvidenceTotals();
+        var off = new TrapEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunTrapMatch(seed, halfSeconds, traps: true, on, out string onLine);
+            bool completedOff = RunTrapMatch(seed, halfSeconds, traps: false, off, out string offLine);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-34}{"ON",12}{"OFF",12}{"DELTA",12}");
+        Console.WriteLine($"{"completed matches",-34}{on.Matches,12}{off.Matches,12}{on.Matches - off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-34}{on.Ticks,12}{off.Ticks,12}{on.Ticks - off.Ticks,12}");
+        Console.WriteLine($"{"passes attempted",-34}{on.PassesAttempted,12}{off.PassesAttempted,12}{on.PassesAttempted - off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-34}{on.PassesCompleted,12}{off.PassesCompleted,12}{on.PassesCompleted - off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-34}{on.Shots,12}{off.Shots,12}{on.Shots - off.Shots,12}");
+        Console.WriteLine($"{"traps raised",-34}{on.Raised,12}{off.Raised,12}{on.Raised - off.Raised,12}");
+        Console.WriteLine($"{"trap ticks",-34}{on.TrapTicks,12}{off.TrapTicks,12}{on.TrapTicks - off.TrapTicks,12}");
+        Console.WriteLine($"{"traps won",-34}{on.Won,12}{off.Won,12}{on.Won - off.Won,12}");
+        Console.WriteLine($"{"traps escaped",-34}{on.Escaped,12}{off.Escaped,12}{on.Escaped - off.Escaped,12}");
+        Console.WriteLine($"{"traps loose",-34}{on.Loose,12}{off.Loose,12}{on.Loose - off.Loose,12}");
+        Console.WriteLine($"{"traps expired",-34}{on.Expired,12}{off.Expired,12}{on.Expired - off.Expired,12}");
+        Console.WriteLine($"{"traps presser-lost",-34}{on.PresserLost,12}{off.PresserLost,12}{on.PresserLost - off.PresserLost,12}");
+        Console.WriteLine($"{"traps cover-lost",-34}{on.CoverLost,12}{off.CoverLost,12}{on.CoverLost - off.CoverLost,12}");
+        Console.WriteLine($"{"recovery-blocked raises",-34}{on.RecoveryBlocked,12}{off.RecoveryBlocked,12}{on.RecoveryBlocked - off.RecoveryBlocked,12}");
+        Console.WriteLine($"{"screener decisions",-34}{on.ScreenerDecisions,12}{off.ScreenerDecisions,12}{on.ScreenerDecisions - off.ScreenerDecisions,12}");
+        Console.WriteLine($"{"screener chose Screen",-34}{on.ScreenChosen,12}{off.ScreenChosen,12}{on.ScreenChosen - off.ScreenChosen,12}");
+        Console.WriteLine($"{"presser decisions",-34}{on.PresserDecisions,12}{off.PresserDecisions,12}{on.PresserDecisions - off.PresserDecisions,12}");
+        Console.WriteLine($"{"cover decisions",-34}{on.CoverDecisions,12}{off.CoverDecisions,12}{on.CoverDecisions - off.CoverDecisions,12}");
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool trapsLive = on.Raised > 0 && on.TrapTicks > 0;
+        bool rolesReach = on.ScreenerDecisions > 0 && on.ScreenChosen > 0 && on.PresserDecisions > 0 &&
+                          on.CoverDecisions > 0;
+        bool bothOutcomes = on.Won > 0 && on.Escaped > 0;
+        bool neutralOff = off.Raised == 0 && off.TrapTicks == 0 && off.ScreenerDecisions == 0 &&
+                          off.PresserDecisions == 0 && off.CoverDecisions == 0;
+        bool ok = completeBoth && trapsLive && rolesReach && bothOutcomes && neutralOff;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the trap build raises traps that are won and escaped, the named roles reach the" +
+              " controllers, and the version-49 build raises none; both finished every seed"
+            : "RESULT: FAIL -- incomplete matches, no live trap, a role that never reached a controller, no" +
+              " won-and-escaped trap pair, or the trap did not neutralize with the feature off");
+        return ok;
+    }
+
+    /// <summary>One A8.4 probe variant's accumulators.</summary>
+    private sealed class TrapEvidenceTotals
+    {
+        public int Matches;
+        public long Ticks;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long Raised;
+        public long TrapTicks;
+        public long Won;
+        public long Escaped;
+        public long Loose;
+        public long Expired;
+        public long PresserLost;
+        public long CoverLost;
+        public long RecoveryBlocked;
+        public long ScreenerDecisions;
+        public long ScreenChosen;
+        public long PresserDecisions;
+        public long CoverDecisions;
+    }
+
+    /// <summary>Runs one A8.4 probe match and folds it into <paramref name="totals"/>.</summary>
+    private static bool RunTrapMatch(
+        ulong seed,
+        float halfSeconds,
+        bool traps,
+        TrapEvidenceTotals totals,
+        out string line)
+    {
+        var ai = new AiRuntimeConfig { EnableTrapContracts = traps };
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        long seedTrapTicks = 0;
+        long seedScreener = 0;
+        long seedScreenChosen = 0;
+        long seedPresser = 0;
+        long seedCover = 0;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+
+            if (engine.Communication.Traps.LiveCount(engine.CurrentTick) > 0) seedTrapTicks++;
+
+            // The participants' decisions this tick, from their own observations: the role they were given and
+            // the action they chose. This is what proves the contract reached the live controllers.
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch) continue;
+                FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                if (observation is null || !observation.Trap.IsActive) continue;
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+
+                if (observation.Trap.IsScreener)
+                {
+                    seedScreener++;
+                    if (controller.LastSelected.ActionName == "ScreenThePass") seedScreenChosen++;
+                }
+                else if (observation.Trap.IsPresser)
+                {
+                    seedPresser++;
+                }
+                else if (observation.Trap.IsCover)
+                {
+                    seedCover++;
+                }
+            }
+        }
+
+        TrapCoordinator board = engine.Communication.Traps;
+        var analytics = engine.Analytics;
+        totals.Ticks += engine.CurrentTick;
+        totals.PassesAttempted += analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        totals.PassesCompleted += analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        totals.Shots += analytics.HomeShots + analytics.AwayShots;
+        totals.Raised += board.RaisedCount;
+        totals.TrapTicks += seedTrapTicks;
+        totals.Won += board.CountOfEnd(TrapEndReason.Won);
+        totals.Escaped += board.CountOfEnd(TrapEndReason.Escaped);
+        totals.Loose += board.CountOfEnd(TrapEndReason.Loose);
+        totals.Expired += board.CountOfEnd(TrapEndReason.Expired);
+        totals.PresserLost += board.CountOfEnd(TrapEndReason.PresserLost);
+        totals.CoverLost += board.CountOfEnd(TrapEndReason.CoverLost);
+        totals.RecoveryBlocked += board.RecoveryBlockedCount;
+        totals.ScreenerDecisions += seedScreener;
+        totals.ScreenChosen += seedScreenChosen;
+        totals.PresserDecisions += seedPresser;
+        totals.CoverDecisions += seedCover;
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.Matches++;
+
+        line = $"{engine.CurrentTick} ticks, score {analytics.HomeGoals}-{analytics.AwayGoals}, passes " +
+               $"{analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} attempted, shots " +
+               $"{analytics.HomeShots}/{analytics.AwayShots}, traps raised {board.RaisedCount} " +
+               $"(won {board.CountOfEnd(TrapEndReason.Won)}, escaped {board.CountOfEnd(TrapEndReason.Escaped)}, " +
+               $"loose {board.CountOfEnd(TrapEndReason.Loose)}, expired {board.CountOfEnd(TrapEndReason.Expired)}, " +
+               $"presser-lost {board.CountOfEnd(TrapEndReason.PresserLost)}, " +
+               $"cover-lost {board.CountOfEnd(TrapEndReason.CoverLost)}), trap ticks {seedTrapTicks}, " +
+               $"roles S{seedScreener}/P{seedPresser}/C{seedCover}, screens chosen {seedScreenChosen}";
+        return completed;
     }
 
     /// <summary>

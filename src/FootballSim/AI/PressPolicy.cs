@@ -239,6 +239,18 @@ public static class PressPolicy
     /// <summary>Bypass risk above which the lone presser jockeys instead of closing to contact range.</summary>
     public const float JockeyBypassRisk = 0.30f;
 
+    /// <summary>Base score of the screen act, before the shadow it casts and the travel to it (A6.2).</summary>
+    private const float ScreenBaseScore = 0.90f;
+
+    /// <summary>How much of the shadow a screening point casts the screen's score carries.</summary>
+    private const float ScreenShadowWeight = 0.16f;
+
+    /// <summary>How much travelling to a screening point costs, per unit of <see cref="ScreenTravelReferenceMeters"/>.</summary>
+    private const float ScreenTravelWeight = 0.05f;
+
+    /// <summary>Distance over which the screen's travel cost is charged.</summary>
+    private const float ScreenTravelReferenceMeters = 30f;
+
     /// <summary>Depth of the second defender's standing point, in metres.</summary>
     public const float SupportStandoffMeters = 1.8f;
 
@@ -432,12 +444,21 @@ public static class PressPolicy
         Span<PressCandidate> buffer)
     {
         if (buffer.Length == 0) return 0;
-        if (!situation.HasCarrier) return 0;
+
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+
+        // A8.4: a live trap names this player as its screener. That is a team commitment, so the candidate is
+        // offered even when the carrier himself is outside this player's own sight cone — the ball's position
+        // is always known, and the trap gives the point relative to it.
+        bool isTrapScreener = obs.Trap.IsScreener;
+
+        if (!situation.HasCarrier)
+            return isTrapScreener ? OfferTrapScreen(obs, situation, selfXZ, ballXZ, pitch, buffer) : 0;
 
         // The presser is the other path's business: he closes down, optionally at jockeying depth.
         if (situation.IsPresser) return 0;
 
-        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         Vector2 goalSide = GoalSideXZ(situation.CarrierXZ, obs, pitch);
         float carrierDistance = Vector2.Distance(selfXZ, situation.CarrierXZ);
 
@@ -514,6 +535,11 @@ public static class PressPolicy
             return 1;
         }
 
+        // A8.4: the trap's named screener takes the trap's point. The trap's whole mechanical contribution is
+        // the bounded preference inside the candidate; the duty he still owns can outbid it.
+        if (isTrapScreener)
+            return OfferTrapScreen(obs, situation, selfXZ, ballXZ, pitch, buffer);
+
         // Supporting acts: never a second bodies-on decision, always an alternative that has to beat the
         // player's own duty on the same scale.
         int count = 0;
@@ -553,14 +579,46 @@ public static class PressPolicy
             obs.SelfRole is TacticalRole.DefensiveMidfielder or TacticalRole.CentralMidfielder &&
             TryFindScreen(obs, situation, pitch, out Vector2 screenXZ, out int screenId, out float shadow01))
         {
-            float travel = Clamp01(Vector2.Distance(selfXZ, screenXZ) / 30f);
+            float travel = Clamp01(Vector2.Distance(selfXZ, screenXZ) / ScreenTravelReferenceMeters);
             buffer[count++] = new PressCandidate(
                 PressAction.Screen, screenXZ, screenId,
-                0.90f + 0.16f * shadow01 - 0.05f * travel, shadow01, IsPrimary: false);
+                ScreenBaseScore + ScreenShadowWeight * shadow01 - ScreenTravelWeight * travel, shadow01,
+                IsPrimary: false);
             return count;
         }
 
         return count;
+    }
+
+    /// <summary>
+    /// A8.4: the candidate a trap's named screener is offered. The trap names the screen point as an offset from
+    /// the carrier, and this player places it from <b>his own</b> believed carrier position (the ball's, when the
+    /// carrier is outside his sight cone) — so the act stays his own decision on his own picture for the short
+    /// window the contract lives. The trap's contribution is exactly
+    /// <see cref="TrapPolicy.ScreenPreference"/> × the published confidence on the same screen act A6.1 already
+    /// offers: a bounded nudge, never a forced move and never a new capability.
+    /// </summary>
+    private static int OfferTrapScreen(
+        in FootballerObservation obs,
+        in PressSituation situation,
+        Vector2 selfXZ,
+        Vector2 ballXZ,
+        PitchDimensions pitch,
+        Span<PressCandidate> buffer)
+    {
+        Vector2 carrierXZ = situation.HasCarrier ? situation.CarrierXZ : ballXZ;
+        Vector2 screenXZ = ClampToPitch(obs.Trap.ScreenPoint(carrierXZ), pitch);
+        float shadow = situation.HasCarrier
+            ? CoverShadow01(screenXZ, situation, obs.VisiblePlayers, obs.SelfTeam, obs.AttackingDirectionX, pitch)
+            : 0f;
+        float travel = Clamp01(Vector2.Distance(selfXZ, screenXZ) / ScreenTravelReferenceMeters);
+        float preference = TrapPolicy.ScreenPreference * Clamp01(obs.Trap.Confidence01);
+
+        buffer[0] = new PressCandidate(
+            PressAction.Screen, screenXZ, situation.CarrierId,
+            ScreenBaseScore + ScreenShadowWeight * shadow - ScreenTravelWeight * travel + preference,
+            shadow, IsPrimary: false);
+        return 1;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -586,7 +644,7 @@ public static class PressPolicy
         if (!situation.HasCarrier) return situation.CarrierXZ;
 
         return PressTarget(
-            obs, situation.CarrierXZ, situation.CarrierVelocityXZ, situation.PresserXZ,
+            obs.AttackingDirectionX, situation.CarrierXZ, situation.CarrierVelocityXZ, situation.PresserXZ,
             situation.Evidence.Touchline01, pitch, standoffMeters, support);
     }
 
@@ -602,11 +660,30 @@ public static class PressPolicy
         Vector2 presserXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         float touchline = Touchline01(carrierXZ, pitch);
         return PressTarget(
-            obs, carrierXZ, carrierVelocityXZ, presserXZ, touchline, pitch, standoffMeters, support);
+            obs.AttackingDirectionX, carrierXZ, carrierVelocityXZ, presserXZ, touchline, pitch,
+            standoffMeters, support);
     }
 
+    /// <summary>
+    /// A6.2's angled-pressure point for a whole-picture (or shared-belief) carrier and presser, exposed so a
+    /// team-level election can use the one angle scoring instead of inventing a second one (A8.4's trap is the
+    /// first caller). The parameters mean exactly what they do on the individual path: the carrier and presser
+    /// positions, the touchline scale at the carrier, the team's attacking direction, and the depth to stand.
+    /// </summary>
+    public static Vector2 AngledPressPoint(
+        Vector2 carrierXZ,
+        Vector2 carrierVelocityXZ,
+        Vector2 presserXZ,
+        float touchline01,
+        float attackDirX,
+        PitchDimensions pitch,
+        float standoffMeters,
+        bool support) =>
+        PressTarget(attackDirX, carrierXZ, carrierVelocityXZ, presserXZ, touchline01, pitch, standoffMeters,
+            support);
+
     private static Vector2 PressTarget(
-        in FootballerObservation obs,
+        float attackDirX,
         Vector2 carrierXZ,
         Vector2 carrierVelocityXZ,
         Vector2 presserXZ,
@@ -615,9 +692,9 @@ public static class PressPolicy
         float standoffMeters,
         bool support)
     {
-        Vector2 ownGoalXZ = new(-obs.AttackingDirectionX * pitch.HalfLength, 0f);
+        Vector2 ownGoalXZ = new(-attackDirX * pitch.HalfLength, 0f);
         Vector2 goalSide = SimMath.SafeNormalize(
-            ownGoalXZ - carrierXZ, new Vector2(-obs.AttackingDirectionX, 0f));
+            ownGoalXZ - carrierXZ, new Vector2(-attackDirX, 0f));
         Vector2 toPresser = support
             ? SimMath.SafeNormalize(presserXZ - carrierXZ, Vector2.Zero)
             : Vector2.Zero;
@@ -1152,7 +1229,12 @@ public static class PressPolicy
         return new PressEvidence(backPass, poorTouch, rearFacing, slowPass, touchline);
     }
 
-    private static float Touchline01(Vector2 positionXZ, PitchDimensions pitch) =>
+    /// <summary>
+    /// How close a point is to the nearer touchline, on A6.2's one scale: 1 at the line, 0 at
+    /// <see cref="TouchlineWarnMeters"/> away and beyond. Public because the trap election (A8.4) has to ask the
+    /// same question of the team's shared picture.
+    /// </summary>
+    public static float Touchline01(Vector2 positionXZ, PitchDimensions pitch) =>
         Clamp01(1f - (pitch.HalfWidth - MathF.Abs(positionXZ.Y)) / TouchlineWarnMeters);
 
     private static bool TryFind(in FootballerObservation obs, int playerId, out PerceivedEntity entity)

@@ -535,12 +535,25 @@ public enum TeamId
 /// range or contact rule is added, and <see cref="AI.AiRuntimeConfig.EnableSwitchRecognition"/> off is the
 /// version-48 build exactly. Trajectories differ from version 48 where a recognized switch outbids the pass it
 /// would otherwise have played.</item>
+/// <item><c>AiBehaviour 50</c> — A8.4: the defensive side gets <b>short trap contracts</b>
+/// (<see cref="AI.TrapCoordinator"/>, <see cref="AI.TrapPolicy"/>). When the team's shared picture shows an
+/// opponent carrier pinned to a touchline, the elected presser already close to him, the allocator's cover
+/// behind that press and a believed forward option a defender can screen, the team commits to a short trap: the
+/// presser takes A6.2's angled pressure point, the named screener takes the one lane out with a bounded
+/// preference on the same Screen act, and the cover stays behind the press. The contract names only team facts
+/// and beliefs (a believed carrier position, angles relative to it, a confidence), expires after 1.5 s, and
+/// ends exactly once — won, escaped, loose, expired, lost presser/cover, participant removed or reset. A failed
+/// (escaped) trap puts the side into a short recovery window, and when a trap ends every participant is back on
+/// his ordinary duty: no trap outlives its possession and no inactive player keeps a role. No candidate, reach,
+/// sight, contact rule or second allocator is added — the trap names points inside A6.1/A6.2's vocabulary — and
+/// <see cref="AI.AiRuntimeConfig.EnableTrapContracts"/> off is the version-49 build exactly. Trajectories
+/// differ from version 49 wherever a trap is raised.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 49;
+    public const int AiBehaviour = 50;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -1096,6 +1109,16 @@ public sealed class FootballerObservation
     /// stays in one place and two observations can differ by exactly one contract in a test.
     /// </summary>
     public AI.CombinationContext Combination { get; init; } = AI.CombinationContext.None;
+
+    /// <summary>
+    /// A8.4: this player's part in a live short trap — a defending contract naming the presser, the screener and
+    /// the cover — as he is entitled to know it. The default is neutral, so a fixture or standalone controller
+    /// that knows nothing about traps behaves exactly as it did before A8.4. Like <see cref="Calls"/> and
+    /// <see cref="Combination"/> it is carried on the observation rather than read from the match object inside a
+    /// scorer, so the knowledge boundary stays in one place and two observations can differ by exactly one trap
+    /// in a test.
+    /// </summary>
+    public AI.TrapContext Trap { get; init; } = AI.TrapContext.None;
 
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }

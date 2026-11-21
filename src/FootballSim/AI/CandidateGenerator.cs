@@ -2753,12 +2753,29 @@ public sealed class CandidateGenerator : IAiStateResettable
                     float carrierSpeed = press.CarrierVelocityXZ.Length();
                     bool goalSideOfCarrier =
                         Vector2.Dot(selfXZ - press.CarrierXZ, ownGoalSide) > 0f;
-                    chasePoint = !goalSideOfCarrier && carrierSpeed > 1.5f
-                        ? PursuitPoint(
+                    if (!goalSideOfCarrier && carrierSpeed > 1.5f)
+                    {
+                        chasePoint = PursuitPoint(
                               ReachKinematics.FromObservation(obs), press.CarrierXZ, press.CarrierVelocityXZ) +
-                          ownGoalSide * 0.8f
-                        : PressPolicy.PressTarget(
+                          ownGoalSide * 0.8f;
+                    }
+                    else if (obs.Trap.IsPresser)
+                    {
+                        // A8.4: the trap names the pressure angle for the whole team (A6.2's own angled-point
+                        // scoring, evaluated once from the shared picture). The presser applies the offset to
+                        // the carrier in his own picture: a standing point, never a reach, a speed or a
+                        // tackle; the tackle is still the execution layer's contact.
+                        chasePoint = new Vector2(
+                            Math.Clamp(press.CarrierXZ.X + obs.Trap.PressOffsetXZ.X,
+                                -_pitch.HalfLength + 1f, _pitch.HalfLength - 1f),
+                            Math.Clamp(press.CarrierXZ.Y + obs.Trap.PressOffsetXZ.Y,
+                                -_pitch.HalfWidth + 1f, _pitch.HalfWidth - 1f));
+                    }
+                    else
+                    {
+                        chasePoint = PressPolicy.PressTarget(
                             obs, press, _pitch, PressPolicy.PressStandoffFor(press), support: false);
+                    }
                 }
                 else
                 {

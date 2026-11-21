@@ -383,6 +383,18 @@ public sealed class AiRuntimeConfigTests
         AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableSwitchRecognition = false });
     }
 
+    [Fact]
+    public void TrapContractsDefault_IsOnAndStatedInTheDescription()
+    {
+        // A8.4 ships the trap contracts on: the field is the A9.2 ablation and the --traps A/B, not a hidden
+        // guard. Off is the version-49 build exactly, so it is a supported configuration rather than an error.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableTrapContracts);
+        Assert.Contains("traps(on)", defaults.Describe());
+        Assert.Contains("traps(off)", new AiRuntimeConfig { EnableTrapContracts = false }.Describe());
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableTrapContracts = false });
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {
