@@ -1,0 +1,57 @@
+﻿=== A8.5 restart-routine evidence: same-seed A/B, 3 seeds x 2400 s -- routines on vs off ===
+Simulation version : ai51-rs1
+Routine model      : while the rules engine has a restart armed, the restarting team
+                     elects one routine from a two-option lawful menu - the SHORT option to
+                     the support player's feet, or DELIVER to a target further up - with the
+                     support and the target named as roles. The choice is a bounded weight
+                     (space, shortness, progression) plus the profile's own directness (A6.5b's
+                     short-distribution preference for a goal kick). Law 11 is the gate: for the
+                     restarts that are not offside-exempt (kick-off, free kick, indirect free
+                     kick) a receiver must be onside by the believed line every pass keeps.
+                     The rules engine keeps placement, taker and restart state; the taker still
+                     plans the delivery (A4.9) and falls back to his own heuristic if the named
+                     receiver cannot be delivered to. The routine ends once - taken, stolen,
+                     replaced, expired, taker/participant lost or reset - so it never survives
+                     into unrelated possession.
+Routines ON        : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on)
+Routines OFF       : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(off)
+
+Seed 20260818:
+  ON  : FT        | 144396 ticks, score 0-0, passes 524/532 attempted, shots 20/28, restart events 31, routines 31 (K2/T15/G11/C2/F0/I1, short 13/deliver 18, taken 31, stolen 0, replaced 0), taker played the receiver 18/20, goal-kick keeper played it 2/11
+  OFF : FT        | 144390 ticks, score 2-1, passes 509/523 attempted, shots 28/22, restart events 25, routines 0 (K0/T0/G0/C0/F0/I0, short 0/deliver 0, taken 0, stolen 0, replaced 0), taker played the receiver 0/0, goal-kick keeper played it 0/0
+Seed 20268737:
+  ON  : FT        | 144474 ticks, score 1-0, passes 535/532 attempted, shots 24/19, restart events 34, routines 34 (K3/T19/G8/C3/F0/I1, short 10/deliver 24, taken 34, stolen 0, replaced 0), taker played the receiver 24/26, goal-kick keeper played it 1/8
+  OFF : FT        | 144792 ticks, score 0-2, passes 516/562 attempted, shots 25/16, restart events 52, routines 0 (K0/T0/G0/C0/F0/I0, short 0/deliver 0, taken 0, stolen 0, replaced 0), taker played the receiver 0/0, goal-kick keeper played it 0/0
+Seed 20276656:
+  ON  : FT        | 144518 ticks, score 2-1, passes 548/536 attempted, shots 13/17, restart events 33, routines 36 (K5/T24/G6/C1/F0/I0, short 12/deliver 24, taken 36, stolen 0, replaced 0), taker played the receiver 29/30, goal-kick keeper played it 0/6
+  OFF : FT        | 144458 ticks, score 1-0, passes 551/452 attempted, shots 25/13, restart events 33, routines 0 (K0/T0/G0/C0/F0/I0, short 0/deliver 0, taken 0, stolen 0, replaced 0), taker played the receiver 0/0, goal-kick keeper played it 0/0
+
+=== Totals over 3 seeds ===
+metric                                      ON         OFF       DELTA
+completed matches                            3           3           0
+live ticks                              433388      433640        -252
+restart events logged                       98         110         -12
+routines raised                            101           0         101
+routine ticks                              101           0         101
+  kickoff                                   10           0          10
+  throw-in                                  58           0          58
+  goal kick                                 25           0          25
+  corner                                     6           0           6
+  free kick                                  0           0           0
+  indirect free kick                         2           0           2
+  option Short                              35           0          35
+  option Deliver                            66           0          66
+routines taken                             101           0         101
+routines stolen                              0           0           0
+routines replaced                            0           0           0
+routines expired                             0           0           0
+taker decisions                             76           0          76
+taker played the receiver                   71           0          71
+goal-kick keeper decisions                  25           0          25
+goal-kick keeper played it                   3           0           3
+passes attempted                          3207        3113          94
+passes completed                          2557        2492          65
+shots                                      121         129          -8
+offside offences                             2           4          -2
+
+RESULT: PASS -- the routine build raises and takes routines for every restart the match awards, the taker plays the receiver the routine named, and the version-50 build raises none; both finished every seed

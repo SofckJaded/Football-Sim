@@ -1,0 +1,18 @@
+﻿=== 11v11 Headless Match in 94281 ms ===
+Simulation version: ai51-rs1 (seed 20260818)
+AI configuration  : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on)
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 325910 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 2 - 2 Away (Direct Counterattack)
+Possession Share  : Home 48.4% | Away 51.6%
+Controlled Ball   : Home 47.3% | Away 52.7%
+Passes Attempted  : Home 1161 | Away 1227
+Passes Completed  : Home 926 (80%) | Away 1001 (82%)
+Shots Attempted   : Home 46 | Away 42
+Mean Team Width   : Home 46.2m | Away 43.3m
+Kicks (execution) : 2483 executed / 2563 requested | refused [LostArbitration, 12], [OutOfReach, 55], [BallHeld, 10], [FacingAway, 3]
+Run adverts (A5.3): 17754 published | 7945 withdrawn | 418 claims by a carrier
+Team calls (A7.2) : 42537 published | 1074869 suppressed | 42326 expired | ManOn 15370, Turn 16475, Switch 3162, Run 2631, Cover 1519, Step 1181, Drop 2199
+Airborne (A5.5)   : 1 crosses | 27 lofted | 85 driven executed
+Restart routines  : 76 raised | taken 76 | stolen 0 | replaced 0 | expired 0
+Events Logged     : 80
