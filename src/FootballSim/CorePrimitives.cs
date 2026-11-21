@@ -520,12 +520,27 @@ public enum TeamId
 /// bounded A8.1 preferences. Receivers outside the bounded search keep the A8.1 heuristic trigger, and
 /// <see cref="AI.AiRuntimeConfig.EnableShallowSearch"/> off with combinations on is the version-47 build
 /// exactly. Trajectories differ from version 47 wherever the search chooses a move the heuristic did not.</item>
+/// <item><c>AiBehaviour 49</c> — A8.3: the carrier <b>recognizes a switch / overload-to-isolate opportunity</b>
+/// (<see cref="AI.SwitchRecognition"/>) from his own picture instead of switching only when a team-mate shouts
+/// (A7.2) or when the ordinary pass value happens to favour it. Five observable inputs gate and weight one
+/// bounded preference on a pass that already exists: the local pressure on the carrier (A7.2's own "needs a way
+/// out" distance), the far side's lateral distance and room (A7.2's switch line and space, on the one space
+/// scale), the receiver's matchup (an isolated one-v-one weighted by the scouted pace band, a doubled-up man
+/// scoring low, a free man in between), the pass model's own completion probability for the ball, and the
+/// rest-defence picture (the allocator's own forward-commitment threshold, so a short rest defence cannot buy a
+/// switch). There is deliberately no pass counter, passage clock or match-time input: the recognition is a pure
+/// function of the current picture, so nothing forces a switch after N passes. A far-side target that the
+/// recognition supports also gets the ordinary bounded pre-rank rescue (like an announced run, a switch call or
+/// A8.1's continuation target) so it is priced rather than pruned. No candidate, sight, reach, transmission
+/// range or contact rule is added, and <see cref="AI.AiRuntimeConfig.EnableSwitchRecognition"/> off is the
+/// version-48 build exactly. Trajectories differ from version 48 where a recognized switch outbids the pass it
+/// would otherwise have played.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 48;
+    public const int AiBehaviour = 49;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

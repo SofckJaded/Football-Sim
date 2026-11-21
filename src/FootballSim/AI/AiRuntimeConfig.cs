@@ -274,6 +274,20 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableShallowSearch { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.3 — switch / overload-to-isolate recognition. The carrier recognizes, from his own picture, that the
+    // near side is closed and the far side is free enough to switch to. See SwitchRecognition.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the carrier recognizes switch / overload-to-isolate opportunities (A8.3). <b>On by default</b>:
+    /// this is the behaviour the version ships, and the field exists so A9.2 can ablate the recognition and so
+    /// the evidence probe can run the same worlds with it off. Off means no switch preference is added to any
+    /// pass and no far-side receiver is rescued from the pass-target pre-rank — the version-48 build exactly,
+    /// which is what makes the A/B two builds rather than two tunings of the same decision.
+    /// </summary>
+    public bool EnableSwitchRecognition { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -291,7 +305,8 @@ public sealed class AiRuntimeConfig
         $"cognitive({(EnableCognitiveError ? "on" : "off")}) " +
         $"archetypes({(EnableArchetypes ? "on" : "off")}) " +
         $"combinations({(EnableCombinations ? "on" : "off")}) " +
-        $"search({(EnableShallowSearch ? "on" : "off")})";
+        $"search({(EnableShallowSearch ? "on" : "off")}) " +
+        $"switchrec({(EnableSwitchRecognition ? "on" : "off")})";
 }
 
 /// <summary>

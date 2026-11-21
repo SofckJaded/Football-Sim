@@ -30,7 +30,7 @@ public static class Program
                 return RunHeadlessMatch(playersPerTeam: 5, halfDurationSeconds: 300f, seed: 101UL) ? 0 : 1;
 
             case "--match-11v11":
-                return RunHeadlessMatch(playersPerTeam: 11, halfDurationSeconds: 2700f, seed: 20260818UL) ? 0 : 1;
+                return RunHeadlessMatch(11, 2700f, 20260818UL, switchRecognition: !IsOffArgument(args)) ? 0 : 1;
 
             case "--tactical-batch":
                 return RunTacticalComparisonBatch() ? 0 : 1;
@@ -77,6 +77,9 @@ public static class Program
             case "--search":
                 return RunShallowSearchEvidence(args) ? 0 : 1;
 
+            case "--switches":
+                return RunSwitchEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -97,6 +100,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --archetypes [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --combinations [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --search [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --switches [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -109,6 +113,14 @@ public static class Program
                 return 1;
         }
     }
+
+    /// <summary>
+    /// True when the optional argument after a mode is <c>off</c>. Used by the ablation argument of
+    /// <c>--match-11v11</c>: A8.3's <c>off</c> run is the version-48 build exactly, which is how the switch-off
+    /// equivalence is proved against the recorded <c>ai48</c> match.
+    /// </summary>
+    private static bool IsOffArgument(string[] args) =>
+        args.Length > 1 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Runs one advanced-AI scenario fixture. This exists so a behaviour can be reproduced from the
@@ -2287,7 +2299,11 @@ public static class Program
     /// that stalled short of full time looked identical to a finished one. The phase is now asserted
     /// and the process exit code reflects it.
     /// </summary>
-    private static bool RunHeadlessMatch(int playersPerTeam, float halfDurationSeconds, ulong seed)
+    private static bool RunHeadlessMatch(
+        int playersPerTeam,
+        float halfDurationSeconds,
+        ulong seed,
+        bool switchRecognition = true)
     {
         var config = new PreMatchConfig
         {
@@ -2295,7 +2311,8 @@ public static class Program
             PlayersPerTeam = playersPerTeam,
             HalfDurationSeconds = halfDurationSeconds,
             HomeProfile = TeamTacticalProfile.PossessionControl,
-            AwayProfile = TeamTacticalProfile.DirectCounterattack
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = new AiRuntimeConfig { EnableSwitchRecognition = switchRecognition }
         };
 
         var engine = new MatchSimulationEngine(config);
@@ -2347,6 +2364,7 @@ public static class Program
 
         Console.WriteLine($"=== {playersPerTeam}v{playersPerTeam} Headless Match in {sw.ElapsedMilliseconds} ms ===");
         Console.WriteLine($"Simulation version: {SimulationVersion.Tag} (seed {seed})");
+        Console.WriteLine($"AI configuration  : {config.Ai.Describe()}");
         Console.WriteLine($"Status            : {(completed ? "FULL TIME" : $"INCOMPLETE â€” tick cap {maxTicks} reached")}" +
                           $" | phase {engine.Rules.Phase} | period {engine.Rules.Period}");
         Console.WriteLine($"Tick / Clock      : tick {engine.CurrentTick} | clock {engine.Rules.MatchClockSeconds:F1}s of {halfDurationSeconds * 2f:F0}s");
@@ -3082,6 +3100,250 @@ public static class Program
 
     private static readonly int CombinationKindCount = Enum.GetValues(typeof(CombinationKind)).Length;
     private static readonly int CombinationEndReasonCount = Enum.GetValues(typeof(CombinationEndReason)).Length;
+
+    /// <summary>
+    /// A8.3 evidence: <b>the switch / overload-to-isolate recognition</b>, measured as a same-seed A/B between
+    /// the default build and the build with <see cref="AiRuntimeConfig.EnableSwitchRecognition"/> off.
+    ///
+    /// The off run is the version-48 build exactly, so every difference the columns show is the recognition and
+    /// nothing else: both builds offer the same passes, plan them with the same <see cref="PassPlanner"/>, price
+    /// them with the same <see cref="PassSuccessModel"/> and execute them through the same contact layer. The on
+    /// build adds one bounded preference on a pass that already exists (and the ordinary pre-rank rescue that
+    /// keeps its far-side target inside the pass-target budget).
+    ///
+    /// What the columns are, and the consumer each one proves is live:
+    /// <list type="bullet">
+    /// <item><b>carrier decisions</b> - carrier-ticks on which a player decided with the ball (the denominator);</item>
+    /// <item><b>decisions that recognized a switch</b> - from the controller's own
+    /// <see cref="TacticalUtilityAiController.SwitchPreferencesApplied"/>: the carrier's picture supported a
+    /// far-side opportunity. Zero in the off build by construction, which is the switch's neutrality proof;</item>
+    /// <item><b>switch passes chosen</b> - the carrier's chosen action was a pass whose receiver stands at least
+    /// A7.2's far-side distance across from the ball, classified from the decision's own observation;</item>
+    /// <item><b>switch passes executed</b> - the execution layer actually played a pass whose intended receiver
+    /// was that far across, classified from the executed contact (a decision that never reached the ball does
+    /// not count);</item>
+    /// <item><b>passes, shots, ticks</b> - the aggregate match the switches ran in, so the two worlds are
+    /// compared rather than only their switch tables.</item>
+    /// </list>
+    ///
+    /// The verdict does not require the aggregate match numbers to be "better" (A9 owns tuning); it requires
+    /// both builds to complete every seed, the recognition to be live in the on build, the switch to be neutral
+    /// in the off build (no recognition, no preference) and the on build to execute more switch passes than the
+    /// off build across the seed set — single-fixture inversions are expected, as with every A8 probe.
+    /// </summary>
+    private static bool RunSwitchEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A8.3 switch-recognition evidence: same-seed A/B, {seedCount} seeds x " +
+                          $"{halfSeconds * 2f:F0} s -- recognition on vs off ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Recognition model  : the carrier recognizes a switch from his own picture - local pressure");
+        Console.WriteLine("                     on him, the far side's lateral distance and room, the receiver's matchup");
+        Console.WriteLine("                     (an isolated one-v-one, scouted pace band), the pass model's completion");
+        Console.WriteLine("                     for the ball, and a rest defence as good as the allocator's forward-");
+        Console.WriteLine("                     commitment threshold. One bounded preference on an existing pass, plus the");
+        Console.WriteLine("                     ordinary pre-rank rescue; no candidate, sight, reach or contact is added.");
+        Console.WriteLine("                     There is no pass counter and no clock input: nothing forces a switch after N passes.");
+        Console.WriteLine($"Recognition ON     : {new AiRuntimeConfig { EnableSwitchRecognition = true }.Describe()}");
+        Console.WriteLine($"Recognition OFF    : {new AiRuntimeConfig { EnableSwitchRecognition = false }.Describe()}");
+        Console.WriteLine();
+
+        var on = new SwitchEvidenceTotals();
+        var off = new SwitchEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunSwitchMatch(seed, halfSeconds, recognize: true, on, out string onLine);
+            bool completedOff = RunSwitchMatch(seed, halfSeconds, recognize: false, off, out string offLine);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-34}{"ON",12}{"OFF",12}{"DELTA",12}");
+        Console.WriteLine($"{"completed matches",-34}{on.Matches,12}{off.Matches,12}{on.Matches - off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-34}{on.Ticks,12}{off.Ticks,12}{on.Ticks - off.Ticks,12}");
+        Console.WriteLine($"{"passes attempted",-34}{on.PassesAttempted,12}{off.PassesAttempted,12}{on.PassesAttempted - off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-34}{on.PassesCompleted,12}{off.PassesCompleted,12}{on.PassesCompleted - off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-34}{on.Shots,12}{off.Shots,12}{on.Shots - off.Shots,12}");
+        Console.WriteLine($"{"carrier decisions",-34}{on.CarrierDecisions,12}{off.CarrierDecisions,12}{on.CarrierDecisions - off.CarrierDecisions,12}");
+        Console.WriteLine($"{"decisions recognizing a switch",-34}{on.RecognizedDecisions,12}{off.RecognizedDecisions,12}{on.RecognizedDecisions - off.RecognizedDecisions,12}");
+        Console.WriteLine($"{"switch passes chosen",-34}{on.ChosenSwitchPasses,12}{off.ChosenSwitchPasses,12}{on.ChosenSwitchPasses - off.ChosenSwitchPasses,12}");
+        Console.WriteLine($"{"switch passes executed",-34}{on.ExecutedSwitchPasses,12}{off.ExecutedSwitchPasses,12}{on.ExecutedSwitchPasses - off.ExecutedSwitchPasses,12}");
+        Console.WriteLine($"{"chosen while recognized",-34}{on.ChosenWhileRecognized,12}{off.ChosenWhileRecognized,12}{on.ChosenWhileRecognized - off.ChosenWhileRecognized,12}");
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool recognitionLive = on.RecognizedDecisions > 0 && on.ExecutedSwitchPasses > 0;
+        bool switchNeutral = off.RecognizedDecisions == 0 && off.ChosenWhileRecognized == 0;
+        bool moreSwitches = on.ExecutedSwitchPasses > off.ExecutedSwitchPasses;
+        bool ok = completeBoth && recognitionLive && switchNeutral && moreSwitches;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the recognition build recognizes far-side opportunities and executes more switch" +
+              " passes than the version-48 build, which recognizes none; both finished every seed"
+            : "RESULT: FAIL -- incomplete matches, no live recognition, the switch did not neutralize, or the" +
+              " recognition build did not execute more switch passes than the build with it off");
+        return ok;
+    }
+
+    /// <summary>One A8.3 probe variant's accumulators.</summary>
+    private sealed class SwitchEvidenceTotals
+    {
+        public int Matches;
+        public long Ticks;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long CarrierDecisions;
+        public long RecognizedDecisions;
+        public long ChosenSwitchPasses;
+        public long ExecutedSwitchPasses;
+        public long ChosenWhileRecognized;
+    }
+
+    /// <summary>Runs one A8.3 probe match and folds it into <paramref name="totals"/>.</summary>
+    private static bool RunSwitchMatch(
+        ulong seed,
+        float halfSeconds,
+        bool recognize,
+        SwitchEvidenceTotals totals,
+        out string line)
+    {
+        var ai = new AiRuntimeConfig { EnableSwitchRecognition = recognize };
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        long seedCarrierDecisions = 0;
+        long seedRecognized = 0;
+        long seedChosen = 0;
+        long seedExecuted = 0;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+
+            // The carrier's decision this tick: the observation he decided on and the action he chose. A
+            // switch is a pass whose intended receiver stands at least A7.2's far-side distance across.
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch) continue;
+                if (engine.GetController(player.Id) is not TacticalUtilityAiController controller) continue;
+                FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                if (observation is null) continue;
+                if (observation.BallControllingPlayerId != player.Id ||
+                    observation.PossessingTeam != player.Team)
+                {
+                    continue;
+                }
+
+                seedCarrierDecisions++;
+                bool recognized = controller.SwitchPreferencesApplied > 0;
+                if (recognized) seedRecognized++;
+
+                UtilityCandidate chosen = controller.LastSelected;
+                if (chosen.Key.Kind != CandidateKind.Pass) continue;
+                if (chosen.Key.TargetPlayerId <= 0) continue;
+                if (!TryFindVisible(observation, chosen.Key.TargetPlayerId, out PerceivedEntity receiver))
+                    continue;
+                float lateral = MathF.Abs(receiver.EstimatedPosition.Z - observation.PerceivedBallPosition.Z);
+                if (lateral < TeamCallPlanner.SwitchMinLateralMeters) continue;
+
+                seedChosen++;
+                if (recognized) totals.ChosenWhileRecognized++;
+            }
+
+            // Executed switch passes, from the execution layer's own contacts: a decision that never reached
+            // the ball is not a switch that was played. The bounded log is read from its tail for this tick, so
+            // no per-tick scan of the whole match is paid.
+            IReadOnlyList<BallContactEvent> log = engine.ContactLog;
+            for (int index = log.Count - 1; index >= 0; index--)
+            {
+                BallContactEvent contact = log[index];
+                if (contact.Tick != engine.CurrentTick) break;
+                if (contact.Kind != BallContactKind.Kick) continue;
+                if (!KickIntents.IsPass(contact.Intent)) continue;
+                if (contact.IntendedReceiverId is not int receiverId) continue;
+                if (!TryFindPlayer(engine, receiverId, out FootballerState? receiver) || receiver is null) continue;
+                if (MathF.Abs(receiver.Position.Z - contact.BallPosition.Z) < TeamCallPlanner.SwitchMinLateralMeters)
+                    continue;
+                seedExecuted++;
+            }
+        }
+
+        var analytics = engine.Analytics;
+        totals.Ticks += engine.CurrentTick;
+        totals.PassesAttempted += analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        totals.PassesCompleted += analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        totals.Shots += analytics.HomeShots + analytics.AwayShots;
+        totals.CarrierDecisions += seedCarrierDecisions;
+        totals.RecognizedDecisions += seedRecognized;
+        totals.ChosenSwitchPasses += seedChosen;
+        totals.ExecutedSwitchPasses += seedExecuted;
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.Matches++;
+
+        line = $"{engine.CurrentTick} ticks, score {analytics.HomeGoals}-{analytics.AwayGoals}, passes " +
+               $"{analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} attempted, shots " +
+               $"{analytics.HomeShots}/{analytics.AwayShots}, carrier decisions {seedCarrierDecisions}, " +
+               $"recognized {seedRecognized}, switch passes chosen {seedChosen} / executed {seedExecuted}";
+        return completed;
+    }
+
+    /// <summary>The believed entity for one player id in an observation, or false when he is not in the picture.</summary>
+    private static bool TryFindVisible(
+        FootballerObservation observation,
+        int playerId,
+        out PerceivedEntity entity)
+    {
+        for (int index = 0; index < observation.VisiblePlayers.Count; index++)
+        {
+            if (observation.VisiblePlayers[index].PlayerId != playerId) continue;
+            entity = observation.VisiblePlayers[index];
+            return true;
+        }
+
+        entity = default;
+        return false;
+    }
+
+    /// <summary>The authoritative player state for one id, or false when the match has no such player.</summary>
+    private static bool TryFindPlayer(MatchSimulationEngine engine, int playerId, out FootballerState? player)
+    {
+        IReadOnlyList<FootballerState> players = engine.Players;
+        for (int index = 0; index < players.Count; index++)
+        {
+            if (players[index].Id != playerId) continue;
+            player = players[index];
+            return true;
+        }
+
+        player = null;
+        return false;
+    }
 
     /// <summary>
     /// Multi-seed tactical report and gate (audit F23).

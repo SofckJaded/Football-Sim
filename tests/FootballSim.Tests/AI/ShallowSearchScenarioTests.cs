@@ -56,14 +56,22 @@ public sealed class ShallowSearchScenarioTests
         float onPreference = PassPreferenceToMate(new AiRuntimeConfig
         {
             EnableCombinations = true,
-            EnableShallowSearch = true
+            EnableShallowSearch = true,
+            // A8.3's switch recognition is a third, independent preference on the same pass. It is off here so
+            // the A/B is the search alone; A8.3 has its own gate in SwitchScenarioTests.
+            EnableSwitchRecognition = false
         });
         float offPreference = PassPreferenceToMate(new AiRuntimeConfig
         {
             EnableCombinations = true,
-            EnableShallowSearch = false
+            EnableShallowSearch = false,
+            EnableSwitchRecognition = false
         });
-        float noCombinations = PassPreferenceToMate(new AiRuntimeConfig { EnableCombinations = false });
+        float noCombinations = PassPreferenceToMate(new AiRuntimeConfig
+        {
+            EnableCombinations = false,
+            EnableSwitchRecognition = false
+        });
 
         Assert.True(offPreference > 0f, "the pass must exist in every build, or nothing is being compared");
         Assert.Equal(offPreference, noCombinations, 4);
@@ -116,7 +124,14 @@ public sealed class ShallowSearchScenarioTests
         {
             Name = search ? "search-on" : "search-off",
             Seed = 4822UL,
-            Ai = new AiRuntimeConfig { EnableCombinations = true, EnableShallowSearch = search },
+            Ai = new AiRuntimeConfig
+            {
+                EnableCombinations = true,
+                EnableShallowSearch = search,
+                // The A8.2 gate measures the search; A8.3's switch recognition is a separate milestone with its
+                // own gate and is held off so both columns differ by the search and nothing else.
+                EnableSwitchRecognition = false
+            },
             HalfDurationSeconds = 45f,
             BallPosition = new Vector3(-5.6f, 0.11f, 0f),
             BallSetup = ScenarioBallSetup.Controlled,

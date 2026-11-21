@@ -371,6 +371,18 @@ public sealed class AiRuntimeConfigTests
         AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableArchetypes = false });
     }
 
+    [Fact]
+    public void SwitchRecognitionDefault_IsOnAndStatedInTheDescription()
+    {
+        // A8.3 ships the recognition on: the field is the A9.2 ablation and the --switches A/B, not a hidden
+        // guard. Off is the version-48 build exactly, so it is a supported configuration rather than an error.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableSwitchRecognition);
+        Assert.Contains("switchrec(on)", defaults.Describe());
+        Assert.Contains("switchrec(off)", new AiRuntimeConfig { EnableSwitchRecognition = false }.Describe());
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableSwitchRecognition = false });
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {

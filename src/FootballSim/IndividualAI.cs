@@ -113,6 +113,18 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     public CandidateRejection GetRejection(int index) => _generator.GetRejection(index);
 
     /// <summary>
+    /// A8.3: pass candidates in the last decision that carried a recognized switch preference. A match-level
+    /// diagnostic for the <c>--switches</c> probe; the decision path never reads it.
+    /// </summary>
+    public int SwitchPreferencesApplied => _generator.SwitchPreferencesApplied;
+
+    /// <summary>
+    /// A8.3: the best switch opportunity the last decision recognized, or a default record. Diagnostics and
+    /// tests; a decision that recognized nothing reports <see cref="SwitchOpportunity.IsRecognized"/> false.
+    /// </summary>
+    public SwitchOpportunity LastSwitchOpportunity => _generator.LastSwitchOpportunity;
+
+    /// <summary>
     /// Seconds left on the current commitment window. Exposed so configuration can be proven to reach
     /// the decision path: immediately after a decision that changed action, this equals the configured
     /// job or reaction window exactly.

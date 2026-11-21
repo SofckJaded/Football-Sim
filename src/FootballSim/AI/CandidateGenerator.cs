@@ -316,6 +316,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Below this room the return region is no longer a lane and the initiator abandons it.</summary>
     internal const float CombinationReturnRunMinSpace01 = 0.25f;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.3 — switch / overload-to-isolate recognition. One bounded preference on a pass that already exists,
+    // priced from the carrier's own picture by AI/SwitchRecognition. Nothing here creates a capability.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Pre-rank bonus that keeps the far-side target of a recognized switch inside
+    /// <see cref="AiRuntimeConfig.MaxPassTargets"/>, so the opportunity is priced rather than pruned. Same size
+    /// and same reason as the advertisement, switch-call and combination bonuses: an option dropped before it
+    /// is read was never an option. The rank bonus is a bounded rescue, never the decision.
+    /// </summary>
+    internal const float SwitchRecognitionRankBonus = 0.35f;
+
     private readonly PitchDimensions _pitch;
     private readonly MatchCommunicationContext? _communication;
     private readonly PassPlanner _passPlanner;
@@ -345,6 +358,11 @@ public sealed class CandidateGenerator : IAiStateResettable
     // Refused candidates and why (A4.6). Reused, so a decision allocates nothing to explain itself.
     private readonly CandidateRejection[] _rejections = new CandidateRejection[MaxRejections];
     private int _rejectionCount;
+
+    // A8.3: the switch opportunities the most recent decision recognized. Reused like the other buffers: a
+    // decision with no far-side opportunity leaves the count at zero.
+    private int _switchPreferencesApplied;
+    private SwitchOpportunity _lastSwitchOpportunity;
 
     // A6.1: the defensive policy's answer for this decision. Reused like the other buffers.
     private readonly PressCandidate[] _defenceBuffer = new PressCandidate[PressPolicy.MaxCandidates];
@@ -414,6 +432,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     public CandidateRejection GetRejection(int index) => _rejections[index];
 
     /// <summary>
+    /// A8.3: pass candidates in the most recent decision that carried a recognized switch preference. This is
+    /// the count of opportunities the carrier's own picture supported, not of passes chosen; diagnostics read it
+    /// (the <c>--switches</c> probe), the decision path never does.
+    /// </summary>
+    public int SwitchPreferencesApplied => _switchPreferencesApplied;
+
+    /// <summary>
+    /// A8.3: the best recognized switch opportunity of the most recent decision (the one with the largest
+    /// preference), or a default record when nothing was recognized. Diagnostics and tests only.
+    /// </summary>
+    public SwitchOpportunity LastSwitchOpportunity => _lastSwitchOpportunity;
+
+    /// <summary>
     /// Local pressure window around this player's last on-ball decision (A2.4). Exposed so diagnostics
     /// and tests can see what the carry choice was actually reading.
     /// </summary>
@@ -440,6 +471,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _passTargetCount = 0;
         _receptionPlanCount = 0;
         _combinationProposalCount = 0;
+        _switchPreferencesApplied = 0;
+        _lastSwitchOpportunity = default;
     }
 
     /// <summary>
@@ -459,6 +492,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         _passTargetCount = 0;
         _receptionPlanCount = 0;
         _combinationProposalCount = 0;
+        _switchPreferencesApplied = 0;
+        _lastSwitchOpportunity = default;
         _tackleCooldown = 0f;
         _timeOnBall = 0f;
         _hasLastCarryDirection = false;
@@ -989,6 +1024,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == mate.PlayerId)
                 rank += SwitchCallRankBonus;
 
+            // A8.3: the far-side target of a switch the carrier recognizes must survive the pre-rank too. The
+            // cheap geometry half of the recognition is used here because a trajectory (and its completion
+            // probability) does not exist until this budget has chosen who gets planned — the same split the
+            // run advertisement and A8.1's continuation target use.
+            if (_ai.EnableSwitchRecognition && SwitchRecognition.IsSwitchGeometry(obs, mateXZ, ballXZ))
+                rank += SwitchRecognitionRankBonus;
+
             // A8.1: the first receiver's continuation target must survive the pre-rank too, or the contract
             // would be abandoned before its promised ball was ever priced.
             if (_ai.EnableCombinations && obs.Combination.IsReceiver &&
@@ -1126,7 +1168,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             return false;
         }
 
-        float score = ScorePass(obs, mate.PlayerId, terms, forwardMeters, targetXZ, option, out ValueTerms valueTerms);
+        float score = ScorePass(obs, mate, terms, forwardMeters, targetXZ, option, out ValueTerms valueTerms);
 
         var passCommand = new FootballerCommand(
             aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
@@ -1154,13 +1196,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     private float ScorePass(
         in FootballerObservation obs,
-        int receiverId,
+        in PerceivedEntity mate,
         in PassSuccessTerms terms,
         float forwardMeters,
         Vector2 targetXZ,
         in PassOption option,
         out ValueTerms valueTerms)
     {
+        int receiverId = mate.PlayerId;
+
         // The one pressure estimate the pass model produced is what the reception is valued under.
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, receiverId, targetXZ, terms.DefenderPressure01);
@@ -1177,6 +1221,29 @@ public sealed class CandidateGenerator : IAiStateResettable
             preference += ActionValueScale.CallBouncePassBonus;
         if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == receiverId)
             preference += ActionValueScale.CallSwitchPassBonus;
+
+        // A8.3: a switch / overload-to-isolate opportunity the carrier recognizes in his own picture earns one
+        // bounded preference. It is a <i>choice among passes that already exist</i>: no candidate, sight, reach,
+        // transmission range or contact rule is added, the ball is still planned by PassPlanner and priced by
+        // the pass model above (whose completion probability is the recognition's feasibility input), and
+        // execution still decides the contact. This is deliberately separate from A7.2's switch call: the call
+        // is a team-mate's report that he is free, the recognition is the carrier's own reading of the far side,
+        // and the two bounded nudges together still cannot outbid a clearly better action on the scale.
+        if (_ai.EnableSwitchRecognition)
+        {
+            SwitchOpportunity opportunity = SwitchRecognition.Evaluate(
+                obs, mate, targetXZ, terms.CompletionProbability01);
+            if (opportunity.IsRecognized)
+            {
+                preference += opportunity.Preference;
+                _switchPreferencesApplied++;
+                if (!_lastSwitchOpportunity.IsRecognized ||
+                    opportunity.Preference > _lastSwitchOpportunity.Preference)
+                {
+                    _lastSwitchOpportunity = opportunity;
+                }
+            }
+        }
 
         // A8.1: the two combination preferences, each applied exactly once. The initiation bonus is the
         // carrier's own offer on this candidate (zero when no contract was proposed); the continuation bonus
@@ -3373,6 +3440,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         // depends on it; this façade stays because the audit probe and the goalkeeper path call it here.
         _passSuccess.IsLaneBlocked(fromXZ, toXZ, power01, flightTimeSeconds, visiblePlayers, selfTeam);
 
+    /// <summary>
+    /// Nearest-opponent distance at which <see cref="EvaluateSpaceFreedom"/> saturates, in metres: the one space
+    /// scale the pass pre-rank, A8.1's region scoring and A8.3's switch recognition all read. Exposed because a
+    /// gate expressed as "five metres of room" has to be converted to that scale in one place.
+    /// </summary>
+    public const float SpaceFreedomSaturationMeters = 9.0f;
+
     internal static float EvaluateSpaceFreedom(
         Vector2 spotXZ,
         IReadOnlyList<PerceivedEntity> visiblePlayers,
@@ -3385,6 +3459,6 @@ public sealed class CandidateGenerator : IAiStateResettable
             float d = Vector2.Distance(spotXZ, new Vector2(p.EstimatedPosition.X, p.EstimatedPosition.Z));
             if (d < minOppDist) minOppDist = d;
         }
-        return Math.Clamp(minOppDist / 9.0f, 0f, 1f);
+        return Math.Clamp(minOppDist / SpaceFreedomSaturationMeters, 0f, 1f);
     }
 }
