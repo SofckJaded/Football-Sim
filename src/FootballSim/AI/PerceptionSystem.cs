@@ -205,7 +205,8 @@ public sealed class PerceptionSystem
         TurnoverSituation teamTurnover = default,
         TeamCallContext teamCalls = default,
         CombinationContext combination = default,
-        TrapContext trap = default)
+        TrapContext trap = default,
+        RestartRoutineContext restartRoutine = default)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -341,6 +342,7 @@ public sealed class PerceptionSystem
             Calls = teamCalls,
             Combination = combination,
             Trap = trap,
+            Routine = restartRoutine,
             Stamina01 = self.Stamina01,
             AvailableToKick = self.AvailableToKick,
             ControlQuality01 = self.ControlQuality01,

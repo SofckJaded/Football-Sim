@@ -548,12 +548,29 @@ public enum TeamId
 /// sight, contact rule or second allocator is added — the trap names points inside A6.1/A6.2's vocabulary — and
 /// <see cref="AI.AiRuntimeConfig.EnableTrapContracts"/> off is the version-49 build exactly. Trajectories
 /// differ from version 49 wherever a trap is raised.</item>
+/// <item><c>AiBehaviour 51</c> — A8.5: <b>one small library of legal restart routines</b>
+/// (<see cref="AI.RestartPolicy"/>, <see cref="AI.RestartCoordinator"/>). While the rules engine has a restart
+/// armed — kick-off, throw-in, corner, free kick, indirect free kick or goal kick — the restarting team elects
+/// one routine from a two-option lawful menu: play the <i>short</i> option to a support player's feet, or
+/// <i>deliver</i> to a target further up the pitch, with the support and the target named as roles. The choice is
+/// a bounded weight (space around the receiver, how short the short ball is, how advanced the target is) plus the
+/// team profile's own directness — or A6.5b's short-distribution preference for a goal kick. The one legality
+/// test the library adds is Law 11: for the restarts that are not offside-exempt (kick-off, free kick, indirect
+/// free kick) a receiver must be onside by the same believed line every pass keeps, which the old taker heuristic
+/// never asked. The rules engine still places the ball, designates the taker and owns the restart state, and the
+/// taker still plans the delivery with A4.9's passer; the routine only chooses which lawful option he plays and
+/// who receives it, and falls back to his pre-routine heuristic when the named receiver cannot be delivered to.
+/// The routine ends exactly once — taken, stolen, replaced, expired, taker/participant lost or reset — so it
+/// never survives into unrelated possession, and when it ends every participant is back on his ordinary duty. No
+/// candidate, placement, reach, sight, contact rule or second allocator is added, and
+/// <see cref="AI.AiRuntimeConfig.EnableRestartRoutines"/> off is the version-50 build exactly. Trajectories
+/// differ from version 50 wherever a restart routine is applied.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 50;
+    public const int AiBehaviour = 51;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -1119,6 +1136,16 @@ public sealed class FootballerObservation
     /// in a test.
     /// </summary>
     public AI.TrapContext Trap { get; init; } = AI.TrapContext.None;
+
+    /// <summary>
+    /// A8.5: this player's part in the live restart routine — the taker, the short support or the longer target
+    /// — as he is entitled to know it. The default is neutral, so a fixture or standalone controller that knows
+    /// nothing about restart routines behaves exactly as it did before A8.5. Like <see cref="Calls"/>,
+    /// <see cref="Combination"/> and <see cref="Trap"/> it is carried on the observation rather than read from the
+    /// match object inside a scorer, so the knowledge boundary stays in one place and two observations can differ
+    /// by exactly one routine in a test.
+    /// </summary>
+    public AI.RestartRoutineContext Routine { get; init; } = AI.RestartRoutineContext.None;
 
     public required float Stamina01 { get; init; }
     public required bool AvailableToKick { get; init; }

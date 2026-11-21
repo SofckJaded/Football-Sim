@@ -73,6 +73,14 @@ public sealed class GoalkeeperController : IFootballerController
     /// </summary>
     private const float DistributionStyleBias01 = 0.18f;
 
+    /// <summary>
+    /// Bounded value the team's goal-kick routine adds to the receiver it named (A8.5), on the same scale as
+    /// <see cref="DistributionStyleBias01"/>. A goal kick is the one restart the keeper takes, so his A6.5b
+    /// distribution is the decision the routine feeds: the routine chooses among lawful options, and this preference
+    /// says "the team's picture favours this outlet" without replacing the keeper's own valuation.
+    /// </summary>
+    private const float RestartRoutinePreference = 0.16f;
+
     private readonly PitchDimensions _pitch;
     private readonly PassPlanner _passPlanner;
     private readonly PassSuccessModel _passSuccess;
@@ -432,6 +440,11 @@ public sealed class GoalkeeperController : IFootballerController
         float bestDistance = 0f;
         GoalkeeperDistributionKind bestKind = GoalkeeperDistributionKind.None;
 
+        // A8.5: this goal kick's routine names the outlet the team's shared picture chose. It is a bounded
+        // preference on the keeper's own score, never a replacement for it — and only for the designated taker,
+        // which on a goal kick is this keeper (a locked human never inherits an AI routine).
+        int routineReceiverId = goalKick && obs.Routine.IsTaker ? obs.Routine.ReceiverId : 0;
+
         for (int index = 0; index < obs.VisiblePlayers.Count; index++)
         {
             PerceivedEntity mate = obs.VisiblePlayers[index];
@@ -449,6 +462,7 @@ public sealed class GoalkeeperController : IFootballerController
             if (distance < MinDistributionMeters || distance > MaxDistributionMeters) continue;
 
             float preference = DistributionPreference(obs, distance);
+            if (mate.PlayerId == routineReceiverId) preference += RestartRoutinePreference;
 
             Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
             PassPlan plan = _passPlanner.PlanGroundPass(

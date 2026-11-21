@@ -567,6 +567,15 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
                 KickIntentType.Shot, new Vector3(goalAim.X, 0f, goalAim.Y), 0.78f, 0.35f);
         }
 
+        // A8.5: a live restart routine is the team's choice of option — play the short ball to the support, or
+        // deliver to the target. The taker plays it when the delivery to that receiver can actually be planned
+        // from his own picture; otherwise he keeps the A4.9 heuristic below, so a routine never strands a restart.
+        if (obs.Routine.IsTaker &&
+            TryPlanRestartRoutineDelivery(obs, obs.Routine, out FootballerCommand routineCommand))
+        {
+            return routineCommand;
+        }
+
         PerceivedEntity? bestMate = null;
         float bestScore = -999f;
         foreach (var mate in obs.VisiblePlayers)
@@ -638,6 +647,36 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         {
             IntendedReceiverId = bestMate?.PlayerId
         };
+    }
+
+    /// <summary>
+    /// Plays the restart options the team's routine named (A8.5): the taker delivers to the receiver the chosen
+    /// option is written for, using A4.9's own set-piece planning.
+    ///
+    /// The routine is a team decision about <i>which lawful option</i> a restart is taken with; it is not a
+    /// guarantee that the ball can be played. If the named receiver is not in this player's picture, or the
+    /// passer cannot plan a delivery to him, the caller falls back to the pre-routine heuristic — the same rule
+    /// A8.4's participants follow ("each player applies the contract to his own picture").
+    /// </summary>
+    private bool TryPlanRestartRoutineDelivery(
+        in FootballerObservation obs,
+        in RestartRoutineContext routine,
+        out FootballerCommand command)
+    {
+        command = default;
+        int receiverId = routine.ReceiverId;
+        if (receiverId <= 0) return false;
+
+        IReadOnlyList<PerceivedEntity> visible = obs.VisiblePlayers;
+        for (int i = 0; i < visible.Count; i++)
+        {
+            PerceivedEntity mate = visible[i];
+            if (mate.PlayerId != receiverId || mate.Team != obs.SelfTeam) continue;
+
+            return _generator.TryPlanSetPieceDelivery(obs, mate, out command, out _);
+        }
+
+        return false;
     }
 
     /// <summary>

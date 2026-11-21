@@ -30,7 +30,7 @@ public static class Program
                 return RunHeadlessMatch(playersPerTeam: 5, halfDurationSeconds: 300f, seed: 101UL) ? 0 : 1;
 
             case "--match-11v11":
-                return RunHeadlessMatch(11, 2700f, 20260818UL, trapContracts: !IsOffArgument(args)) ? 0 : 1;
+                return RunHeadlessMatch(11, 2700f, 20260818UL, restartRoutines: !IsOffArgument(args)) ? 0 : 1;
 
             case "--tactical-batch":
                 return RunTacticalComparisonBatch() ? 0 : 1;
@@ -83,6 +83,9 @@ public static class Program
             case "--traps":
                 return RunTrapEvidence(args) ? 0 : 1;
 
+            case "--routines":
+                return RunRestartEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -105,6 +108,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --search [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --switches [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --traps [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --routines [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -120,8 +124,8 @@ public static class Program
 
     /// <summary>
     /// True when the optional argument after a mode is <c>off</c>. Used by the ablation argument of
-    /// <c>--match-11v11</c>: A8.4's <c>off</c> run is the version-49 build exactly, which is how the
-    /// trap-off equivalence is proved against the recorded <c>ai49</c> match.
+    /// <c>--match-11v11</c>: A8.5's <c>off</c> run is the version-50 build exactly, which is how the
+    /// restart-routine-off equivalence is proved against the recorded <c>ai50</c> match.
     /// </summary>
     private static bool IsOffArgument(string[] args) =>
         args.Length > 1 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase);
@@ -2307,7 +2311,7 @@ public static class Program
         int playersPerTeam,
         float halfDurationSeconds,
         ulong seed,
-        bool trapContracts = true)
+        bool restartRoutines = true)
     {
         var config = new PreMatchConfig
         {
@@ -2316,9 +2320,9 @@ public static class Program
             HalfDurationSeconds = halfDurationSeconds,
             HomeProfile = TeamTacticalProfile.PossessionControl,
             AwayProfile = TeamTacticalProfile.DirectCounterattack,
-            // The `off` ablation disables the newest behaviour (A8.4's trap contracts), which is the version-49
+            // The `off` ablation disables the newest behaviour (A8.5's restart routines), which is the version-50
             // build exactly: every earlier feature keeps its shipped default.
-            Ai = new AiRuntimeConfig { EnableTrapContracts = trapContracts }
+            Ai = new AiRuntimeConfig { EnableRestartRoutines = restartRoutines }
         };
 
         var engine = new MatchSimulationEngine(config);
@@ -2394,6 +2398,12 @@ public static class Program
                           + $"{engine.Communication.Calls.ExpiredCount} expired | "
                           + $"{DescribeKindCounts(callCounts)}");
         Console.WriteLine($"Airborne (A5.5)   : {crosses} crosses | {lofted} lofted | {driven} driven executed");
+        RestartCoordinator restarts = engine.Communication.Restarts;
+        Console.WriteLine($"Restart routines  : {restarts.RaisedCount} raised | "
+                          + $"taken {restarts.CountOfEnd(RestartEndReason.Taken)} | "
+                          + $"stolen {restarts.CountOfEnd(RestartEndReason.Stolen)} | "
+                          + $"replaced {restarts.CountOfEnd(RestartEndReason.Replaced)} | "
+                          + $"expired {restarts.CountOfEnd(RestartEndReason.Expired)}");
         Console.WriteLine($"Events Logged     : {engine.Rules.Events.Count}");
 
         return completed;
@@ -3576,6 +3586,276 @@ public static class Program
                $"roles S{seedScreener}/P{seedPresser}/C{seedCover}, screens chosen {seedScreenChosen}";
         return completed;
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // A8.5 -- the small library of legal restart routines.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Same-seed A/B evidence for A8.5's restart routines: every restart the match awards is played by the
+    /// routine the restarting team elected (short to the support, or delivered to the target) in the ON build, and
+    /// by the taker's own pre-A8.5 heuristic in the OFF build. The probe reports the routine census (kind, option,
+    /// ending), how often the taker actually played the named receiver, the restarts awarded, and the ordinary
+    /// match totals so the effect is readable rather than asserted.
+    /// </summary>
+    private static bool RunRestartEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A8.5 restart-routine evidence: same-seed A/B, {seedCount} seeds x " +
+                          $"{halfSeconds * 2f:F0} s -- routines on vs off ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Routine model      : while the rules engine has a restart armed, the restarting team");
+        Console.WriteLine("                     elects one routine from a two-option lawful menu - the SHORT option to");
+        Console.WriteLine("                     the support player's feet, or DELIVER to a target further up - with the");
+        Console.WriteLine("                     support and the target named as roles. The choice is a bounded weight");
+        Console.WriteLine("                     (space, shortness, progression) plus the profile's own directness (A6.5b's");
+        Console.WriteLine("                     short-distribution preference for a goal kick). Law 11 is the gate: for the");
+        Console.WriteLine("                     restarts that are not offside-exempt (kick-off, free kick, indirect free");
+        Console.WriteLine("                     kick) a receiver must be onside by the believed line every pass keeps.");
+        Console.WriteLine("                     The rules engine keeps placement, taker and restart state; the taker still");
+        Console.WriteLine("                     plans the delivery (A4.9) and falls back to his own heuristic if the named");
+        Console.WriteLine("                     receiver cannot be delivered to. The routine ends once - taken, stolen,");
+        Console.WriteLine("                     replaced, expired, taker/participant lost or reset - so it never survives");
+        Console.WriteLine("                     into unrelated possession.");
+        Console.WriteLine($"Routines ON        : {new AiRuntimeConfig { EnableRestartRoutines = true }.Describe()}");
+        Console.WriteLine($"Routines OFF       : {new AiRuntimeConfig { EnableRestartRoutines = false }.Describe()}");
+        Console.WriteLine();
+
+        var on = new RestartEvidenceTotals();
+        var off = new RestartEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunRestartMatch(seed, halfSeconds, routines: true, on, out string onLine);
+            bool completedOff = RunRestartMatch(seed, halfSeconds, routines: false, off, out string offLine);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-34}{"ON",12}{"OFF",12}{"DELTA",12}");
+        Console.WriteLine($"{"completed matches",-34}{on.Matches,12}{off.Matches,12}{on.Matches - off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-34}{on.Ticks,12}{off.Ticks,12}{on.Ticks - off.Ticks,12}");
+        Console.WriteLine($"{"restart events logged",-34}{on.Restarts,12}{off.Restarts,12}{on.Restarts - off.Restarts,12}");
+        Console.WriteLine($"{"routines raised",-34}{on.Raised,12}{off.Raised,12}{on.Raised - off.Raised,12}");
+        Console.WriteLine($"{"routine ticks",-34}{on.RoutineTicks,12}{off.RoutineTicks,12}{on.RoutineTicks - off.RoutineTicks,12}");
+        Console.WriteLine($"{"  kickoff",-34}{on.Kickoff,12}{off.Kickoff,12}{on.Kickoff - off.Kickoff,12}");
+        Console.WriteLine($"{"  throw-in",-34}{on.ThrowIn,12}{off.ThrowIn,12}{on.ThrowIn - off.ThrowIn,12}");
+        Console.WriteLine($"{"  goal kick",-34}{on.GoalKick,12}{off.GoalKick,12}{on.GoalKick - off.GoalKick,12}");
+        Console.WriteLine($"{"  corner",-34}{on.Corner,12}{off.Corner,12}{on.Corner - off.Corner,12}");
+        Console.WriteLine($"{"  free kick",-34}{on.FreeKick,12}{off.FreeKick,12}{on.FreeKick - off.FreeKick,12}");
+        Console.WriteLine($"{"  indirect free kick",-34}{on.IndirectFreeKick,12}{off.IndirectFreeKick,12}{on.IndirectFreeKick - off.IndirectFreeKick,12}");
+        Console.WriteLine($"{"  option Short",-34}{on.Short,12}{off.Short,12}{on.Short - off.Short,12}");
+        Console.WriteLine($"{"  option Deliver",-34}{on.Deliver,12}{off.Deliver,12}{on.Deliver - off.Deliver,12}");
+        Console.WriteLine($"{"routines taken",-34}{on.Taken,12}{off.Taken,12}{on.Taken - off.Taken,12}");
+        Console.WriteLine($"{"routines stolen",-34}{on.Stolen,12}{off.Stolen,12}{on.Stolen - off.Stolen,12}");
+        Console.WriteLine($"{"routines replaced",-34}{on.Replaced,12}{off.Replaced,12}{on.Replaced - off.Replaced,12}");
+        Console.WriteLine($"{"routines expired",-34}{on.Expired,12}{off.Expired,12}{on.Expired - off.Expired,12}");
+        Console.WriteLine($"{"taker decisions",-34}{on.TakerDecisions,12}{off.TakerDecisions,12}{on.TakerDecisions - off.TakerDecisions,12}");
+        Console.WriteLine($"{"taker played the receiver",-34}{on.TakerApplied,12}{off.TakerApplied,12}{on.TakerApplied - off.TakerApplied,12}");
+        Console.WriteLine($"{"goal-kick keeper decisions",-34}{on.GoalKickDecisions,12}{off.GoalKickDecisions,12}{on.GoalKickDecisions - off.GoalKickDecisions,12}");
+        Console.WriteLine($"{"goal-kick keeper played it",-34}{on.GoalKickApplied,12}{off.GoalKickApplied,12}{on.GoalKickApplied - off.GoalKickApplied,12}");
+        Console.WriteLine($"{"passes attempted",-34}{on.PassesAttempted,12}{off.PassesAttempted,12}{on.PassesAttempted - off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-34}{on.PassesCompleted,12}{off.PassesCompleted,12}{on.PassesCompleted - off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-34}{on.Shots,12}{off.Shots,12}{on.Shots - off.Shots,12}");
+        Console.WriteLine($"{"offside offences",-34}{on.Offside,12}{off.Offside,12}{on.Offside - off.Offside,12}");
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool routinesLive = on.Raised > 0 && on.Taken > 0 && on.RoutineTicks > 0;
+        bool takerReached = on.TakerDecisions > 0 && on.TakerApplied > 0;
+        bool neutralOff = off.Raised == 0 && off.RoutineTicks == 0 && off.TakerDecisions == 0 &&
+                          off.GoalKickDecisions == 0;
+        bool ok = completeBoth && routinesLive && takerReached && neutralOff;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the routine build raises and takes routines for every restart the match awards," +
+              " the taker plays the receiver the routine named, and the version-50 build raises none; both" +
+              " finished every seed"
+            : "RESULT: FAIL -- incomplete matches, no routine raised or taken, a taker that never played the" +
+              " routine's receiver, or the routine did not neutralize with the feature off");
+        return ok;
+    }
+
+    /// <summary>One A8.5 probe variant's accumulators.</summary>
+    private sealed class RestartEvidenceTotals
+    {
+        public int Matches;
+        public long Ticks;
+        public long Restarts;
+        public long Raised;
+        public long RoutineTicks;
+        public long Kickoff;
+        public long ThrowIn;
+        public long GoalKick;
+        public long Corner;
+        public long FreeKick;
+        public long IndirectFreeKick;
+        public long Short;
+        public long Deliver;
+        public long Taken;
+        public long Stolen;
+        public long Replaced;
+        public long Expired;
+        public long TakerDecisions;
+        public long TakerApplied;
+        public long GoalKickDecisions;
+        public long GoalKickApplied;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long Offside;
+    }
+
+    /// <summary>Runs one A8.5 probe match and folds it into <paramref name="totals"/>.</summary>
+    private static bool RunRestartMatch(
+        ulong seed,
+        float halfSeconds,
+        bool routines,
+        RestartEvidenceTotals totals,
+        out string line)
+    {
+        var ai = new AiRuntimeConfig { EnableRestartRoutines = routines };
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        long seedRoutineTicks = 0;
+        long seedKickoff = 0;
+        long seedThrowIn = 0;
+        long seedGoalKick = 0;
+        long seedCorner = 0;
+        long seedFreeKick = 0;
+        long seedIndirectFreeKick = 0;
+        long seedShort = 0;
+        long seedDeliver = 0;
+        long seedTakerDecisions = 0;
+        long seedTakerApplied = 0;
+        long seedGoalKickDecisions = 0;
+        long seedGoalKickApplied = 0;
+        int lastRoutineId = 0;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+
+            RestartCoordinator board = engine.Communication.Restarts;
+            if (board.TryGetLive(engine.CurrentTick, out RestartRoutine routine))
+            {
+                seedRoutineTicks++;
+
+                // Count each routine once, by the kind and option it was raised with.
+                if (routine.RoutineId != lastRoutineId)
+                {
+                    lastRoutineId = routine.RoutineId;
+                    switch (routine.Kind)
+                    {
+                        case RestartKind.Kickoff: seedKickoff++; break;
+                        case RestartKind.ThrowIn: seedThrowIn++; break;
+                        case RestartKind.GoalKick: seedGoalKick++; break;
+                        case RestartKind.CornerKick: seedCorner++; break;
+                        case RestartKind.FreeKick: seedFreeKick++; break;
+                        case RestartKind.IndirectFreeKick: seedIndirectFreeKick++; break;
+                    }
+
+                    if (routine.Option == RestartOption.Short) seedShort++;
+                    else if (routine.Option == RestartOption.Deliver) seedDeliver++;
+                }
+            }
+
+            // Did the participant actually play what the routine asked? Read from the observation the decision
+            // used and the command it produced, so this cannot be a board-only claim.
+            foreach (FootballerState player in engine.Players)
+            {
+                if (!player.IsActiveOnPitch) continue;
+                FootballerObservation? observation = engine.GetLastObservation(player.Id);
+                if (observation is null || !observation.Routine.IsTaker) continue;
+
+                if (engine.GetController(player.Id) is TacticalUtilityAiController controller)
+                {
+                    seedTakerDecisions++;
+                    if (player.LastCommand.IntendedReceiverId == observation.Routine.ReceiverId)
+                        seedTakerApplied++;
+                }
+                else if (engine.GetController(player.Id) is GoalkeeperController keeper)
+                {
+                    seedGoalKickDecisions++;
+                    if (keeper.LastDistribution.Kind != GoalkeeperDistributionKind.None &&
+                        keeper.LastDistribution.ReceiverId == observation.Routine.ReceiverId)
+                    {
+                        seedGoalKickApplied++;
+                    }
+                }
+            }
+        }
+
+        RestartCoordinator routinesBoard = engine.Communication.Restarts;
+        var analytics = engine.Analytics;
+        totals.Ticks += engine.CurrentTick;
+        totals.Restarts += engine.Rules.Events.Count(e => IsRestartEvent(e.EventType));
+        totals.Raised += routinesBoard.RaisedCount;
+        totals.RoutineTicks += seedRoutineTicks;
+        totals.Kickoff += seedKickoff;
+        totals.ThrowIn += seedThrowIn;
+        totals.GoalKick += seedGoalKick;
+        totals.Corner += seedCorner;
+        totals.FreeKick += seedFreeKick;
+        totals.IndirectFreeKick += seedIndirectFreeKick;
+        totals.Short += seedShort;
+        totals.Deliver += seedDeliver;
+        totals.Taken += routinesBoard.CountOfEnd(RestartEndReason.Taken);
+        totals.Stolen += routinesBoard.CountOfEnd(RestartEndReason.Stolen);
+        totals.Replaced += routinesBoard.CountOfEnd(RestartEndReason.Replaced);
+        totals.Expired += routinesBoard.CountOfEnd(RestartEndReason.Expired);
+        totals.TakerDecisions += seedTakerDecisions;
+        totals.TakerApplied += seedTakerApplied;
+        totals.GoalKickDecisions += seedGoalKickDecisions;
+        totals.GoalKickApplied += seedGoalKickApplied;
+        totals.PassesAttempted += analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        totals.PassesCompleted += analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        totals.Shots += analytics.HomeShots + analytics.AwayShots;
+        totals.Offside += engine.Rules.Events.Count(e => e.Details.Contains("Offside against"));
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.Matches++;
+
+        line = $"{engine.CurrentTick} ticks, score {analytics.HomeGoals}-{analytics.AwayGoals}, passes " +
+               $"{analytics.HomePassesAttempted}/{analytics.AwayPassesAttempted} attempted, shots " +
+               $"{analytics.HomeShots}/{analytics.AwayShots}, " +
+               $"restart events {engine.Rules.Events.Count(e => IsRestartEvent(e.EventType))}, " +
+               $"routines {routinesBoard.RaisedCount} " +
+               $"(K{seedKickoff}/T{seedThrowIn}/G{seedGoalKick}/C{seedCorner}/F{seedFreeKick}/I{seedIndirectFreeKick}," +
+               $" short {seedShort}/deliver {seedDeliver}, taken {routinesBoard.CountOfEnd(RestartEndReason.Taken)}, " +
+               $"stolen {routinesBoard.CountOfEnd(RestartEndReason.Stolen)}, " +
+               $"replaced {routinesBoard.CountOfEnd(RestartEndReason.Replaced)}), taker played the receiver " +
+               $"{seedTakerApplied}/{seedTakerDecisions}, goal-kick keeper played it {seedGoalKickApplied}/{seedGoalKickDecisions}";
+        return completed;
+    }
+
+    /// <summary>True for the rules events that award one of the restarts A8.5 has a routine for.</summary>
+    private static bool IsRestartEvent(string eventType) => eventType is
+        "Kickoff" or "ThrowIn" or "GoalKick" or "CornerKick" or "FreeKick";
 
     /// <summary>
     /// Multi-seed tactical report and gate (audit F23).

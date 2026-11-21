@@ -110,6 +110,29 @@ public static class OffsideTactics
         if (believed >= 2 && float.IsFinite(secondBest)) secondLastOpponentProj = secondBest;
 
         float ballProj = obs.PerceivedBallPosition.X * obs.AttackingDirectionX;
-        return MathF.Max(0f, MathF.Max(secondLastOpponentProj, ballProj));
+        return LineProjX(secondLastOpponentProj, ballProj);
     }
+
+    /// <summary>
+    /// The same line from a team-level <see cref="TeamBelief"/> picture rather than one player's observation
+    /// (A8.5). A restart routine is a team election, so it must draw the line from the picture the team shares —
+    /// the same second-last believed opponent every player's own line is built from — never from live opponent
+    /// state. One formula (<see cref="LineProjX"/>) serves both readers, so a routine and a pass can never
+    /// disagree about whether the same receiver is onside.
+    /// </summary>
+    public static float BelievedLineProjX(
+        TeamBelief belief,
+        float attackingDirectionX,
+        float ballProjX,
+        float fallbackProjX)
+    {
+        float secondLastOpponentProj = belief.TryGetSecondLastProjX(attackingDirectionX, out float projection)
+            ? projection
+            : fallbackProjX;
+        return LineProjX(secondLastOpponentProj, ballProjX);
+    }
+
+    /// <summary>One offside line: never behind the goal line, never behind the ball.</summary>
+    private static float LineProjX(float secondLastOpponentProj, float ballProjX) =>
+        MathF.Max(0f, MathF.Max(secondLastOpponentProj, ballProjX));
 }

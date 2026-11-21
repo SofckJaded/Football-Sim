@@ -643,6 +643,22 @@ public sealed class MatchSimulationEngine
                 humanPlayerId, -homeDirX, _config.AwayProfile.Compactness01, _pitch, CurrentTick,
                 _config.Ai.EnableTrapContracts);
 
+            // A8.5: one restart routine, elected once while the rules engine has a restart armed. Read after the
+            // rules engine has armed (or consumed) this tick's restart and before any observation is built, so
+            // every participant sees the same routine and the designated taker can play it on this tick. The
+            // election uses the restarting team's own exact positions, its shared belief of the opponents and the
+            // rules engine's own restart state — the rules engine keeps the placement, the taker and the phase.
+            TeamId restartTeam = _rulesEngine.RestartTeam;
+            _communication.Restarts.Update(
+                restartTeam, _rulesEngine.ActiveRestart,
+                new Vector2(Ball.Position.X, Ball.Position.Z),
+                _rulesEngine.DesignatedSetPieceTakerId, _players,
+                restartTeam == TeamId.Home ? _homeBelief : _awayBelief,
+                restartTeam == TeamId.Home ? _config.HomeProfile : _config.AwayProfile,
+                humanPlayerId, restartTeam == TeamId.Home ? homeDirX : -homeDirX, _pitch,
+                Ball.LastTouchedByPlayerId, Ball.LastTouchedByTeam, CurrentTick,
+                _config.Ai.EnableRestartRoutines);
+
             foreach (var p in _players)
             {
                 if (!p.IsActiveOnPitch) continue;
@@ -671,7 +687,11 @@ public sealed class MatchSimulationEngine
                     // A8.4: the short trap this player is part of, if any. Read once here from the match's own
                     // board, like the combination above, so every decision sees the same contract and no scorer
                     // reads the board directly.
-                    _communication.Traps.ContextFor(p.Team, p.Id, CurrentTick));
+                    _communication.Traps.ContextFor(p.Team, p.Id, CurrentTick),
+                    // A8.5: the restart routine this player is part of, if any. Read once here from the match's own
+                    // board for the same reason: the taker's delivery and the keeper's goal-kick distribution both
+                    // read the routine from the observation, never from the board.
+                    _communication.Restarts.ContextFor(p.Team, p.Id, CurrentTick));
                 _latestObservations[p.Id] = obs;
 
                 // A7.2: the player's own shout, decided from the observation he just built. Only an AI
@@ -903,6 +923,9 @@ public sealed class MatchSimulationEngine
             // A8.4: the same rule for a trap role: an inactive player must not keep owning the press, the
             // screen or the cover inside a live contract.
             _communication.Traps.ReleasePlayer(player.Id, CurrentTick);
+            // A8.5: and for a restart routine: an inactive player must not keep owning the taker, support or
+            // target role inside a routine.
+            _communication.Restarts.ReleasePlayer(player.Id, CurrentTick);
             LastAiResetReason = AiResetReason.PlayerRemoved;
             LastAiResetTick = CurrentTick;
         }
@@ -941,6 +964,11 @@ public sealed class MatchSimulationEngine
         // teams, so no trap survives it. Clearing also clears the recovery windows: a new passage is a new
         // chance to trap.
         _communication.Traps.ClearAll(CurrentTick);
+
+        // A8.5: a restart routine belongs to the restart it was elected for, so a reset ends it. When the reset is
+        // a different restart already armed under it, the honest ending is "replaced"; otherwise the world was
+        // simply reset.
+        _communication.Restarts.ClearAll(_rulesEngine.ActiveRestart);
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

@@ -53,6 +53,14 @@ public sealed class MatchCommunicationContext
     /// </summary>
     public AI.TrapCoordinator Traps { get; } = new();
 
+    /// <summary>
+    /// The match's restart-routine board (A8.5). The same match-owned object that carries the human's call,
+    /// A5.3's run advertisements, A7.2's calls, A8.1's contracts and A8.4's traps now carries the small library of
+    /// legal restart routines: which option the restarting team plays, and which team-mates are its taker, support
+    /// and target. One channel, extended — never a second one.
+    /// </summary>
+    public AI.RestartCoordinator Restarts { get; } = new();
+
     public bool HasActiveCall => HumanCallForPassPlayerId.HasValue && HumanCallForPassTimer > 0f;
 
     /// <summary>True when the active call came from <paramref name="team"/>, i.e. is this team's own shout.</summary>

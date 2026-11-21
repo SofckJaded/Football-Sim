@@ -302,6 +302,22 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableTrapContracts { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.5 — the small library of legal restart routines. While the rules engine has a restart armed, the
+    // restarting team elects one routine from a two-option lawful menu (short to the support, or deliver to the
+    // target) and the taker plays it. See RestartCoordinator / RestartPolicy.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the restarting team elects a restart routine (A8.5). <b>On by default</b>: this is the behaviour the
+    /// version ships, and the field exists so A9.2 can ablate the mechanism and so the evidence probe can run the
+    /// same worlds with it off. Off means the restart board never raises anything, every observation's
+    /// <see cref="FootballerObservation.Routine"/> is neutral, and no taker or keeper distribution is touched — the
+    /// version-50 build exactly, which is what makes the A/B two builds rather than two tunings of the same
+    /// decision.
+    /// </summary>
+    public bool EnableRestartRoutines { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -321,7 +337,8 @@ public sealed class AiRuntimeConfig
         $"combinations({(EnableCombinations ? "on" : "off")}) " +
         $"search({(EnableShallowSearch ? "on" : "off")}) " +
         $"switchrec({(EnableSwitchRecognition ? "on" : "off")}) " +
-        $"traps({(EnableTrapContracts ? "on" : "off")})";
+        $"traps({(EnableTrapContracts ? "on" : "off")}) " +
+        $"routines({(EnableRestartRoutines ? "on" : "off")})";
 }
 
 /// <summary>

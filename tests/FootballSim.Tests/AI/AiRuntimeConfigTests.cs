@@ -395,6 +395,18 @@ public sealed class AiRuntimeConfigTests
         AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableTrapContracts = false });
     }
 
+    [Fact]
+    public void RestartRoutinesDefault_IsOnAndStatedInTheDescription()
+    {
+        // A8.5 ships the restart routines on: the field is the A9.2 ablation and the --routines A/B, not a hidden
+        // guard. Off is the version-50 build exactly, so it is a supported configuration rather than an error.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableRestartRoutines);
+        Assert.Contains("routines(on)", defaults.Describe());
+        Assert.Contains("routines(off)", new AiRuntimeConfig { EnableRestartRoutines = false }.Describe());
+        AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableRestartRoutines = false });
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {
