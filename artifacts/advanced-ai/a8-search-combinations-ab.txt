@@ -1,0 +1,49 @@
+﻿=== A8.1 combination evidence: same-seed A/B, 3 seeds x 1200 s -- one-two/third-player contracts on vs off ===
+Simulation version : ai48-rs1
+Contract model     : initiator's pass commits a return region, meeting tick and confidence;
+                     participants hear it after the communication delay; a one-two's initiator
+                     runs the frozen region and the continuation pass is timed to it; a third-player
+                     contract values the layoff to the runner's advertised run. No candidate, reach,
+                     sight or contact rule is added - only bounded preferences and the contract itself.
+Combinations ON    : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on)
+Combinations OFF   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(off) search(on)
+
+Seed 20260818:
+  ON  : FT        | 72343 ticks, score 0-0, passes 273/283 attempted, shots 15/5, contracts 354 published / 77 continued
+  OFF : FT        | 72199 ticks, score 0-0, passes 256/235 attempted, shots 14/10, contracts 0 published / 0 continued
+Seed 20268737:
+  ON  : FT        | 72247 ticks, score 0-0, passes 289/232 attempted, shots 9/9, contracts 322 published / 53 continued
+  OFF : FT        | 72355 ticks, score 2-0, passes 223/230 attempted, shots 22/11, contracts 0 published / 0 continued
+Seed 20276656:
+  ON  : FT        | 72275 ticks, score 1-1, passes 256/245 attempted, shots 17/9, contracts 308 published / 45 continued
+  OFF : FT        | 72215 ticks, score 0-0, passes 224/237 attempted, shots 9/7, contracts 0 published / 0 continued
+
+=== Totals over 3 seeds ===
+metric                                ON         OFF
+completed matches                      3           3
+live ticks                        216865      216769
+passes attempted                    1578        1405
+passes completed                    1282        1151
+shots                                 64          73
+contracts published                  984           0
+continuations executed               175           0
+duplicate proposals suppressed          22           0
+live at full time                      0           0
+
+Published by kind:
+  OneTwo                         927           0
+  ThirdPlayer                     57           0
+Continuations by kind:
+  OneTwo                         170           0
+  ThirdPlayer                      5           0
+Endings by reason (ON):
+  Continued                       60
+  Expired                         27
+  PossessionEnded                154
+  Replaced                        40
+  AbandonedByInitiator           370
+  AbandonedByReceiver            296
+  AbandonedByThirdRunner          20
+  Reset                           17
+
+RESULT: PASS -- the build with combinations on creates one-two/third-player contracts and executes continuations while the build with them off creates none; both finished every seed
