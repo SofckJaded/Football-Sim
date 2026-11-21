@@ -74,6 +74,9 @@ public static class Program
             case "--combinations":
                 return RunCombinationEvidence(args) ? 0 : 1;
 
+            case "--search":
+                return RunShallowSearchEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -93,6 +96,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --cognitive [seeds] [halfSeconds] [on|off]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --archetypes [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --combinations [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --search [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -2893,9 +2897,10 @@ public static class Program
         float halfSeconds,
         bool enabled,
         CombinationEvidenceTotals totals,
-        out string line)
+        out string line,
+        bool search = true)
     {
-        var ai = new AiRuntimeConfig { EnableCombinations = enabled };
+        var ai = new AiRuntimeConfig { EnableCombinations = enabled, EnableShallowSearch = search };
         var engine = new MatchSimulationEngine(new PreMatchConfig
         {
             Seed = seed,
@@ -2940,6 +2945,122 @@ public static class Program
                $"{analytics.HomeShots}/{analytics.AwayShots}, contracts {contracts.PublishedCount} published " +
                $"/ {contracts.ContinuedCount} continued";
         return completed;
+    }
+
+    /// <summary>
+    /// A8.2 evidence: <b>the shallow continuation search</b>, measured as a same-seed A/B inside the
+    /// combination build (combinations on in both runs), between the default build and the build with
+    /// <see cref="AiRuntimeConfig.EnableShallowSearch"/> off.
+    ///
+    /// The off run is the version-47 build exactly, so the difference the columns show is the search and
+    /// nothing else: both builds form one-two and third-player contracts from A8.1's heuristic, and the on
+    /// build additionally examines the best three first actions with at most three continuations each before
+    /// choosing the promise.
+    ///
+    /// What the columns are, and the consumer each one proves is live:
+    /// <list type="bullet">
+    /// <item><b>contracts published</b> - promises the carrier actually committed to;</item>
+    /// <item><b>continuations executed</b> - the first receiver played the continuation ball while the
+    /// contract was live, attributed from the executed kick contact. This is the exit gate's "useful
+    /// continuations", and the A/B's claim is that the search increases them;</item>
+    /// <item><b>endings by reason</b> - why contracts died, so the search's promises are shown to be live
+    /// promises that end, not a counter that only grows;</item>
+    /// <item><b>passes, shots, ticks</b> - the aggregate match the contracts ran in.</item>
+    /// </list>
+    ///
+    /// The verdict does not require the aggregate match numbers to be "better" (A9 owns tuning); it requires
+    /// both builds to complete every seed, the search build to create and actually execute continuations, and
+    /// the search build to execute <b>more</b> of them than the build with it off.
+    /// </summary>
+    private static bool RunShallowSearchEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A8.2 shallow continuation search: same-seed A/B, {seedCount} seeds x " +
+                          $"{halfSeconds * 2f:F0} s -- search on vs search off (combinations on in both) ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Search model       : the carrier examines the best three eligible pass receivers and, from");
+        Console.WriteLine("                     its own observation, at most three continuations each -- two one-two");
+        Console.WriteLine("                     return regions (deep and short) and the best advertised layoff -- to depth");
+        Console.WriteLine("                     two. Defender sighting uncertainty widens the second ball's lane; there is");
+        Console.WriteLine("                     no truth-state rollout. The heuristic still covers receivers outside the");
+        Console.WriteLine("                     bounded search, so the switch adds a choice rather than replacing play.");
+        Console.WriteLine($"Search ON          : {new AiRuntimeConfig { EnableCombinations = true, EnableShallowSearch = true }.Describe()}");
+        Console.WriteLine($"Search OFF         : {new AiRuntimeConfig { EnableCombinations = true, EnableShallowSearch = false }.Describe()}");
+        Console.WriteLine();
+
+        var on = new CombinationEvidenceTotals();
+        var off = new CombinationEvidenceTotals();
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            ulong seed = 20260818UL + (ulong)seedIndex * 7919UL;
+            bool completedOn = RunCombinationMatch(seed, halfSeconds, enabled: true, on, out string onLine,
+                search: true);
+            bool completedOff = RunCombinationMatch(seed, halfSeconds, enabled: true, off, out string offLine,
+                search: false);
+            Console.WriteLine($"Seed {seed}:");
+            Console.WriteLine($"  ON  : {(completedOn ? "FT       " : "INCOMPLETE")} | {onLine}");
+            Console.WriteLine($"  OFF : {(completedOff ? "FT       " : "INCOMPLETE")} | {offLine}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"=== Totals over {seedCount} seeds ===");
+        if (on.Matches == 0 || off.Matches == 0)
+        {
+            Console.WriteLine("No completed match to measure.");
+            return false;
+        }
+
+        Console.WriteLine($"{"metric",-28}{"ON",12}{"OFF",12}{"DELTA",12}");
+        Console.WriteLine($"{"completed matches",-28}{on.Matches,12}{off.Matches,12}{on.Matches - off.Matches,12}");
+        Console.WriteLine($"{"live ticks",-28}{on.Ticks,12}{off.Ticks,12}{on.Ticks - off.Ticks,12}");
+        Console.WriteLine($"{"passes attempted",-28}{on.PassesAttempted,12}{off.PassesAttempted,12}{on.PassesAttempted - off.PassesAttempted,12}");
+        Console.WriteLine($"{"passes completed",-28}{on.PassesCompleted,12}{off.PassesCompleted,12}{on.PassesCompleted - off.PassesCompleted,12}");
+        Console.WriteLine($"{"shots",-28}{on.Shots,12}{off.Shots,12}{on.Shots - off.Shots,12}");
+        Console.WriteLine($"{"contracts published",-28}{on.Published,12}{off.Published,12}{on.Published - off.Published,12}");
+        Console.WriteLine($"{"continuations executed",-28}{on.Continued,12}{off.Continued,12}{on.Continued - off.Continued,12}");
+        Console.WriteLine($"{"duplicate proposals suppressed",-28}{on.Suppressed,12}{off.Suppressed,12}{on.Suppressed - off.Suppressed,12}");
+        Console.WriteLine($"{"live at full time",-28}{on.LiveAtEnd,12}{off.LiveAtEnd,12}{on.LiveAtEnd - off.LiveAtEnd,12}");
+
+        Console.WriteLine();
+        Console.WriteLine("Published by kind:");
+        for (int kind = 1; kind < CombinationKindCount; kind++)
+        {
+            long delta = on.PublishedByKind[kind] - off.PublishedByKind[kind];
+            Console.WriteLine($"  {((CombinationKind)kind),-22}{on.PublishedByKind[kind],12}{off.PublishedByKind[kind],12}{delta,12}");
+        }
+
+        Console.WriteLine("Continuations by kind:");
+        for (int kind = 1; kind < CombinationKindCount; kind++)
+        {
+            long delta = on.ContinuedByKind[kind] - off.ContinuedByKind[kind];
+            Console.WriteLine($"  {((CombinationKind)kind),-22}{on.ContinuedByKind[kind],12}{off.ContinuedByKind[kind],12}{delta,12}");
+        }
+
+        Console.WriteLine("Endings by reason (ON / OFF):");
+        for (int reason = 1; reason < CombinationEndReasonCount; reason++)
+        {
+            if (on.EndedByReason[reason] == 0 && off.EndedByReason[reason] == 0) continue;
+            Console.WriteLine($"  {((CombinationEndReason)reason),-22}{on.EndedByReason[reason],12}{off.EndedByReason[reason],12}");
+        }
+
+        bool completeBoth = on.Matches == seedCount && off.Matches == seedCount;
+        bool searchLive = on.Published > 0 && on.Continued > 0;
+        bool moreContinuations = on.Continued > off.Continued;
+        bool ok = completeBoth && searchLive && moreContinuations;
+
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- the search build creates and executes more continuations than the build with the" +
+              " search off, and both finished every seed"
+            : "RESULT: FAIL -- incomplete matches, no live continuation in the search build, or the search build" +
+              " did not execute more continuations than the build with it off");
+        return ok;
     }
 
     private sealed class CombinationEvidenceTotals

@@ -255,6 +255,25 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableCombinations { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A8.2 — the shallow continuation search. From the carrier's own perceived state, score the best few
+    // first actions and at most a few continuations each, to depth two. See ShallowActionSearch.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the carrier runs A8.2's shallow search to choose which continuation is worth a contract.
+    /// <b>On by default</b>: this is the behaviour the version ships. The field exists so A9.2 can ablate the
+    /// search and so the evidence probe can run the same worlds with it off — and with it off the A8.1
+    /// heuristic trigger is exactly the previous build, which is what makes the A/B two builds rather than two
+    /// tunings of the same decision.
+    ///
+    /// The switch does not gate combinations: <see cref="EnableCombinations"/> off is still the pre-A8 build.
+    /// With combinations on and this off, the carrier forms contracts from A8.1's pressure/geometry heuristic
+    /// alone. With both on, the search proposes for the best few first actions and the heuristic still covers
+    /// every receiver the bounded search did not examine.
+    /// </summary>
+    public bool EnableShallowSearch { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -271,7 +290,8 @@ public sealed class AiRuntimeConfig
         $"reception({(EnableReceptionPlanning ? "on" : "off")}) " +
         $"cognitive({(EnableCognitiveError ? "on" : "off")}) " +
         $"archetypes({(EnableArchetypes ? "on" : "off")}) " +
-        $"combinations({(EnableCombinations ? "on" : "off")})";
+        $"combinations({(EnableCombinations ? "on" : "off")}) " +
+        $"search({(EnableShallowSearch ? "on" : "off")})";
 }
 
 /// <summary>

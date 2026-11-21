@@ -238,10 +238,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     internal const float OneTwoReceiverPressureMeters = 5.5f;
 
     /// <summary>How far up the pitch the return region is placed from the initiator, in metres.</summary>
-    internal const float OneTwoReturnForwardMeters = 8f;
+    public const float OneTwoReturnForwardMeters = 8f;
 
     /// <summary>How far sideways (toward the receiver's side) the return region is placed, in metres.</summary>
-    internal const float OneTwoReturnLateralMeters = 2.5f;
+    public const float OneTwoReturnLateralMeters = 2.5f;
 
     /// <summary>Shortest progression the return region must offer for the move to be worth making, in metres.</summary>
     internal const float OneTwoMinProgressionMeters = 5f;
@@ -320,6 +320,9 @@ public sealed class CandidateGenerator : IAiStateResettable
     private readonly MatchCommunicationContext? _communication;
     private readonly PassPlanner _passPlanner;
     private readonly PassSuccessModel _passSuccess;
+    // A8.2: the shallow continuation search. Owned here because it is the carrier's own examination of its
+    // own pass options; it reads the same pass planner and success model the decision prices with.
+    private readonly ShallowActionSearch _search;
     private readonly ReceptionValueModel _receptionValue;
     private readonly ReceptionPlanner _receptionPlanner;
     private readonly RunCandidateGenerator _runs;
@@ -381,6 +384,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _ai = ai ?? AiRuntimeConfig.Default;
         _passPlanner = new PassPlanner(pitch);
         _passSuccess = new PassSuccessModel(_passPlanner);
+        _search = new ShallowActionSearch(pitch, _passPlanner, _passSuccess);
         _receptionValue = new ReceptionValueModel(pitch);
         _receptionPlanner = new ReceptionPlanner(pitch);
         // A5.3: the runs this player adopts are announced on the match's own communication board (null
@@ -662,6 +666,13 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         RankPassTargets(obs, ballXZ, offsideLineProjX, humanCalled);
 
+        // A8.2: the shallow search examines the best few first actions from the carrier's own picture and
+        // fills the proposal table before the pass candidates are priced. Receivers it did not propose for
+        // keep A8.1's heuristic trigger below, so the search is a bounded improvement on the best options
+        // rather than a replacement that silences the rest of the pass set.
+        if (_ai.EnableCombinations && _ai.EnableShallowSearch)
+            RunCombinationSearch(obs, ballXZ, offsideLineProjX);
+
         int loftedBudget = MaxLoftedCandidates;
         for (int index = 0; index < _passTargetCount; index++)
         {
@@ -715,15 +726,25 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
         else
         {
-            // A8.1: what combination, if any, this pass could start. Computed once per receiver so the
+            // A8.1/A8.2: what combination, if any, this pass could start. Computed once per receiver so the
             // candidate that wins publishes exactly the contract it was priced with — and only a winning
             // pass creates a contract, never every pass that was merely considered.
+            //
+            // A8.2: the shallow search has already proposed for the first actions it examined; those
+            // proposals are used as they stand. Every other receiver — and every receiver at all with the
+            // search off — falls through to A8.1's heuristic trigger, which is unchanged.
             float combinationPreference = 0f;
-            if (_ai.EnableCombinations &&
-                TryBuildCombinationProposal(obs, mate, ballXZ, selfXZ, offsideLineProjX, rawDistance, out CombinationProposal proposal))
+            if (_ai.EnableCombinations)
             {
-                combinationPreference = CombinationInitiationBonus * proposal.Confidence01;
-                RememberCombinationProposal(proposal);
+                if (!TryGetCombinationProposal(mate.PlayerId, out CombinationProposal proposal) &&
+                    TryBuildCombinationProposal(obs, mate, ballXZ, selfXZ, offsideLineProjX, rawDistance,
+                        out proposal))
+                {
+                    RememberCombinationProposal(proposal);
+                }
+
+                if (TryGetCombinationProposal(mate.PlayerId, out proposal))
+                    combinationPreference = CombinationInitiationBonus * proposal.Confidence01;
             }
 
             var feet = new PassOption(
@@ -1268,9 +1289,40 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     // ---------------------------------------------------------------------------------------------
     // A8.1 — bounded combinations: the proposal behind a pass, the receiver's continuation and the
-    // initiator's return run. The contract itself (delay, expiry, capacity, lifecycle) is owned by
+    // initiator's return run. A8.2 — the shallow search that chooses among a few continuations from the
+    // carrier's own picture. The contract itself (delay, expiry, capacity, lifecycle) is owned by
     // CombinationCoordinator; this section only decides what is worth offering and what the options cost.
     // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A8.2: runs the shallow search over the decision's ranked pass targets and remembers one proposal per
+    /// examined first action, in A8.1's own proposal shape. The search decides which continuation is worth a
+    /// promise (see <see cref="ShallowActionSearch"/>); this method only moves its answer into the table the
+    /// pass candidates read, so the carrier's choice stays the one A4 scorer it has always been.
+    /// </summary>
+    private void RunCombinationSearch(in FootballerObservation obs, Vector2 ballXZ, float offsideLineProjX)
+    {
+        _search.Search(
+            obs,
+            _passTargetIds.AsSpan(0, _passTargetCount),
+            ballXZ,
+            offsideLineProjX,
+            _communication?.Runs);
+
+        for (int index = 0; index < _search.ProposalCount; index++)
+        {
+            ShallowContinuation proposal = _search.ProposalAt(index);
+            RememberCombinationProposal(new CombinationProposal(
+                proposal.Kind,
+                proposal.ReceiverId,
+                proposal.ThirdPlayerId,
+                proposal.RegionXZ,
+                proposal.RegionRadiusMeters,
+                proposal.ArrivalTick,
+                proposal.Confidence01));
+        }
+    }
+
 
     /// <summary>
     /// Works out what combination — if any — a pass to <paramref name="mate"/> could start, from this
@@ -1340,13 +1392,17 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (carrierPressure > OneTwoCarrierPressureMeters && receiverPressure > OneTwoReceiverPressureMeters)
             return false;
 
-        float lateralSign = MathF.Abs(mateXZ.Y - selfXZ.Y) > 0.5f ? MathF.Sign(mateXZ.Y - selfXZ.Y) : 0f;
-        Vector2 region = new(
-            selfXZ.X + obs.AttackingDirectionX * OneTwoReturnForwardMeters,
-            selfXZ.Y + lateralSign * OneTwoReturnLateralMeters);
+        // A8.2: one region formula, shared with the shallow search — the search's deeper examination and this
+        // heuristic must place the same promise in the same place, or the two would disagree about the move.
+        Vector2 region = ShallowActionSearch.OneTwoRegion(
+            selfXZ, mateXZ, obs.AttackingDirectionX, OneTwoReturnForwardMeters, OneTwoReturnLateralMeters);
         region = new Vector2(
-            Math.Clamp(region.X, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f),
-            Math.Clamp(region.Y, -_pitch.HalfWidth + 2.5f, _pitch.HalfWidth - 2.5f));
+            Math.Clamp(region.X,
+                -_pitch.HalfLength + ShallowActionSearch.ReturnRegionPitchMarginX,
+                _pitch.HalfLength - ShallowActionSearch.ReturnRegionPitchMarginX),
+            Math.Clamp(region.Y,
+                -_pitch.HalfWidth + ShallowActionSearch.ReturnRegionPitchMarginY,
+                _pitch.HalfWidth - ShallowActionSearch.ReturnRegionPitchMarginY));
 
         float progression = (region.X - selfXZ.X) * obs.AttackingDirectionX;
         if (progression < OneTwoMinProgressionMeters) return false;
@@ -3235,7 +3291,25 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 fromXZ,
         Vector2 toXZ,
         IReadOnlyList<PerceivedEntity> visiblePlayers,
-        TeamId selfTeam)
+        TeamId selfTeam) =>
+        EvaluateLaneClearance(fromXZ, toXZ, visiblePlayers, selfTeam, chargeUncertainty: false);
+
+    /// <summary>
+    /// The same lane metric with the option to charge each defender's believed positional uncertainty into the
+    /// corridor (A8.2): a remembered defender may be nearer the line than his stale position says, so the
+    /// perpendicular distance is shortened by <see cref="PerceivedEntity.PositionUncertaintyMeters"/> before
+    /// it is scored.
+    ///
+    /// Only the shallow search asks for it. The A8.1 heuristic and the pass-lane tests keep the unladen
+    /// metric exactly — a fresh sighting has zero uncertainty, so the two agree, and the difference is a
+    /// deliberately more conservative second ball rather than a re-tuned first one.
+    /// </summary>
+    internal static float EvaluateLaneClearance(
+        Vector2 fromXZ,
+        Vector2 toXZ,
+        IReadOnlyList<PerceivedEntity> visiblePlayers,
+        TeamId selfTeam,
+        bool chargeUncertainty)
     {
         Vector2 seg = toXZ - fromXZ;
         float segLen = seg.Length();
@@ -3253,6 +3327,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
             Vector2 closest = fromXZ + segDir * proj;
             float perpDist = Vector2.Distance(oppXZ, closest);
+            if (chargeUncertainty && p.PositionUncertaintyMeters > 0f)
+                perpDist = MathF.Max(0f, perpDist - p.PositionUncertaintyMeters);
             float interceptRadius = 1.1f + (proj / segLen) * 2.4f;
             float ratio = Math.Clamp(perpDist / interceptRadius, 0f, 1f);
             if (ratio < minClearanceRatio)
@@ -3297,7 +3373,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         // depends on it; this façade stays because the audit probe and the goalkeeper path call it here.
         _passSuccess.IsLaneBlocked(fromXZ, toXZ, power01, flightTimeSeconds, visiblePlayers, selfTeam);
 
-    private static float EvaluateSpaceFreedom(
+    internal static float EvaluateSpaceFreedom(
         Vector2 spotXZ,
         IReadOnlyList<PerceivedEntity> visiblePlayers,
         TeamId selfTeam)

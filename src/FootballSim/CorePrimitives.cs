@@ -511,12 +511,21 @@ public enum TeamId
 /// made in. The preferences are bounded and no candidate, reach, sight or contact rule is added, and
 /// <see cref="AI.AiRuntimeConfig.EnableCombinations"/> off is the version-46 build exactly. Trajectories
 /// differ from version 46 once a combination is played.</item>
+/// <item><c>AiBehaviour 48</c> — A8.2: the carrier <b>searches a few continuations</b>
+/// (<see cref="AI.ShallowActionSearch"/>) instead of deciding from the pressure heuristic alone. From its
+/// own perceived state it examines the best three first actions and at most three continuations each — two
+/// one-two return regions and the best advertised layoff — with the defenders' sighting uncertainty charged
+/// into the second ball's lane, and no truth-state rollout. The search chooses <i>which</i> continuation is
+/// worth a contract; the pass is still priced by the one A4 scorer and the contract still only carries the
+/// bounded A8.1 preferences. Receivers outside the bounded search keep the A8.1 heuristic trigger, and
+/// <see cref="AI.AiRuntimeConfig.EnableShallowSearch"/> off with combinations on is the version-47 build
+/// exactly. Trajectories differ from version 47 wherever the search chooses a move the heuristic did not.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 47;
+    public const int AiBehaviour = 48;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
