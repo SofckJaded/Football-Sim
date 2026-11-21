@@ -53,4 +53,25 @@ public sealed class MatchSetupTests
         Assert.Equal(45, MatchPresets.ClampHalfLengthMinutes(120));
         Assert.Equal(4, MatchPresets.ClampHalfLengthMinutes(4));
     }
+
+    /// <summary>
+    /// The match HUD overhaul adds one persisted setup switch: debug mode. It has to default off (a normal
+    /// match shows only the clean HUD) and survive the menu-to-scene hand-off unchanged, so the match scene
+    /// can decide whether to show the on-pitch AI debug overlay instead of the old text lines.
+    /// </summary>
+    [Fact]
+    public void MatchSetup_DebugMode_IsOffByDefaultAndCarriedToTheMatchScene()
+    {
+        var normal = new MatchSetupOptions();
+        Assert.False(normal.DebugMode);
+
+        var debug = new MatchSetupOptions { DebugMode = true };
+        Assert.True(debug.DebugMode);
+
+        // The switch is independent of the existing setup fields: turning it on must not alter the human
+        // lock or the half length a match starts with.
+        Assert.Equal(normal.HumanPlayerId, debug.HumanPlayerId);
+        Assert.Equal(normal.HalfDurationSeconds, debug.HalfDurationSeconds);
+        Assert.Equal(MatchPositions.DefaultPlayerId, debug.HumanPlayerId);
+    }
 }

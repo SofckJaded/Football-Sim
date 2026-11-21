@@ -122,6 +122,12 @@ public sealed class MatchSetupOptions
     public int? HumanPlayerId { get; init; } = MatchPositions.DefaultPlayerId;
     public float HalfDurationSeconds { get; init; } = DefaultHalfDurationSeconds;
 
+    /// <summary>
+    /// Match setting: draw the AI's plans as an on-pitch visual overlay instead of the old debug text
+    /// lines. Off by default, so a normal match is the clean HUD only.
+    /// </summary>
+    public bool DebugMode { get; init; }
+
     public bool IsSpectatorMatch => HumanPlayerId is null;
 
     public MatchPositionOption Position => MatchPositions.Find(HumanPlayerId);

@@ -271,16 +271,32 @@ public partial class MainMenuNode : Control
         StyleOptionButton(halfOption);
         AddFieldRow("Half length", halfOption);
 
+        var debugOption = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(0f, 40f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        debugOption.AddItem("Off");
+        debugOption.AddItem("On — on-pitch AI visual debug");
+        debugOption.Selected = GameSettings.DebugMode ? 1 : 0;
+        StyleOptionButton(debugOption);
+        AddFieldRow("Debug mode", debugOption);
+
         AddParagraph("Four minutes per half is the default; the full match then lasts eight minutes.",
             13, _mutedColor);
+        AddParagraph("Debug mode draws the AI's plans on the pitch instead of the old text lines: control map, " +
+                     "belief, defensive line, jobs, marking, runs, combinations, traps and perception. F3 toggles " +
+                     "it in a match, F4 switches the team being inspected.", 13, _mutedColor);
 
         AddMenuButton("Start Match", () =>
         {
             int positionIndex = positionOption.Selected;
             int minutes = MatchPresets.HalfLengthMinuteOptions[halfOption.Selected];
+            bool debugMode = debugOption.Selected == 1;
 
             GameSettings.SetLastPositionIndex(positionIndex);
             GameSettings.SetHalfLengthMinutes(minutes);
+            GameSettings.SetDebugMode(debugMode);
             GameSettings.Save();
 
             GameSession.PendingMatch = GameSettings.BuildMatchSetup();

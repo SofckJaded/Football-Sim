@@ -13,14 +13,19 @@ namespace FootballSim.GodotClient;
 
 public partial class MatchClientNode : Node3D
 {
-    [Export] public bool ShowDebugOverlay { get; set; } = true;
+    /// <summary>
+    /// Developer escape hatch for the old text debug dump. It is off by default and the HUD overhaul
+    /// deliberately hides it: the supported debug path is <see cref="MatchDebugView"/> behind the Match
+    /// Setup "Debug mode" option (or F3 in a match). The text methods below are kept for now rather
+    /// than deleted, as requested.
+    /// </summary>
+    [Export] public bool ShowDebugOverlay { get; set; } = false;
 
     /// <summary>
     /// A2.6: labelled belief/pressure readout next to the player line. Text only — the rendereds
     /// heat map needs a human at the machine and belongs to A9.4.
     /// </summary>
     [Export] public bool ShowSpatialOverlay { get; set; } = true;
-    [Export] public bool ShowTacticalAnchors { get; set; } = false;
 
     /// <summary>Camera height; the inspector range matches <see cref="BroadcastCamera"/>'s clamp.</summary>
     [Export(PropertyHint.Range, "18,65,0.5")] public float CameraZoomHeight { get; set; } = 34.0f;
@@ -29,9 +34,11 @@ public partial class MatchClientNode : Node3D
     private Node3D _ballNode = null!;
     private MeshInstance3D _ballShadowNode = null!;
     private readonly Dictionary<int, Node3D> _playerNodes = new();
-    private readonly Dictionary<int, MeshInstance3D> _anchorNodes = new();
     private Camera3D _camera = null!;
-    private Label _hudLabel = null!;
+    private Label _legacyHudLabel = null!;
+    private MatchHud _hud = null!;
+    private MatchDebugView _debugView = null!;
+    private bool _debugMode;
     private readonly HumanControlReader _controls = new();
     private MeshInstance3D _humanAimArrow = null!;
     private int _inspectedPlayerId = 9;
@@ -48,6 +55,7 @@ public partial class MatchClientNode : Node3D
         MatchSetupOptions setup = GameSession.PendingMatch;
         _humanPlayerId = setup.HumanPlayerId;
         _halfDurationSeconds = setup.HalfDurationSeconds;
+        _debugMode = setup.DebugMode;
 
         var config = new PreMatchConfig
         {
@@ -73,11 +81,6 @@ public partial class MatchClientNode : Node3D
     public override void _Process(double delta)
     {
         float frameDelta = (float)delta;
-
-        if (Godot.Input.IsPhysicalKeyPressed(Key.Tab) || (Godot.Input.GetConnectedJoypads().Count > 0 && Godot.Input.IsJoyButtonPressed(0, JoyButton.Back)))
-            ShowTacticalAnchors = true;
-        else
-            ShowTacticalAnchors = false;
 
         if (Godot.Input.IsPhysicalKeyPressed(Key.Equal))
             CameraZoomHeight = Mathf.Clamp(CameraZoomHeight - 15f * frameDelta,
@@ -108,17 +111,35 @@ public partial class MatchClientNode : Node3D
             _engine.StepTick();
 
         SyncVisualTransforms(_clock.Alpha, frameDelta);
-        UpdateHudText();
+        UpdatePresentation();
     }
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo &&
-            keyEvent.Keycode == Key.Escape)
+        if (@event is InputEventKey keyEvent && keyEvent.Pressed && !keyEvent.Echo)
         {
-            GetTree().ChangeSceneToFile(GameSession.MainMenuScene);
-            GetViewport().SetInputAsHandled();
-            return;
+            if (keyEvent.Keycode == Key.Escape)
+            {
+                GetTree().ChangeSceneToFile(GameSession.MainMenuScene);
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+
+            // The Match Setup option persists; these two are the in-match convenience switches.
+            if (keyEvent.Keycode == Key.F3)
+            {
+                _debugMode = !_debugMode;
+                _debugView.SetEnabled(_debugMode);
+                GetViewport().SetInputAsHandled();
+                return;
+            }
+
+            if (keyEvent.Keycode == Key.F4 && _debugMode)
+            {
+                _debugView.ToggleWatchedTeam();
+                GetViewport().SetInputAsHandled();
+                return;
+            }
         }
 
         if (@event is InputEventMouseButton mouseButton && mouseButton.Pressed)
@@ -148,12 +169,6 @@ public partial class MatchClientNode : Node3D
             node.Position = new Vector3(interp.X, interp.Y, interp.Z);
             float yaw = MathF.Atan2(-p.FacingXZ.Y, p.FacingXZ.X);
             node.Rotation = new Vector3(0f, yaw, 0f);
-
-            if (_anchorNodes.TryGetValue(p.Id, out var anchorNode))
-            {
-                anchorNode.Visible = ShowTacticalAnchors && p.IsActiveOnPitch;
-                anchorNode.Position = new Vector3(p.TacticalAnchor.X, 0.03f, p.TacticalAnchor.Z);
-            }
         }
 
         // Aim arrow follows the resolved aim direction from the human controller.
@@ -181,6 +196,108 @@ public partial class MatchClientNode : Node3D
     }
 
     /// <summary>
+    /// Pushes the frame's presentation state: the in-match HUD and — when debug mode is on — the
+    /// on-pitch AI debug overlay. The old text dump is only refreshed through its developer export
+    /// (off by default), and is hidden from the player otherwise.
+    /// </summary>
+    private void UpdatePresentation()
+    {
+        FootballerState active = ResolveActivePlayer();
+        FootballerState focus = ResolveFocusPlayer(active);
+        _inspectedPlayerId = active.Id;
+
+        HumanInputController? human = _engine.LockedHumanController;
+        bool humanControlActive = human is { IsSpectatorMode: false };
+
+        _hud.Refresh(
+            _engine.Rules,
+            active,
+            focus,
+            human,
+            humanControlActive,
+            IsBallCarrier(active),
+            IsBallCarrier(focus));
+
+        if (_debugMode)
+            _debugView.Refresh(_engine, active);
+
+        if (ShowDebugOverlay)
+        {
+            _legacyHudLabel.Visible = true;
+            UpdateHudText();
+        }
+        else
+        {
+            _legacyHudLabel.Visible = false;
+        }
+    }
+
+    private FootballerState ResolveActivePlayer()
+    {
+        HumanInputController? human = _engine.LockedHumanController;
+        if (human is { IsSpectatorMode: false })
+        {
+            FootballerState? locked = FindPlayer(human.LockedPlayerId);
+            if (locked is { IsActiveOnPitch: true }) return locked;
+        }
+
+        if (_engine.Possession.ControllingPlayerId is int carrierId &&
+            FindPlayer(carrierId) is { IsActiveOnPitch: true } carrier)
+        {
+            return carrier;
+        }
+
+        return NearestPlayer(_engine.Ball.Position, TeamId.Home) ?? _engine.Players[0];
+    }
+
+    /// <summary>
+    /// The second card is the duel context: the ball carrier if that is somebody other than the active
+    /// player, otherwise the nearest opponent. In a spectator match it is the nearest opponent to the
+    /// ball carrier, which is what the viewer is watching anyway.
+    /// </summary>
+    private FootballerState ResolveFocusPlayer(FootballerState active)
+    {
+        if (_engine.Possession.ControllingPlayerId is int carrierId && carrierId != active.Id &&
+            FindPlayer(carrierId) is { IsActiveOnPitch: true } carrier)
+        {
+            return carrier;
+        }
+
+        TeamId otherTeam = active.Team == TeamId.Home ? TeamId.Away : TeamId.Home;
+        return NearestPlayer(active.Position, otherTeam) ?? active;
+    }
+
+    private FootballerState? FindPlayer(int playerId)
+    {
+        for (int index = 0; index < _engine.Players.Count; index++)
+        {
+            FootballerState player = _engine.Players[index];
+            if (player.Id == playerId) return player;
+        }
+        return null;
+    }
+
+    private FootballerState? NearestPlayer(System.Numerics.Vector3 point, TeamId team)
+    {
+        FootballerState? best = null;
+        float bestDistance = float.MaxValue;
+        foreach (FootballerState player in _engine.Players)
+        {
+            if (!player.IsActiveOnPitch || player.Team != team) continue;
+            float dx = player.Position.X - point.X;
+            float dz = player.Position.Z - point.Z;
+            float distance = dx * dx + dz * dz;
+            if (distance >= bestDistance) continue;
+            bestDistance = distance;
+            best = player;
+        }
+        return best;
+    }
+
+    private bool IsBallCarrier(FootballerState player) =>
+        _engine.Possession.ControllingPlayerId == player.Id;
+
+    /// <summary>
     /// The player shown in the inspector, resolved by id. Audit F22: the HUD indexed
     /// <c>Players[id - 1]</c>, which silently inspected the wrong player whenever the squad was
     /// smaller than the id (5-a-side, a send-off) and threw when it was empty.
@@ -192,7 +309,7 @@ public partial class MatchClientNode : Node3D
     {
         if (!ShowDebugOverlay)
         {
-            _hudLabel.Text = "";
+            _legacyHudLabel.Text = "";
             return;
         }
 
@@ -224,7 +341,7 @@ public partial class MatchClientNode : Node3D
             ? $"   ·   CATCH-UP CAPPED (frames {_clock.CappedFrames}, dropped {_clock.DroppedSeconds * 1000d:F0} ms)"
             : string.Empty;
 
-        _hudLabel.Text =
+        _legacyHudLabel.Text =
             $"[{_engine.Rules.Phase}] {mins:D2}:{secs:D2} | HOME (Blue) {_engine.Rules.HomeScore} - {_engine.Rules.AwayScore} AWAY (Red) | {half}{status}{catchUp}\n" +
             $"{mode}   ·   {powerLine}\n" +
             // Generated from the live bindings (audit F16), so help can never drift from the keys.
@@ -425,17 +542,6 @@ public partial class MatchClientNode : Node3D
 
             AddChild(root);
             _playerNodes[p.Id] = root;
-
-            var anchor = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 0.22f, BottomRadius = 0.22f, Height = 0.02f },
-                MaterialOverride = new StandardMaterial3D
-                {
-                    AlbedoColor = p.Team == TeamId.Home ? new Color(0.3f, 0.6f, 1f, 0.5f) : new Color(1f, 0.4f, 0.4f, 0.5f)
-                }
-            };
-            AddChild(anchor);
-            _anchorNodes[p.Id] = anchor;
         }
 
         // Audit F22: one dimension source. The rendered ball is exactly the physical ball, so its
@@ -488,13 +594,23 @@ public partial class MatchClientNode : Node3D
         _camera = BroadcastCamera.Create(this, CameraZoomHeight);
 
         var canvas = new CanvasLayer();
-        _hudLabel = new Label
+        AddChild(canvas);
+
+        _hud = new MatchHud();
+        canvas.AddChild(_hud);
+
+        // Kept (not deleted) for the developer export above; invisible in normal play and in debug mode.
+        _legacyHudLabel = new Label
         {
             Position = new Vector2(16f, 16f),
             AutowrapMode = TextServer.AutowrapMode.WordSmart,
-            CustomMinimumSize = new Vector2(1200f, 0f)
+            CustomMinimumSize = new Vector2(1200f, 0f),
+            Visible = false
         };
-        canvas.AddChild(_hudLabel);
-        AddChild(canvas);
+        canvas.AddChild(_legacyHudLabel);
+
+        _debugView = new MatchDebugView();
+        AddChild(_debugView);
+        _debugView.SetEnabled(_debugMode);
     }
 }

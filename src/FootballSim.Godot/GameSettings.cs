@@ -139,6 +139,12 @@ public static class GameSettings
     public static int HalfLengthMinutes { get; private set; } = MatchPresets.DefaultHalfLengthMinutes;
     public static int LastPositionIndex { get; private set; } = MatchPositions.IndexOf(MatchPositions.DefaultPlayerId);
 
+    /// <summary>
+    /// Match setting: show the on-pitch AI visual debug overlay. Persisted, but deliberately on its own
+    /// switch rather than a developer-only key binding so it is discoverable in Match Setup.
+    /// </summary>
+    public static bool DebugMode { get; private set; }
+
     private static bool _loaded;
 
     public static int ResolutionIndex
@@ -171,6 +177,7 @@ public static class GameSettings
             (int)config.GetValue("match", "position_index", LastPositionIndex),
             0,
             MatchPositions.All.Count - 1);
+        DebugMode = (bool)config.GetValue("match", "debug_mode", false);
 
         foreach (ControlAction action in ControlBindings.AllActions)
         {
@@ -203,6 +210,7 @@ public static class GameSettings
         config.SetValue("display", "height", Resolution.Y);
         config.SetValue("match", "half_minutes", HalfLengthMinutes);
         config.SetValue("match", "position_index", LastPositionIndex);
+        config.SetValue("match", "debug_mode", DebugMode);
 
         foreach (ControlAction action in ControlBindings.AllActions)
             config.SetValue("controls", action.ToString(), Controls.Get(action).ToString());
@@ -227,6 +235,11 @@ public static class GameSettings
     public static void SetLastPositionIndex(int index)
     {
         LastPositionIndex = Math.Clamp(index, 0, MatchPositions.All.Count - 1);
+    }
+
+    public static void SetDebugMode(bool enabled)
+    {
+        DebugMode = enabled;
     }
 
     public static void ResetControls()
@@ -256,7 +269,8 @@ public static class GameSettings
         return new MatchSetupOptions
         {
             HumanPlayerId = position.PlayerId,
-            HalfDurationSeconds = ClampHalfLength(HalfLengthMinutes) * 60f
+            HalfDurationSeconds = ClampHalfLength(HalfLengthMinutes) * 60f,
+            DebugMode = DebugMode
         };
     }
 
