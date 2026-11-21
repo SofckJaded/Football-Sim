@@ -1,0 +1,10 @@
+﻿Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+Vulkan 1.4.359 - Forward+ - Using Device #0: AMD - AMD Radeon RX 7800 XT
+
+CAPTURE HARNESS dir=C:\Games\geminiball\artifacts\ui-2026-11-21\capture7 seconds=160
+TOUCHTAG #10 CONTESTED tick=9374
+TOUCHTAG #10 CONTESTED tick=9374
+TOUCHTAG #10 WRONG_STATE tick=9418
+TOUCHTAG #10 WRONG_STATE tick=9418
+TOUCHTAG #10 WRONG_STATE tick=9418
+CAPTURE DONE saved=546 frames=27389 tick=9609

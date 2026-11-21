@@ -9,26 +9,24 @@ using FootballSim.Rules;
 namespace FootballSim.GodotClient;
 
 /// <summary>
-/// The in-match HUD: a scoreboard in the top-left corner and two player cards (bottom-left and
-/// bottom-right) drawn with flat panels, thin bars and upper-case micro labels.
+/// The in-match HUD: one compact scoreboard in the top-left corner and two equal player cards at the
+/// bottom corners, drawn flat and aligned to a single 18 px margin grid.
 ///
-/// It replaces the old wall of debug text. The debug text overlay still exists in
-/// <see cref="MatchClientNode"/> behind <c>ShowDebugOverlay</c> (off by default), but this control is
-/// what a player sees: no control listing, no contract readouts, no match-context lines.
-///
-/// Everything is custom-painted in <see cref="_Draw"/> rather than built from Labels/ProgressBars: the
-/// HUD is small, fixed-proportion and needs the same visual weight at every supported resolution, and a
-/// single control redraw is cheaper and easier to keep minimal than a tree of themed containers.
+/// The old wall of debug/control/context text is gone. The left card is always the controlled human
+/// player while human control is active (number ring, position, stamina, charge); the right card shows
+/// the ball carrier or nearest opponent. Both cards use exactly the same geometry, so the corners read
+/// as a pair; the only asymmetric element is the charge ring around the active player's number, which is
+/// where the old power bar lives (a ring does not need a second row and keeps the cards the same size).
 /// </summary>
 public partial class MatchHud : Control
 {
     // --- palette ---------------------------------------------------------------------------------
-    private static readonly Color PanelBackground = new(0.035f, 0.058f, 0.082f, 0.80f);
-    private static readonly Color PanelBorder = new(1f, 1f, 1f, 0.07f);
+    private static readonly Color PanelBackground = new(0.030f, 0.052f, 0.075f, 0.80f);
+    private static readonly Color PanelBorder = new(1f, 1f, 1f, 0.070f);
     private static readonly Color TextPrimary = new(0.94f, 0.96f, 0.99f);
     private static readonly Color TextSecondary = new(0.70f, 0.78f, 0.86f);
-    private static readonly Color TextMuted = new(0.47f, 0.55f, 0.63f);
-    private static readonly Color Track = new(1f, 1f, 1f, 0.13f);
+    private static readonly Color TextMuted = new(0.45f, 0.53f, 0.61f);
+    private static readonly Color Track = new(1f, 1f, 1f, 0.14f);
     private static readonly Color HomeAccent = new(0.34f, 0.63f, 1.00f);
     private static readonly Color AwayAccent = new(1.00f, 0.42f, 0.42f);
     private static readonly Color StaminaGood = new(0.40f, 0.86f, 0.58f);
@@ -36,18 +34,17 @@ public partial class MatchHud : Control
     private static readonly Color StaminaLow = new(0.95f, 0.36f, 0.36f);
     private static readonly Color PowerFill = new(0.55f, 0.85f, 1.00f);
 
-    // --- geometry --------------------------------------------------------------------------------
-    private const float EdgeMargin = 28f;
-    private const float ScoreboardWidth = 306f;
-    private const float ScoreboardHeight = 76f;
-    private const float CardWidth = 340f;
-    private const float CardHeight = 96f;
+    // --- geometry (all on the same 18 px margin) -------------------------------------------------
+    private const float EdgeMargin = 18f;
+    private const float ScoreboardWidth = 232f;
+    private const float ScoreboardHeight = 42f;
+    private const float CardWidth = 252f;
+    private const float CardHeight = 58f;
 
     private Font _font = null!;
     private StyleBoxFlat _panelStyle = null!;
     private StyleBoxFlat _fillStyle = null!;
     private StyleBoxFlat _trackStyle = null!;
-    private StyleBoxFlat _chipStyle = null!;
 
     private MatchPhase _phase = MatchPhase.PreKickoff;
     private float _clockSeconds;
@@ -76,22 +73,15 @@ public partial class MatchHud : Control
             BorderWidthRight = 1,
             BorderWidthBottom = 1
         };
-        _panelStyle.SetCornerRadiusAll(10);
+        _panelStyle.SetCornerRadiusAll(7);
 
         _fillStyle = new StyleBoxFlat();
         _fillStyle.SetCornerRadiusAll(2);
 
         _trackStyle = new StyleBoxFlat { BgColor = Track };
         _trackStyle.SetCornerRadiusAll(2);
-
-        _chipStyle = new StyleBoxFlat();
-        _chipStyle.SetCornerRadiusAll(4);
     }
 
-    /// <summary>
-    /// Pushes one frame of state. The caller resolves which two players are shown; the HUD only formats
-    /// them. Called every rendered frame, so a score, clock or stamina change is visible immediately.
-    /// </summary>
     public void Refresh(
         MatchRulesEngine rules,
         FootballerState? active,
@@ -137,17 +127,22 @@ public partial class MatchHud : Control
         if (_font is null) return;
 
         Vector2 viewport = Size;
-        if (viewport.X < 360f || viewport.Y < 240f) return;
+        if (viewport.X < 320f || viewport.Y < 200f) return;
 
-        DrawScoreboard(new Vector2(EdgeMargin, 22f));
+        DrawScoreboard(new Vector2(EdgeMargin, EdgeMargin));
 
         float cardY = viewport.Y - EdgeMargin - CardHeight;
         if (_hasActiveCard)
+        {
             DrawPlayerCard(new Rect2(EdgeMargin, cardY, CardWidth, CardHeight), _activeCard,
-                mirror: false, showPower: _humanControlActive);
+                mirror: false, showCharge: _humanControlActive);
+        }
+
         if (_hasFocusCard)
+        {
             DrawPlayerCard(new Rect2(viewport.X - EdgeMargin - CardWidth, cardY, CardWidth, CardHeight),
-                _focusCard, mirror: true, showPower: false);
+                _focusCard, mirror: true, showCharge: false);
+        }
 
         DrawMatchBanner(viewport);
     }
@@ -164,127 +159,112 @@ public partial class MatchHud : Control
         float left = board.Position.X;
         float top = board.Position.Y;
         float right = board.End.X;
+        const float dividerOffset = 82f;
+        float dividerInset = 7f;
 
-        // Team accent chips. The colour is the only team identity in the HUD; the labels say HOME/AWAY.
-        DrawAccentBar(new Rect2(left + 14f, top + 13f, 3f, 50f), HomeAccent);
-        DrawAccentBar(new Rect2(right - 17f, top + 13f, 3f, 50f), AwayAccent);
+        DrawAccentBar(new Rect2(left + 11f, top + 6f, 2f, 30f), HomeAccent);
+        DrawAccentBar(new Rect2(right - 13f, top + 6f, 2f, 30f), AwayAccent);
 
-        // Dividers around the clock.
-        Color divider = new(1f, 1f, 1f, 0.08f);
-        DrawRect(new Rect2(left + 104f, top + 13f, 1f, 50f), divider);
-        DrawRect(new Rect2(right - 104f, top + 13f, 1f, 50f), divider);
+        Color divider = new(1f, 1f, 1f, 0.075f);
+        DrawRect(new Rect2(left + dividerOffset, top + dividerInset, 1f, ScoreboardHeight - dividerInset * 2f), divider);
+        DrawRect(new Rect2(right - dividerOffset, top + dividerInset, 1f, ScoreboardHeight - dividerInset * 2f), divider);
 
-        int scoreSize = 26;
-        int teamSize = 10;
-        int clockSize = 18;
-        int phaseSize = 8;
+        DrawText("HOME", new Vector2(left + 20f, top + 6f), 8, TextMuted);
+        DrawText(_homeScore.ToString(), new Vector2(left + 20f, top + 15f), 20, TextPrimary);
 
-        DrawText("HOME", new Vector2(left + 26f, top + 15f), teamSize, TextMuted);
-        DrawText(_homeScore.ToString(), new Vector2(left + 26f, top + 34f), scoreSize, TextPrimary);
+        DrawTextRight("AWAY", new Vector2(right - 20f, top + 6f), 8, TextMuted);
+        DrawTextRight(_awayScore.ToString(), new Vector2(right - 20f, top + 15f), 20, TextPrimary);
 
-        DrawTextRight("AWAY", new Vector2(right - 29f, top + 15f), teamSize, TextMuted);
-        DrawTextRight(_awayScore.ToString(), new Vector2(right - 29f, top + 34f), scoreSize, TextPrimary);
-
+        float centreWidth = right - dividerOffset - (left + dividerOffset);
         string clock = FormatClock(_clockSeconds);
-        DrawTextCentered(clock, new Vector2(left + 104f, top + 17f), right - 104f - left - 104f,
-            clockSize, _phase == MatchPhase.FullTime ? TextSecondary : TextPrimary);
-
-        DrawTextCentered(PhaseLabel(_phase), new Vector2(left + 104f, top + 45f),
-            right - 104f - left - 104f, phaseSize, TextMuted);
+        DrawTextCentered(clock, new Vector2(left + dividerOffset, top + 10f), centreWidth, 14,
+            _phase == MatchPhase.FullTime ? TextSecondary : TextPrimary);
+        DrawTextCentered(PhaseLabel(_phase), new Vector2(left + dividerOffset, top + 27f), centreWidth, 7, TextMuted);
     }
 
     // ---------------------------------------------------------------------------------------------
     // Player cards
     // ---------------------------------------------------------------------------------------------
 
-    private void DrawPlayerCard(Rect2 card, in CardView view, bool mirror, bool showPower)
+    private void DrawPlayerCard(Rect2 card, in CardView view, bool mirror, bool showCharge)
     {
         DrawPanel(card);
 
-        Color accent = view.TeamAccent;
-        float pad = 14f;
-        float accentX = mirror ? card.End.X - pad : card.Position.X + pad;
-        DrawAccentBar(new Rect2(accentX, card.Position.Y + 14f, 3f, card.Size.Y - 28f), accent);
+        float accentX = mirror ? card.End.X - 10f : card.Position.X + 8f;
+        DrawAccentBar(new Rect2(accentX, card.Position.Y + 9f, 2f, card.Size.Y - 18f), view.TeamAccent);
 
-        float innerLeft = card.Position.X + 26f;
-        float innerRight = card.End.X - 26f;
-        float numberLeft = mirror ? innerRight : innerLeft;
+        // Number ring: faint track on both cards so the corners stay identical; the active human's
+        // charge fills it. The old power bar was the only asymmetric row in the HUD.
+        float ringRadius = 17.5f;
+        var ringCentre = new Vector2(
+            mirror ? card.End.X - 34f : card.Position.X + 34f,
+            card.Position.Y + 29f);
+        DrawArc(ringCentre, ringRadius, -Mathf.Pi * 0.5f, Mathf.Pi * 1.5f, 42,
+            new Color(1f, 1f, 1f, 0.10f), 2f, true);
+        if (showCharge && _charging && _chargedPower01 > 0.001f)
+        {
+            DrawArc(ringCentre, ringRadius, -Mathf.Pi * 0.5f,
+                -Mathf.Pi * 0.5f + Mathf.Pi * 2f * _chargedPower01, 42,
+                PowerFill, 2f, true);
+        }
 
+        DrawTextCenteredAt($"#{view.ShirtNumber}", ringCentre, 17, TextPrimary);
+
+        float roleX = mirror ? card.End.X - 56f : card.Position.X + 58f;
         if (mirror)
         {
-            DrawTextRight($"#{view.ShirtNumber}", new Vector2(innerRight, card.Position.Y + 12f), 30, TextPrimary);
-            DrawTextRight(view.RoleLabel, new Vector2(innerRight - 54f, card.Position.Y + 20f), 13, TextSecondary);
-            DrawTextRight(view.TeamLabel, new Vector2(innerRight - 54f, card.Position.Y + 38f), 8, TextMuted);
-            DrawText(view.Tag, new Vector2(innerLeft, card.Position.Y + 20f), 8,
+            DrawTextRight(view.RoleLabel, new Vector2(roleX, card.Position.Y + 10f), 9, TextSecondary);
+            DrawTextRight(view.TeamLabel, new Vector2(roleX, card.Position.Y + 23f), 7, TextMuted);
+            DrawText(view.Tag, new Vector2(card.Position.X + 14f, card.Position.Y + 9f), 7,
                 view.IsHuman ? HomeAccent : TextMuted);
+            if (showCharge && _highModifier)
+                DrawText("HIGH", new Vector2(card.Position.X + 14f, card.Position.Y + 18f), 7, PowerFill);
         }
         else
         {
-            DrawText($"#{view.ShirtNumber}", new Vector2(numberLeft, card.Position.Y + 12f), 30, TextPrimary);
-            DrawText(view.RoleLabel, new Vector2(innerLeft + 54f, card.Position.Y + 20f), 13, TextSecondary);
-            DrawText(view.TeamLabel, new Vector2(innerLeft + 54f, card.Position.Y + 38f), 8, TextMuted);
-            DrawTextRight(view.Tag, new Vector2(innerRight, card.Position.Y + 20f), 8,
+            DrawText(view.RoleLabel, new Vector2(roleX, card.Position.Y + 10f), 9, TextSecondary);
+            DrawText(view.TeamLabel, new Vector2(roleX, card.Position.Y + 23f), 7, TextMuted);
+            DrawTextRight(view.Tag, new Vector2(card.End.X - 14f, card.Position.Y + 9f), 7,
                 view.IsHuman ? HomeAccent : TextMuted);
+            if (showCharge && _highModifier)
+                DrawTextRight("HIGH", new Vector2(card.End.X - 14f, card.Position.Y + 18f), 7, PowerFill);
         }
 
-        // Stamina: always visible, because it is the one number that changes a player's whole feel.
-        // Without a power row (the opponent's card) the bar sits lower so the card does not look
-        // top-heavy.
         float stamina = Mathf.Clamp(view.Stamina01, 0f, 1f);
         Color staminaColor = stamina > 0.6f ? StaminaGood : stamina > 0.3f ? StaminaMid : StaminaLow;
-        int staminaRow = showPower ? 0 : 1;
-        DrawStatBar(card, mirror, row: staminaRow, "STAMINA", stamina, staminaColor,
-            $"{Mathf.RoundToInt(stamina * 100f)}%", power: false);
-
-        // Power: the human's charge. While not charging it stays an empty track (no fake value).
-        if (!showPower) return;
-
-        string powerValue = _charging ? $"{Mathf.RoundToInt(_chargedPower01 * 100f)}%" : "—";
-        DrawStatBar(card, mirror, row: 1, "POWER", _chargedPower01, PowerFill, powerValue, power: true);
+        DrawStaminaBar(card, mirror, stamina, staminaColor);
     }
 
-    private void DrawStatBar(Rect2 card, bool mirror, int row, string label, float value, Color fill,
-        string valueText, bool power)
+    private void DrawStaminaBar(Rect2 card, bool mirror, float stamina, Color fill)
     {
-        float top = card.Position.Y + 57f + row * 20f;
-        float labelX = mirror ? card.End.X - 24f : card.Position.X + 24f;
-        float barLeft = card.Position.X + 86f;
-        float barWidth = card.Size.X - 86f - 62f;
-        float valueX = mirror ? card.Position.X + 16f : card.End.X - 16f;
+        float labelY = card.Position.Y + 35f;
+        float barY = card.Position.Y + 45f;
+        float barLeft = card.Position.X + 58f;
+        float barWidth = card.Size.X - 58f - 14f;
+        string percent = $"{Mathf.RoundToInt(stamina * 100f)}%";
 
         if (mirror)
         {
-            DrawTextRight(label, new Vector2(labelX, top), 8, TextMuted);
-            DrawText(valueText, new Vector2(valueX, top - 1f), 9, TextMuted);
+            DrawTextRight("STAMINA", new Vector2(card.End.X - 56f, labelY), 7, TextMuted);
+            DrawText(percent, new Vector2(card.Position.X + 14f, labelY), 7, TextMuted);
         }
         else
         {
-            DrawText(label, new Vector2(labelX, top), 8, TextMuted);
-            DrawTextRight(valueText, new Vector2(valueX, top - 1f), 9, TextMuted);
+            DrawText("STAMINA", new Vector2(card.Position.X + 58f, labelY), 7, TextMuted);
+            DrawTextRight(percent, new Vector2(card.End.X - 14f, labelY), 7, TextMuted);
         }
 
-        var bar = new Rect2(barLeft, top, barWidth, 5f);
+        var bar = new Rect2(barLeft, barY, barWidth, 3f);
         DrawStyleBox(_trackStyle, bar);
 
-        float fillWidth = Mathf.Round(barWidth * Mathf.Clamp(value, 0f, 1f));
-        if (fillWidth >= 1f)
-        {
-            _fillStyle.BgColor = fill;
-            var fillRect = mirror
-                ? new Rect2(bar.End.X - fillWidth, bar.Position.Y, fillWidth, bar.Size.Y)
-                : new Rect2(bar.Position, new Vector2(fillWidth, bar.Size.Y));
-            DrawStyleBox(_fillStyle, fillRect);
-        }
+        float fillWidth = Mathf.Round(barWidth * stamina);
+        if (fillWidth < 1f) return;
 
-        if (!power || !_highModifier) return;
-
-        // High/finesse modifier is a state, not a meter, so it gets a chip on the power row.
-        float chipWidth = 30f;
-        float chipX = mirror ? card.End.X - 24f - 30f : card.Position.X + 54f;
-        var chipRect = new Rect2(chipX, top - 5f, chipWidth, 12f);
-        _chipStyle.BgColor = new Color(PowerFill.R, PowerFill.G, PowerFill.B, 0.16f);
-        DrawStyleBox(_chipStyle, chipRect);
-        DrawTextCentered("HIGH", new Vector2(chipRect.Position.X, top - 3f), chipWidth, 7, PowerFill);
+        _fillStyle.BgColor = fill;
+        var fillRect = mirror
+            ? new Rect2(bar.End.X - fillWidth, bar.Position.Y, fillWidth, bar.Size.Y)
+            : new Rect2(bar.Position, new Vector2(fillWidth, bar.Size.Y));
+        DrawStyleBox(_fillStyle, fillRect);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -295,15 +275,15 @@ public partial class MatchHud : Control
     {
         if (_phase == MatchPhase.FullTime)
         {
-            DrawBanner(viewport, new Vector2(400f, 126f), "FULL TIME",
-                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", "ESC  ·  MAIN MENU", 30, 13);
+            DrawBanner(viewport, new Vector2(340f, 102f), "FULL TIME",
+                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", "ESC  ·  MAIN MENU", 24, 11);
             return;
         }
 
         if (_phase == MatchPhase.HalfTime)
         {
-            DrawBanner(viewport, new Vector2(300f, 78f), "HALF TIME",
-                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", string.Empty, 22, 12);
+            DrawBanner(viewport, new Vector2(248f, 62f), "HALF TIME",
+                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", string.Empty, 18, 10);
         }
     }
 
@@ -313,19 +293,18 @@ public partial class MatchHud : Control
         var rect = new Rect2((viewport - size) * 0.5f, size);
         DrawPanel(rect);
 
-        float centre = rect.Position.X;
         float width = rect.Size.X;
-        DrawTextCentered(title, new Vector2(centre, rect.Position.Y + 20f), width, titleSize, TextPrimary);
+        DrawTextCentered(title, new Vector2(rect.Position.X, rect.Position.Y + 16f), width, titleSize, TextPrimary);
 
         if (!string.IsNullOrEmpty(subtitle))
         {
-            DrawTextCentered(subtitle, new Vector2(centre, rect.Position.Y + 20f + titleSize + 12f),
+            DrawTextCentered(subtitle, new Vector2(rect.Position.X, rect.Position.Y + 16f + titleSize + 10f),
                 width, subtitleSize, TextSecondary);
         }
 
         if (!string.IsNullOrEmpty(hint))
         {
-            DrawTextCentered(hint, new Vector2(centre, rect.End.Y - 24f), width, 8, TextMuted);
+            DrawTextCentered(hint, new Vector2(rect.Position.X, rect.End.Y - 20f), width, 7, TextMuted);
         }
     }
 
@@ -361,6 +340,16 @@ public partial class MatchHud : Control
             HorizontalAlignment.Left, -1f, fontSize, color);
     }
 
+    private void DrawTextCenteredAt(string text, Vector2 centre, int fontSize, Color color)
+    {
+        float textWidth = _font.GetStringSize(text, HorizontalAlignment.Left, -1f, fontSize).X;
+        float x = centre.X - textWidth * 0.5f;
+        float ascent = _font.GetAscent(fontSize);
+        float descent = _font.GetDescent(fontSize);
+        float baselineY = centre.Y + (ascent - descent) * 0.5f;
+        DrawString(_font, new Vector2(x, baselineY), text, HorizontalAlignment.Left, -1f, fontSize, color);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Formatting
     // ---------------------------------------------------------------------------------------------
@@ -389,8 +378,6 @@ public partial class MatchHud : Control
 
     private static string DescribeRoleLabel(FootballerState player)
     {
-        // A home player's shirt number has a human-readable position on the match setup page; use that
-        // label for him, and the generic role for everybody else (the away squad has no setup entry).
         if (player.Team == TeamId.Home && player.ShirtNumber >= 1 && player.ShirtNumber <= 11)
         {
             MatchPositionOption option = MatchPositions.Find(player.ShirtNumber);

@@ -1180,7 +1180,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate($"Pass({option.PassType})To#{mate.PlayerId}", score, passCommand)
         {
             Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, option.Tag),
-            Terms = valueTerms
+            Terms = valueTerms,
+            // Diagnostic only: publishes the exact point the planner aimed at, so the decision trace and
+            // the rendered debug overlay can show the intended target without re-deriving it from power.
+            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y)
         });
         return true;
     }
@@ -1349,7 +1352,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate($"Pass(LoftedPass)To#{mate.PlayerId}", score, command)
         {
             Key = new CandidateKey(CandidateKind.Pass, mate.PlayerId, LoftedPassTag),
-            Terms = valueTerms
+            Terms = valueTerms,
+            // Diagnostic only: the exact aim point, mirroring the ground pass candidate.
+            TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y)
         });
         return true;
     }
@@ -2522,7 +2527,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         _lastCandidates.Add(new UtilityCandidate($"Pass(GroundPass)To#{mateId}", score, command)
         {
             Key = new CandidateKey(CandidateKind.Pass, mateId, keeper ? "Keeper" : "Recycle"),
-            Terms = valueTerms
+            Terms = valueTerms,
+            // Diagnostic only: the exact recycle aim point.
+            TargetXZ = new Vector3(plan.TargetXZ.X, 0f, plan.TargetXZ.Y)
         });
     }
 

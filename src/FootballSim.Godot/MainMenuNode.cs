@@ -284,9 +284,10 @@ public partial class MainMenuNode : Control
 
         AddParagraph("Four minutes per half is the default; the full match then lasts eight minutes.",
             13, _mutedColor);
-        AddParagraph("Debug mode draws the AI's plans on the pitch instead of the old text lines: control map, " +
-                     "belief, defensive line, jobs, marking, runs, combinations, traps and perception. F3 toggles " +
-                     "it in a match, F4 switches the team being inspected.", 13, _mutedColor);
+        AddParagraph("Debug mode draws the AI's state on the pitch instead of the old text lines: player states, " +
+                     "marking/target tethers, pass target and ball ETAs, resting point, pass corridor, trap radius " +
+                     "and frozen decision lines with a small readout. F3 toggles it in a match, F4 switches the " +
+                     "team being inspected.", 13, _mutedColor);
 
         AddMenuButton("Start Match", () =>
         {

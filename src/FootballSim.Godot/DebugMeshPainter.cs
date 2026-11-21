@@ -82,7 +82,7 @@ public sealed class DebugMeshPainter
     public void Triangle(Vector3 a, Vector3 b, Vector3 c, Color color)
     {
         EnsureSurface();
-        _mesh.SurfaceSetColor(color);
+        _mesh.SurfaceSetColor(Linear(color));
         _mesh.SurfaceAddVertex(a);
         _mesh.SurfaceAddVertex(b);
         _mesh.SurfaceAddVertex(c);
@@ -92,7 +92,7 @@ public sealed class DebugMeshPainter
     public void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d, Color color)
     {
         EnsureSurface();
-        _mesh.SurfaceSetColor(color);
+        _mesh.SurfaceSetColor(Linear(color));
         _mesh.SurfaceAddVertex(a);
         _mesh.SurfaceAddVertex(b);
         _mesh.SurfaceAddVertex(c);
@@ -100,6 +100,15 @@ public sealed class DebugMeshPainter
         _mesh.SurfaceAddVertex(c);
         _mesh.SurfaceAddVertex(d);
     }
+
+    /// <summary>
+    /// Converts an authored sRGB colour to the linear space the renderer expects for vertex colours.
+    /// Without this the shader's <c>ALBEDO = COLOR.rgb</c> is treated as linear and the sRGB output pass
+    /// brightens every colour (green read as mint, red as salmon, magenta as pink), which made the semantic
+    /// palette indistinguishable from the pitch at camera distance. Alpha is left untouched — blending is
+    /// linear either way.
+    /// </summary>
+    private static Color Linear(Color color) => color.SrgbToLinear();
 
     /// <summary>Draws a thick line segment in the XZ plane.</summary>
     public void Line(Vector3 from, Vector3 to, float width, Color color)
@@ -210,6 +219,39 @@ public sealed class DebugMeshPainter
     {
         Line(ground, ground + Vector3.Up * height, width, color);
         Line(ground + Vector3.Up * height, ground + Vector3.Up * (height * 0.6f) + Vector3.Right * (width * 5f), width, color);
+    }
+
+    /// <summary>An X marker on the ground, used for a pass's intended target point.</summary>
+    public void Cross(Vector3 centre, float armLength, float width, Color color)
+    {
+        Vector3 along = new(1f, 0f, 1f);
+        along = along.Normalized() * armLength;
+        Vector3 across = new(1f, 0f, -1f);
+        across = across.Normalized() * armLength;
+        Line(centre - along, centre + along, width, color);
+        Line(centre - across, centre + across, width, color);
+    }
+
+    /// <summary>A ring with radial ticks: the "wireframe circle" used for a receiver's trap radius.</summary>
+    public void WireCircle(Vector3 centre, float radius, float width, Color color, int spokes = 12,
+        int segments = 28)
+    {
+        Ring(centre, radius, width, color, segments);
+        for (int index = 0; index < spokes; index++)
+        {
+            float angle = index / (float)spokes * MathF.PI * 2f;
+            Vector3 direction = new(MathF.Cos(angle), 0f, MathF.Sin(angle));
+            Line(centre + direction * (radius * 0.82f), centre + direction * radius, width, color);
+        }
+    }
+
+    /// <summary>Outline of an arbitrary ground-plane quad (a pass corridor, a frozen option rectangle).</summary>
+    public void QuadOutline(Vector3 a, Vector3 b, Vector3 c, Vector3 d, float width, Color color)
+    {
+        Line(a, b, width, color);
+        Line(b, c, width, color);
+        Line(c, d, width, color);
+        Line(d, a, width, color);
     }
 
     private void EnsureSurface()

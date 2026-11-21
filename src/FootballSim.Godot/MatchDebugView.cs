@@ -14,58 +14,74 @@ using NVector3 = System.Numerics.Vector3;
 namespace FootballSim.GodotClient;
 
 /// <summary>
-/// The on-pitch AI debug overlay: what debug mode shows instead of the old wall of HUD text.
+/// The on-pitch AI debug overlay (debug mode only).
 ///
-/// Every layer is a fact the AI already produces — no decision is recomputed here and nothing read here
-/// feeds back into a decision, so the simulation is untouched (the overlay may be built only after the
-/// tick has been stepped). The layers, bottom to top:
+/// The view is information-first and deliberately not a second HUD: it shows what each body is doing on
+/// the pitch, and freezes the one decision and the one pass that are worth reading.
 ///
 /// <list type="bullet">
-/// <item><b>Control map</b> (A2.4–A2.6): the whole-pitch <see cref="SpatialOverlayMap"/> of the watched
-/// team's belief, cyan where it has the stronger arrival and red where the opponent does.</item>
-/// <item><b>Defensive-line band</b> (A6.3): the shared depth strip and its allowed range, plus a ring on a
-/// credible runner in behind.</item>
-/// <item><b>Coordination</b>: advertised runs (A5.3), combination return regions (A8.1), short traps
-/// (A8.4), the live restart routine (A8.5), coverage requests (A3.5) and heard team calls (A7.2).</item>
-/// <item><b>Jobs</b> (A3.3/A3.4): the allocator's anchor per player, coloured by duty, with a dashed line
-/// to the player and marking links for marker jobs.</item>
-/// <item><b>Belief vs truth</b> (A2.2/A2.6): amber ghost rings are where the watched team believes its
-/// opponents are; a dashed link joins a stale ghost to the real body.</item>
-/// <item><b>Perception</b> (A2.2/A7.1): the active player's gaze wedge and the opponents in his current
-/// picture (green = seen this tick, amber = memory).</item>
-/// <item><b>Ball and responders</b> (A6.1): the elected responder, the carrier's feet, the intended
-/// receiver of a pass in flight and the ball itself.</item>
-/// <item><b>Selected action</b> (A4.6): an arrow from the active AI player to the target of his last
-/// chosen candidate.</item>
+/// <item><b>State labels</b>: one small floating state above every player (<c>PRESSING</c>, <c>MARKING</c>,
+/// <c>SUPPORT_RUN</c>, <c>RECOVERY</c> ...), tinted by the team's phase (green attacking, blue defending).</item>
+/// <item><b>Tethers</b>: a thin line from a marker to the exact opponent he marks, and from a runner to the
+/// target coordinate he is sprinting toward.</item>
+/// <item><b>Pass forensics</b>: the intended target (cyan X), the passer-to-target line, the actual post-error
+/// initial velocity arrow, the predicted receiver vector, the ball's resting point from a real solver replay,
+/// the ETA labels, and the actual arrival delta once the pass resolves.</item>
+/// <item><b>Trap radius and touch rejection</b>: the receiver's exact contact radius as a wireframe circle, and
+/// a 2 s floating reason (<c>TOO_FAST</c>, <c>TOO_HIGH</c>, <c>ON_COOLDOWN</c>, <c>WRONG_STATE</c>) when the ball
+/// is inside it without being controlled.</item>
+/// <item><b>Pass corridor</b>: the corridor at the defender's reach width, plus every nearby defender's
+/// time-scaled sprint circle during the ball's ETA; a circle that overlaps the corridor marks the pass unsafe.</item>
+/// <item><b>Frozen decision</b>: straight option lines (green chosen, yellow alternatives, red rejected) with
+/// the score on each line, held until the next kick or 3 seconds, plus the four-line decision readout in the
+/// top-right corner.</item>
 /// </list>
 ///
-/// F4 (<see cref="ToggleWatchedTeam"/>) swaps which team's heat map/belief/perception the overlay shows;
-/// team-coded geometry is cyan for the watched team and red for the other one in both views.
+/// Every layer is derived from state the simulation already publishes; nothing here is written back and no
+/// simulation RNG is drawn. Ball flight and resting points are replayed on a cloned <see cref="BallState"/> by
+/// a second <see cref="BallPhysicsSolver"/> with the match's own pitch, so they use the same drag, rolling
+/// resistance and bounce rules as the live ball.
 /// </summary>
 public partial class MatchDebugView : Node3D
 {
-    /// <summary>How often the whole-pitch control map is rebuilt, in engine ticks (0.1 s).</summary>
-    private const int HeatMapRefreshTicks = 6;
+    private const int HeatMapRefreshTicks = 8;
+    private const int MaxContactSettleTicks = 180;
+    private const int DeliveryLifetimeTicks = 1800;
+    private const int ResolvedDeliveryLifetimeTicks = 300;
+    private const int DecisionLifetimeTicks = 180;
+    private const float FallbackCorridorHalfWidthMeters = 1.20f;
+    private const float MaxDefenderCircleMeters = 14f;
 
-    /// <summary>Sight cone used by perception (A2.2): ±100° around the gaze direction.</summary>
-    private const float SightHalfAngleRadians = 1.745f;
-
+    private static readonly Color SupportColour = new(0.32f, 0.92f, 0.52f);
+    private static readonly Color DefendColour = new(0.34f, 0.68f, 1.00f);
     private static readonly Color WatchedColour = new(0.13f, 0.83f, 0.93f);
     private static readonly Color OpponentColour = new(0.97f, 0.44f, 0.44f);
-    private static readonly Color BeliefColour = new(0.99f, 0.77f, 0.30f);
-    private static readonly Color SeenColour = new(0.36f, 0.95f, 0.58f);
-    private static readonly Color MemoryColour = new(0.99f, 0.78f, 0.30f);
-    private static readonly Color CoordinationColour = new(0.76f, 0.55f, 0.99f);
-    private static readonly Color GoldColour = new(1.00f, 0.84f, 0.32f);
-    private static readonly Color ActionColour = new(0.99f, 0.45f, 0.73f);
+    private static readonly Color Cyan = new(0.20f, 0.95f, 1.00f);
+    private static readonly Color Yellow = new(1.00f, 0.86f, 0.16f);
+    private static readonly Color Magenta = new(0.98f, 0.42f, 0.98f);
+    private static readonly Color RejectColour = new(1.00f, 0.20f, 0.20f);
+    private static readonly Color UnsafeCorridorColour = new(1.00f, 0.55f, 0.10f);
+    private static readonly Color ChosenColour = new(0.15f, 1.00f, 0.42f);
+    private static readonly Color White = new(1f, 1f, 1f);
+    private static readonly Color WarmWhite = new(0.93f, 0.95f, 1.00f);
 
     private readonly Dictionary<int, FootballerState> _byId = new();
     private readonly List<FootballerState> _activePlayers = new();
+    private readonly BallFlightPreview _flight = new();
+    private readonly TouchRejectionTracker _touchRejections = new();
 
     private DebugMeshPainter _painter = null!;
+    private MatchDebugLabels _labels = null!;
+    private MatchDebugPanel _panel = null!;
+    private BallPhysicsSolver? _ballSolver;
+    private PitchDimensions? _solverPitch;
+    private PassPlanner? _passPlanner;
     private SpatialOverlayMap? _heatMap;
     private Color[] _heatColours = Array.Empty<Color>();
     private int _heatBuiltTick = -1;
+    private DeliverySnapshot? _delivery;
+    private DecisionSnapshot? _decision;
+    private int _lastContactTick = -1;
     private TeamId _watchedTeam = TeamId.Home;
     private bool _enabled;
 
@@ -76,60 +92,616 @@ public partial class MatchDebugView : Node3D
     public override void _Ready()
     {
         _painter = new DebugMeshPainter(this);
+
+        var canvas = new CanvasLayer();
+        AddChild(canvas);
+        _labels = new MatchDebugLabels();
+        canvas.AddChild(_labels);
+        _panel = new MatchDebugPanel();
+        canvas.AddChild(_panel);
+
         _painter.Visible = _enabled;
+        _labels.SetLayerVisible(false);
+        _panel.SetSnapshot(null);
     }
 
-    /// <summary>Shows or hides the whole overlay. Hidden means no mesh is rebuilt at all.</summary>
     public void SetEnabled(bool enabled)
     {
         _enabled = enabled;
         if (_painter is not null) _painter.Visible = enabled;
-        if (enabled) _heatBuiltTick = -1;
+        if (_labels is not null) _labels.SetLayerVisible(enabled);
+        if (_panel is not null) _panel.SetSnapshot(enabled ? _decision : null);
+
+        if (!enabled)
+        {
+            _delivery = null;
+            _decision = null;
+            _touchRejections.Clear();
+            _lastContactTick = -1;
+            return;
+        }
+
+        _heatBuiltTick = -1;
+        _lastContactTick = -1;
     }
 
-    /// <summary>F4: switch which team's map/belief/perception is drawn.</summary>
+    /// <summary>F4: switch which team the background control map shows.</summary>
     public void ToggleWatchedTeam()
     {
         _watchedTeam = _watchedTeam == TeamId.Home ? TeamId.Away : TeamId.Home;
         _heatBuiltTick = -1;
     }
 
-    /// <summary>
-    /// Rebuilds the overlay for this rendered frame. Called after the simulation step, so everything read
-    /// is the state of the tick that is about to be drawn. Read-only with respect to the match.
-    /// </summary>
     public void Refresh(MatchSimulationEngine engine, FootballerState activePlayer)
     {
         if (!_enabled || _painter is null) return;
 
+        EnsureServices(engine);
         BuildPlayerLookup(engine);
 
+        if (_lastContactTick < 0) _lastContactTick = engine.CurrentTick - 1;
+        ProcessContacts(engine);
+        UpdateDecision(engine);
+        UpdateTouchRejections(engine);
+        ExpireState(engine);
+
         _painter.Begin();
+        _labels.Begin();
         try
         {
             DrawControlMap(engine);
-            DrawDefensiveLineBands(engine);
-            DrawCoverageRequests(engine);
-            DrawRuns(engine);
-            DrawCombinations(engine);
-            DrawTraps(engine);
-            DrawRestartRoutine(engine);
-            DrawHeardCalls(engine);
-            DrawJobs(engine);
-            DrawBelief(engine);
-            DrawPerception(engine, activePlayer);
-            DrawBallState(engine);
-            DrawResponders(engine);
-            DrawSelectedAction(engine, activePlayer);
+            DrawLineBands(engine);
+            DrawPlayerStates(engine);
+            DrawDelivery(engine);
+            DrawDecision();
+            DrawTouchRejections(engine);
         }
         finally
         {
+            _labels.End();
             _painter.End();
+        }
+
+        if (_decision is { } frozenDecision)
+            frozenDecision.SecondsLeft = Mathf.Max(0f, (frozenDecision.ExpiresTick - engine.CurrentTick) / 60f);
+        _panel.SetSnapshot(_decision);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Services and lookups
+    // ---------------------------------------------------------------------------------------------
+
+    private void EnsureServices(MatchSimulationEngine engine)
+    {
+        if (_ballSolver is not null && ReferenceEquals(_solverPitch, engine.Pitch)) return;
+
+        // Parameters are the match's defaults; the pitch instance is what matters for boundary bounces.
+        _ballSolver = new BallPhysicsSolver(null, engine.Pitch);
+        _solverPitch = engine.Pitch;
+        _passPlanner = new PassPlanner(engine.Pitch);
+    }
+
+    private void BuildPlayerLookup(MatchSimulationEngine engine)
+    {
+        _byId.Clear();
+        _activePlayers.Clear();
+        foreach (FootballerState player in engine.Players)
+        {
+            _byId[player.Id] = player;
+            if (player.IsActiveOnPitch) _activePlayers.Add(player);
         }
     }
 
     // ---------------------------------------------------------------------------------------------
-    // A2.4–A2.6: whole-pitch control map
+    // Contact log: kick detection, pass snapshot, arrival resolution
+    // ---------------------------------------------------------------------------------------------
+
+    private void ProcessContacts(MatchSimulationEngine engine)
+    {
+        IReadOnlyList<BallContactEvent> log = engine.ContactLog;
+        if (log.Count == 0)
+        {
+            if (_lastContactTick > engine.CurrentTick) _lastContactTick = engine.CurrentTick;
+            return;
+        }
+
+        int processed = _lastContactTick;
+        for (int index = 0; index < log.Count; index++)
+        {
+            BallContactEvent contact = log[index];
+            if (contact.Tick <= processed) continue;
+            ProcessContact(engine, contact);
+            processed = Mathf.Max(processed, contact.Tick);
+        }
+
+        _lastContactTick = processed;
+    }
+
+    private void ProcessContact(MatchSimulationEngine engine, in BallContactEvent contact)
+    {
+        if (_delivery is { } delivery && contact.Kind != BallContactKind.Kick)
+        {
+            if (!delivery.Resolved && contact.PlayerId != delivery.KickerId)
+                ResolveDelivery(delivery, contact.Tick, contact.PlayerId);
+        }
+        else if (_delivery is { } passing && contact.Kind == BallContactKind.Kick &&
+                 contact.PlayerId != passing.KickerId && !passing.Resolved)
+        {
+            ResolveDelivery(passing, contact.Tick, contact.PlayerId);
+        }
+
+        if (contact.Kind != BallContactKind.Kick) return;
+
+        // A restart kick can carry no KickIntentType yet still name the man it is played to (the rules engine
+        // owns that play). Treat it as a pass for the overlay: the owner's "see the decision when they pass"
+        // question applies to the kick-off as much as to open play.
+        if (!KickIntents.IsPass(contact.Intent) && contact.IntendedReceiverId is null) return;
+        CreateDelivery(engine, contact);
+    }
+
+    private void CreateDelivery(MatchSimulationEngine engine, in BallContactEvent contact)
+    {
+        if (!_byId.TryGetValue(contact.PlayerId, out FootballerState? kicker)) return;
+
+        int? receiverId = contact.IntendedReceiverId;
+        FootballerState? receiver = receiverId is int rid && _byId.TryGetValue(rid, out FootballerState? recv)
+            ? recv
+            : null;
+
+        // The intended target: the AI's selected pass candidate carries the exact meeting point the planner
+        // aimed at; a human or a fallback uses the receiver / cursor / command aim.
+        NVector2 targetXZ = default;
+        bool hasTarget = false;
+        if (engine.GetController(kicker.Id) is TacticalUtilityAiController { LastSelected: var selected } &&
+            selected.Key.Kind == CandidateKind.Pass &&
+            selected.Key.TargetPlayerId == (receiverId ?? 0) &&
+            selected.TargetXZ is NVector3 candidateTarget)
+        {
+            targetXZ = new NVector2(candidateTarget.X, candidateTarget.Z);
+            hasTarget = true;
+        }
+
+        if (!hasTarget && receiver is not null)
+        {
+            targetXZ = new NVector2(receiver.Position.X, receiver.Position.Z);
+            hasTarget = true;
+        }
+
+        if (!hasTarget && engine.LockedHumanController is { IsSpectatorMode: false } human &&
+            human.LockedPlayerId == kicker.Id && human.AimPointXZ is NVector2 aimPoint &&
+            (aimPoint - new NVector2(kicker.Position.X, kicker.Position.Z)).LengthSquared() > 1f)
+        {
+            targetXZ = aimPoint;
+            hasTarget = true;
+        }
+
+        if (!hasTarget)
+        {
+            NVector3 aim = kicker.LastCommand.KickAimDirectionXZ;
+            var aimXZ = new NVector2(aim.X, aim.Z);
+            if (aimXZ.LengthSquared() < 1e-4f) return;
+            float range = _passPlanner?.RangeFor(kicker.LastCommand.KickPower01) ?? 20f;
+            if (!float.IsFinite(range) || range <= 0f) range = 20f;
+            aimXZ = NVector2.Normalize(aimXZ);
+            targetXZ = new NVector2(kicker.Position.X, kicker.Position.Z) + aimXZ * range;
+        }
+
+        var delivery = new DeliverySnapshot
+        {
+            KickerId = kicker.Id,
+            Team = kicker.Team,
+            Intent = contact.Intent,
+            KickTick = contact.Tick,
+            ReceiverId = receiverId,
+            PasserPosition = Ground(kicker.Position, 0.08f),
+            ContactBallPosition = Ground(contact.BallPosition, 0.07f),
+            Target = new Vector3(targetXZ.X, 0.07f, targetXZ.Y),
+            InitialVelocity = new Vector3(engine.Ball.Velocity.X, engine.Ball.Velocity.Y, engine.Ball.Velocity.Z),
+            ReceiverStart = receiver is null ? Vector3.Zero : Ground(receiver.Position, 0.08f),
+            CorridorHalfWidth = DefenderTackleReach(engine, kicker.Team)
+        };
+
+        // Start the replay where the ball was actually struck, not where it has drifted to while the contact
+        // was being noticed: the resting point and the ETAs are read as the pass's, at kick time.
+        _flight.Build(engine.Ball, _ballSolver!, delivery.ContactBallPosition, engine.Pitch);
+        if (_flight.TryClosestApproach(new NVector2(targetXZ.X, targetXZ.Y), 6f,
+                out float closestDistance, out float ballEta, out Vector3 closestPoint))
+        {
+            delivery.BallEtaSeconds = ballEta;
+            delivery.BallClosestPoint = closestPoint;
+            if (closestDistance > 3f) delivery.BallEtaSeconds = -1f;
+        }
+
+        if (receiver is not null)
+        {
+            ReachKinematics kinematics = ReachKinematics.From(receiver);
+            ReachEstimate estimate = TimeToReachModel.ToPoint(
+                kinematics, targetXZ, horizonSeconds: 8f, sprint: true);
+            delivery.ReceiverEtaSeconds = estimate.Reachable ? estimate.Seconds : -1f;
+        }
+
+        delivery.RestingPoint = _flight.RestingPoint;
+        delivery.WouldLeavePitch = _flight.LeftPitch;
+        BuildCorridor(delivery);
+        _delivery = delivery;
+    }
+
+    /// <summary>
+    /// Half the corridor's width: the widest tackle/interception reach among the opponents. A defender whose
+    /// body is closer to the pass line than this can play the ball, so the corridor is drawn at exactly the
+    /// distance that makes the pass contestable — the same question A4.8's lane radius answers for the planner.
+    /// </summary>
+    private static float DefenderTackleReach(MatchSimulationEngine engine, TeamId passerTeam)
+    {
+        float widest = 0f;
+        foreach (FootballerState player in engine.Players)
+        {
+            if (!player.IsActiveOnPitch || player.Team == passerTeam) continue;
+            float reach = BallContactRules.ReachRadius(
+                player.Attributes.ReachRadius, keeperHandling: false, player.IsDiving,
+                requestingTackle: true, receivingOrDribbling: false);
+            if (reach > widest) widest = reach;
+        }
+
+        return widest > 0.2f ? widest : FallbackCorridorHalfWidthMeters;
+    }
+
+    private void BuildCorridor(DeliverySnapshot delivery)
+    {
+        Vector3 start = delivery.ContactBallPosition;
+        Vector3 target = delivery.Target;
+        Vector3 delta = target - start;
+        float length = new Vector2(delta.X, delta.Z).Length();
+        if (length < 0.5f) return;
+
+        var origin = new NVector2(start.X, start.Z);
+        var end = new NVector2(target.X, target.Z);
+        NVector2 direction = NVector2.Normalize(end - origin);
+
+        foreach (FootballerState defender in _activePlayers)
+        {
+            if (defender.Team == delivery.Team) continue;
+
+            var position = new NVector2(defender.Position.X, defender.Position.Z);
+            float along = NVector2.Dot(position - origin, direction);
+            if (along <= 0f || along >= length) continue;
+
+            NVector2 projection = origin + direction * along;
+            float perpendicular = (position - projection).Length();
+            if (perpendicular > 18f) continue;
+
+            float eta = _flight.TimeAtProjection(start, target, along);
+            if (eta < 0f) continue;
+
+            float sprintSpeed = TimeToReachModel.SpeedCap(ReachKinematics.From(defender), sprint: true);
+            float radius = Mathf.Min(MaxDefenderCircleMeters, sprintSpeed * eta);
+            if (radius < 0.6f) continue;
+
+            bool overlaps = perpendicular <= radius + delivery.CorridorHalfWidth;
+            delivery.DefenderReaches.Add(new DefenderReach(
+                defender.Id, Ground(defender.Position, 0.06f), radius, overlaps));
+            if (overlaps) delivery.CorridorUnsafe = true;
+        }
+    }
+
+    private void ResolveDelivery(DeliverySnapshot delivery, int tick, int toucherId)
+    {
+        delivery.Resolved = true;
+        delivery.ResolvedTick = tick;
+        delivery.ActualToucherId = toucherId;
+
+        FootballerState? receiver = delivery.ReceiverId is int id && _byId.TryGetValue(id, out FootballerState? found)
+            ? found
+            : null;
+        delivery.ReceiverEnd = receiver is not null
+            ? Ground(receiver.Position, 0.08f)
+            : _byId.TryGetValue(toucherId, out FootballerState? toucher)
+                ? Ground(toucher.Position, 0.08f)
+                : delivery.Target;
+        delivery.ArrivalDeltaMeters = new Vector2(
+            delivery.ReceiverEnd.X - delivery.Target.X,
+            delivery.ReceiverEnd.Z - delivery.Target.Z).Length();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Decision snapshot
+    // ---------------------------------------------------------------------------------------------
+
+    private void UpdateDecision(MatchSimulationEngine engine)
+    {
+        // A frozen decision owns its full three-second read window: a newer decision (usually the next
+        // carrier, a second after the pass) does not overwrite it mid-window. That is what makes "keep it
+        // frozen so you have time to read it" true when play does not pause for the debugger.
+        if (_decision is { } frozen && engine.CurrentTick <= frozen.ExpiresTick) return;
+
+        int? carrierId = engine.Possession.ControllingPlayerId;
+        if (carrierId is not int playerId ||
+            engine.GetController(playerId) is not TacticalUtilityAiController controller)
+        {
+            return;
+        }
+
+        UtilityCandidate selected = controller.LastSelected;
+        if (!IsOnBallKind(selected.Key.Kind)) return;
+
+        var snapshot = new DecisionSnapshot
+        {
+            PlayerId = playerId,
+            CreatedTick = engine.CurrentTick,
+            ExpiresTick = engine.CurrentTick + DecisionLifetimeTicks,
+            Origin = Ground(_byId.TryGetValue(playerId, out FootballerState? carrier)
+                    ? carrier.Position
+                    : NVector3.Zero, 0.08f),
+            SelectedIdentity = selected.Identity,
+            SecondsLeft = DecisionLifetimeTicks / 60f,
+            Title = $"{PlayerLabel(playerId)} → {ActionLabel(selected)}"
+        };
+
+        // The winner's row is read from this tick's candidate table when the key is still there, so its score
+        // and terms are the same snapshot as the alternatives. Taking the controller's LastSelected score (a
+        // decision from an earlier tick) could print a winner below its runner-up when the table had moved on.
+        IReadOnlyList<UtilityCandidate> candidates = controller.LastCandidates;
+        UtilityCandidate chosen = selected;
+        for (int index = 0; index < candidates.Count; index++)
+        {
+            if (candidates[index].Key != selected.Key) continue;
+            chosen = candidates[index];
+            break;
+        }
+
+        DecisionOption chosenRow = ToOption(chosen, chosen: true, rejected: false, reason: string.Empty);
+        snapshot.Options.Add(chosenRow);
+
+        // Every other option the carrier actually generated this decision: passes, carries, the take-on, the
+        // shot. They are all drawn (the request is to see what was considered, not only the top three), with
+        // the corner readout left to summarise the winner and the two nearest callers.
+        var alternatives = new List<UtilityCandidate>();
+        for (int index = 0; index < candidates.Count; index++)
+        {
+            UtilityCandidate candidate = candidates[index];
+            if (!IsOnBallKind(candidate.Key.Kind)) continue;
+            if (candidate.Key == chosen.Key) continue;
+            alternatives.Add(candidate);
+        }
+
+        alternatives.Sort((left, right) => right.UtilityScore.CompareTo(left.UtilityScore));
+        var alternativeRows = new List<DecisionOption>();
+        for (int index = 0; index < alternatives.Count; index++)
+        {
+            DecisionOption row = ToOption(alternatives[index], chosen: false, rejected: false, reason: string.Empty);
+            snapshot.Options.Add(row);
+            alternativeRows.Add(row);
+        }
+
+        // The refusals are options too: a blocked lane or a man out of range is what makes the chosen line
+        // the chosen one, so each gets a dashed red line of its own.
+        var rejectionRows = new List<DecisionOption>();
+        for (int index = 0; index < controller.RejectionCount; index++)
+        {
+            CandidateRejection rejection = controller.GetRejection(index);
+            if (!_byId.TryGetValue(rejection.TargetPlayerId, out FootballerState? target)) continue;
+
+            var row = new DecisionOption
+            {
+                ActionLabel = $"PASS {PlayerLabel(rejection.TargetPlayerId)}",
+                Reason = RejectionLabel(rejection.Reason),
+                Rejected = true,
+                Kind = CandidateKind.Pass,
+                TargetPlayerId = rejection.TargetPlayerId,
+                Target = Ground(target.Position, 0.08f)
+            };
+            snapshot.Options.Add(row);
+            rejectionRows.Add(row);
+        }
+
+        // The readout is three rows: winner, best alternative, most useful refusal. A blocked option stays
+        // visible even when a second alternative scored above it.
+        snapshot.PanelRows.Add(chosenRow);
+        int alternativeIndex = 0;
+        int rejectionIndex = 0;
+        if (alternativeIndex < alternativeRows.Count)
+            snapshot.PanelRows.Add(alternativeRows[alternativeIndex++]);
+        if (rejectionIndex < rejectionRows.Count)
+            snapshot.PanelRows.Add(rejectionRows[rejectionIndex++]);
+        if (snapshot.PanelRows.Count < 3 && alternativeIndex < alternativeRows.Count)
+            snapshot.PanelRows.Add(alternativeRows[alternativeIndex++]);
+        if (snapshot.PanelRows.Count < 3 && rejectionIndex < rejectionRows.Count)
+            snapshot.PanelRows.Add(rejectionRows[rejectionIndex]);
+
+        _decision = snapshot;
+    }
+
+    /// <summary>Shirt number for a debug label; the entity id is only a fallback when the player is unknown.</summary>
+    private string PlayerLabel(int playerId) =>
+        _byId.TryGetValue(playerId, out FootballerState? player) ? $"#{player.ShirtNumber}" : $"#{playerId}";
+
+    private DecisionOption ToOption(UtilityCandidate candidate, bool chosen, bool rejected, string reason) =>
+        new()
+        {
+            ActionLabel = ActionLabel(candidate),
+            Score = candidate.UtilityScore,
+            Chosen = chosen,
+            Rejected = rejected,
+            Reason = reason,
+            Terms = candidate.Terms,
+            Kind = candidate.Key.Kind,
+            TargetPlayerId = candidate.Key.TargetPlayerId,
+            Target = candidate.TargetXZ is NVector3 target
+                ? new Vector3(target.X, 0.08f, target.Z)
+                : Vector3.Zero
+        };
+
+    private static bool IsOnBallKind(CandidateKind kind) => kind is
+        CandidateKind.Pass or CandidateKind.Carry or CandidateKind.Dribble or
+        CandidateKind.Shot or CandidateKind.Shield or CandidateKind.Clearance;
+
+    private string ActionLabel(UtilityCandidate candidate)
+    {
+        string label = candidate.Key.Kind switch
+        {
+            CandidateKind.Pass => "PASS",
+            CandidateKind.Carry => "CARRY",
+            CandidateKind.Dribble => "DRIBBLE",
+            CandidateKind.Shot => "SHOT",
+            CandidateKind.Shield => "SHIELD",
+            CandidateKind.Clearance => "CLEAR",
+            _ => candidate.ActionName.ToUpperInvariant()
+        };
+
+        return candidate.Key.TargetPlayerId > 0
+            ? $"{label} {PlayerLabel(candidate.Key.TargetPlayerId)}"
+            : label;
+    }
+
+    private static string RejectionLabel(string reason) => reason switch
+    {
+        "lane-blocked" => "BLOCKED",
+        "low-completion" => "LOW_P",
+        "offside" => "OFFSIDE",
+        "out-of-range" => "RANGE",
+        "unplannable" => "NO_PLAN",
+        "own-goal-margin" => "OWN_GOAL",
+        _ => reason.ToUpperInvariant()
+    };
+
+    // ---------------------------------------------------------------------------------------------
+    // Touch rejection tracker
+    // ---------------------------------------------------------------------------------------------
+
+    private void UpdateTouchRejections(MatchSimulationEngine engine)
+    {
+        int tick = engine.CurrentTick;
+        _touchRejections.Update(tick);
+        TagRefusedAttempts(engine, tick);
+        TagReceiverTrapFailure(engine, tick);
+    }
+
+    /// <summary>
+    /// The authoritative half: a player asked to play the ball and the execution layer refused him. The attempt
+    /// log is the execution's own verdict (audit F17), so the floating tag repeats the real reason instead of
+    /// re-deriving one. Refusals of a ball that was not physically at the player are not trap failures.
+    /// </summary>
+    private void TagRefusedAttempts(MatchSimulationEngine engine, int tick)
+    {
+        IReadOnlyList<BallContactAttempt> attempts = engine.LastContactAttempts;
+        for (int index = 0; index < attempts.Count; index++)
+        {
+            BallContactAttempt attempt = attempts[index];
+            if (attempt.Executed || attempt.Tick != tick) continue;
+
+            string? reason = attempt.Reason switch
+            {
+                ContactRejectionReason.BallTooHigh => "TOO_HIGH",
+                ContactRejectionReason.FacingAway => "WRONG_STATE",
+                ContactRejectionReason.InRecovery => "ON_COOLDOWN",
+                ContactRejectionReason.LostArbitration => "CONTESTED",
+                ContactRejectionReason.BallHeld => "HELD",
+                ContactRejectionReason.RestartTriggered => "RESTART",
+                _ => null
+            };
+            if (reason is not null) TagTouch(attempt.PlayerId, reason, tick);
+        }
+    }
+
+    /// <summary>
+    /// The receiver half: the ball entered the intended receiver's trap radius and he did not control it. The
+    /// gates below are the execution layer's own rules and predicates; the tag only reports which one refused
+    /// the contact. It never decides anything and never moves a body.
+    /// </summary>
+    private void TagReceiverTrapFailure(MatchSimulationEngine engine, int tick)
+    {
+        if (_delivery is not { Resolved: false } delivery || delivery.ReceiverId is not int receiverId) return;
+        if (!_byId.TryGetValue(receiverId, out FootballerState? receiver) || !receiver.IsActiveOnPitch) return;
+        if (engine.Rules.IsPlaySuspended) return;
+        if (engine.Possession.ControllingPlayerId == receiverId || engine.Ball.HeldByPlayerId is not null) return;
+
+        BallState ball = engine.Ball;
+        var toBall = new NVector2(ball.Position.X - receiver.Position.X,
+            ball.Position.Z - receiver.Position.Z);
+        float distance = toBall.Length();
+        bool receiving = BallContactRules.IsReceivingOrDribbling(
+            ball.LastTouchedByTeam, ball.LastTouchedByPlayerId, receiver.Team, receiver.Id);
+        float reach = BallContactRules.ReachRadius(
+            receiver.Attributes.ReachRadius, keeperHandling: false, receiver.IsDiving,
+            receiver.LastCommand.RequestTackle, receiving);
+        if (distance > reach) return;
+
+        float maxHeight = BallContactRules.MaxContactHeight(
+            keeperHandling: false,
+            jumpingOrHeading: receiver.IsJumping || receiver.LastCommand.KickType == KickIntentType.Header);
+        if (!BallContactRules.IsHeightReachable(ball.Position.Y, receiver.Position.Y, maxHeight))
+        {
+            TagTouch(receiver.Id, "TOO_HIGH", tick);
+            return;
+        }
+
+        if (!receiver.AvailableToKick)
+        {
+            TagTouch(receiver.Id, "ON_COOLDOWN", tick);
+            return;
+        }
+
+        float facingDot = distance > 1e-4f
+            ? NVector2.Dot(toBall * (1f / distance), new NVector2(receiver.FacingXZ.X, receiver.FacingXZ.Y))
+            : 1f;
+        if (!BallContactRules.IsFacingTheBall(facingDot, receiving, keeperHandling: false))
+            TagTouch(receiver.Id, "WRONG_STATE", tick);
+    }
+
+    /// <summary>Records a touch-rejection tag for the 2 s floating reason above the player.</summary>
+    private void TagTouch(int playerId, string reason, int tick)
+    {
+        _touchRejections.Tag(playerId, reason, tick);
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Expiry / settling
+    // ---------------------------------------------------------------------------------------------
+
+    private void ExpireState(MatchSimulationEngine engine)
+    {
+        int tick = engine.CurrentTick;
+
+        if (_decision is not null && tick > _decision.ExpiresTick)
+            _decision = null;
+
+        if (_delivery is null) return;
+
+        int age = _delivery.AgeTicks(tick);
+        int lifetime = _delivery.Resolved ? ResolvedDeliveryLifetimeTicks : DeliveryLifetimeTicks;
+        if (age > lifetime)
+        {
+            _delivery = null;
+            return;
+        }
+
+        if (_delivery.Resolved || age < 30) return;
+
+        // A ball that came back under somebody's control before the contact log closed the pass means the
+        // pass has effectively ended; resolve it now so the delta is this pass's, not the next passage's.
+        if (engine.Possession.ControllingPlayerId is int controllerId && controllerId != _delivery.KickerId)
+        {
+            ResolveDelivery(_delivery, tick, controllerId);
+            return;
+        }
+
+        float speed = new NVector2(engine.Ball.Velocity.X, engine.Ball.Velocity.Z).Length();
+        bool settling = speed < 0.25f && engine.Ball.ContactState == BallContactSurface.RollingOrSlidingGround;
+        if (settling || age > MaxContactSettleTicks)
+        {
+            ResolveDelivery(_delivery, tick, _delivery.KickerId);
+            _delivery.ReceiverEnd = _delivery.ReceiverId is int receiverId &&
+                                    _byId.TryGetValue(receiverId, out FootballerState? receiver)
+                ? Ground(receiver.Position, 0.08f)
+                : Ground(engine.Ball.Position, 0.08f);
+            _delivery.ArrivalDeltaMeters = new Vector2(
+                _delivery.ReceiverEnd.X - _delivery.Target.X,
+                _delivery.ReceiverEnd.Z - _delivery.Target.Z).Length();
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Background: control map and defensive-line bands
     // ---------------------------------------------------------------------------------------------
 
     private void DrawControlMap(MatchSimulationEngine engine)
@@ -151,7 +723,7 @@ public partial class MatchDebugView : Node3D
                 float mine = _heatMap.InfluenceShare[index];
                 float theirs = _heatMap.OpponentInfluenceShare[index];
                 float total = Mathf.Clamp(mine + theirs, 0f, 1f);
-                if (total <= 0.02f)
+                if (total <= 0.08f)
                 {
                     _heatColours[index] = new Color(0f, 0f, 0f, 0f);
                     continue;
@@ -163,11 +735,11 @@ public partial class MatchDebugView : Node3D
                     Mathf.Lerp(OpponentColour.R, WatchedColour.R, watched),
                     Mathf.Lerp(OpponentColour.G, WatchedColour.G, watched),
                     Mathf.Lerp(OpponentColour.B, WatchedColour.B, watched));
-                _heatColours[index] = new Color(tint.R, tint.G, tint.B, 0.02f + 0.26f * total);
+                _heatColours[index] = new Color(tint.R, tint.G, tint.B, 0.012f + 0.09f * total);
             }
         }
 
-        const float y = 0.035f;
+        const float y = 0.030f;
         const float half = SpatialOverlayMap.CellSizeMeters * 0.5f - 0.15f;
         for (int row = 0; row < _heatMap.Rows; row++)
         {
@@ -186,407 +758,388 @@ public partial class MatchDebugView : Node3D
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // A6.3: defensive-line band
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawDefensiveLineBands(MatchSimulationEngine engine)
+    private void DrawLineBands(MatchSimulationEngine engine)
     {
         float homeDir = engine.Rules.GetHomeAttackDirectionX();
-        float halfWidth = engine.Pitch.HalfWidth;
-
-        DrawLineBand(engine, TeamId.Home, homeDir, halfWidth);
-        DrawLineBand(engine, TeamId.Away, -homeDir, halfWidth);
+        DrawLineBand(engine, TeamId.Home, homeDir);
+        DrawLineBand(engine, TeamId.Away, -homeDir);
     }
 
-    private void DrawLineBand(MatchSimulationEngine engine, TeamId team, float attackDirX, float halfWidth)
+    private void DrawLineBand(MatchSimulationEngine engine, TeamId team, float attackDirX)
     {
         DefensiveLineBand band = engine.TeamJobs.LineBandOf(team);
         if (!band.IsValid) return;
 
-        Color colour = TeamColour(team);
+        Color colour = team == _watchedTeam ? WatchedColour : OpponentColour;
+        float halfWidth = engine.Pitch.HalfWidth;
         float x1 = band.MinProjX * attackDirX;
         float x2 = band.MaxProjX * attackDirX;
         float lineX = band.ProjX * attackDirX;
         float minX = MathF.Min(x1, x2);
         float maxX = MathF.Max(x1, x2);
 
-        // The allowed range is a faint strip; the band the line is standing in is the bright hairline.
-        const float y = 0.045f;
+        const float y = 0.040f;
         _painter.Quad(
             new Vector3(minX, y, -halfWidth), new Vector3(maxX, y, -halfWidth),
             new Vector3(maxX, y, halfWidth), new Vector3(minX, y, halfWidth),
-            WithAlpha(colour, 0.045f));
+            WithAlpha(colour, 0.020f));
+        _painter.Line(new Vector3(lineX, 0.060f, -halfWidth), new Vector3(lineX, 0.060f, halfWidth),
+            0.090f, WithAlpha(colour, 0.42f));
+    }
 
-        _painter.Line(new Vector3(minX, y, -halfWidth), new Vector3(minX, y, halfWidth), 0.035f,
-            WithAlpha(colour, 0.20f));
-        _painter.Line(new Vector3(maxX, y, -halfWidth), new Vector3(maxX, y, halfWidth), 0.035f,
-            WithAlpha(colour, 0.20f));
-        _painter.Line(new Vector3(lineX, 0.075f, -halfWidth), new Vector3(lineX, 0.075f, halfWidth), 0.11f,
-            WithAlpha(colour, 0.65f));
+    // ---------------------------------------------------------------------------------------------
+    // State labels and tethers
+    // ---------------------------------------------------------------------------------------------
 
-        if (band.HasCredibleRunner && _byId.TryGetValue(band.DeepestRunnerId, out FootballerState? runner) &&
-            runner.IsActiveOnPitch)
+    private void DrawPlayerStates(MatchSimulationEngine engine)
+    {
+        for (int index = 0; index < _activePlayers.Count; index++)
         {
-            _painter.Ring(Ground(runner.Position, 0.085f), 0.55f, 0.07f, WithAlpha(BeliefColour, 0.55f), 20);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A3.5: coverage request
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawCoverageRequests(MatchSimulationEngine engine)
-    {
-        DrawCoverageRequest(engine, TeamId.Home);
-        DrawCoverageRequest(engine, TeamId.Away);
-    }
-
-    private void DrawCoverageRequest(MatchSimulationEngine engine, TeamId team)
-    {
-        CoverageRequest request = engine.TeamJobs.CoverageOf(team);
-        if (!request.IsLive) return;
-
-        Color colour = new(0.92f, 0.47f, 0.98f);
-        Vector3 region = Ground(request.Region, 0.085f);
-        _painter.Ring(region, 0.85f, 0.06f, WithAlpha(colour, 0.55f), 22);
-
-        if (_byId.TryGetValue(request.OwnerPlayerId, out FootballerState? owner) && owner.IsActiveOnPitch)
-            _painter.DashedLine(Ground(owner.Position, 0.085f), region, 0.045f, WithAlpha(colour, 0.35f),
-                0.55f, 0.45f);
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A5.3: advertised runs
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawRuns(MatchSimulationEngine engine)
-    {
-        DrawRunsForTeam(engine, TeamId.Home);
-        DrawRunsForTeam(engine, TeamId.Away);
-    }
-
-    private void DrawRunsForTeam(MatchSimulationEngine engine, TeamId team)
-    {
-        int count = engine.Communication.Runs.VisibleCount(team, engine.CurrentTick);
-        for (int index = 0; index < count; index++)
-        {
-            if (!engine.Communication.Runs.TryGetVisibleAt(team, index, engine.CurrentTick,
-                    out RunAdvertisement advertisement)) continue;
-            if (!_byId.TryGetValue(advertisement.PlayerId, out FootballerState? runner) || !runner.IsActiveOnPitch)
-                continue;
-
-            float promise = advertisement.Promise01(engine.CurrentTick);
-            Color colour = WithAlpha(TeamColour(team), 0.16f + 0.40f * promise);
-            Vector3 meet = Ground(advertisement.MeetXZ, 0.085f);
-            _painter.DashedLine(Ground(runner.Position, 0.085f), meet, 0.045f, colour, 0.65f, 0.45f);
-            _painter.Ring(meet, advertisement.MeetRadiusMeters, 0.05f, colour, 22);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A8.1: combination return region
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawCombinations(MatchSimulationEngine engine)
-    {
-        DrawCombinationsForTeam(engine, TeamId.Home);
-        DrawCombinationsForTeam(engine, TeamId.Away);
-    }
-
-    private void DrawCombinationsForTeam(MatchSimulationEngine engine, TeamId team)
-    {
-        int count = engine.Communication.Combinations.LiveCount(team, engine.CurrentTick);
-        for (int index = 0; index < count; index++)
-        {
-            if (!engine.Communication.Combinations.TryGetLiveAt(team, index, engine.CurrentTick,
-                    out CombinationContract contract)) continue;
-            if (!_byId.TryGetValue(contract.ReceiverId, out FootballerState? receiver) || !receiver.IsActiveOnPitch)
-                continue;
-
-            Color colour = WithAlpha(CoordinationColour, 0.45f);
-            Vector3 region = Ground(contract.ReturnXZ, 0.085f);
-            _painter.DashedLine(Ground(receiver.Position, 0.085f), region, 0.045f, colour, 0.6f, 0.45f);
-            _painter.Ring(region, MathF.Max(0.35f, contract.ReturnRadiusMeters), 0.055f, colour, 24);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A8.4: short trap
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawTraps(MatchSimulationEngine engine)
-    {
-        DrawTrapForTeam(engine, TeamId.Home);
-        DrawTrapForTeam(engine, TeamId.Away);
-    }
-
-    private void DrawTrapForTeam(MatchSimulationEngine engine, TeamId team)
-    {
-        if (!engine.Communication.Traps.TryGetLive(team, engine.CurrentTick, out TrapContract trap)) return;
-
-        Color press = new(0.99f, 0.57f, 0.23f);
-        Color screen = new(0.99f, 0.82f, 0.30f);
-        Vector3 carrier = Ground(trap.CarrierXZ, 0.09f);
-        Vector3 pressPoint = Ground(trap.CarrierXZ + trap.PressOffsetXZ, 0.09f);
-        Vector3 screenPoint = Ground(trap.CarrierXZ + trap.ScreenOffsetXZ, 0.09f);
-
-        _painter.Ring(carrier, 0.95f, 0.07f, WithAlpha(press, 0.75f), 26);
-        _painter.Ring(pressPoint, 0.38f, 0.05f, WithAlpha(press, 0.55f), 16);
-        _painter.Ring(screenPoint, 0.38f, 0.05f, WithAlpha(screen, 0.65f), 16);
-
-        if (_byId.TryGetValue(trap.PresserId, out FootballerState? presser) && presser.IsActiveOnPitch)
-            _painter.DashedLine(Ground(presser.Position, 0.09f), pressPoint, 0.045f, WithAlpha(press, 0.35f),
-                0.55f, 0.45f);
-        if (_byId.TryGetValue(trap.ScreenId, out FootballerState? screener) && screener.IsActiveOnPitch)
-            _painter.DashedLine(Ground(screener.Position, 0.09f), screenPoint, 0.045f, WithAlpha(screen, 0.35f),
-                0.55f, 0.45f);
-        if (_byId.TryGetValue(trap.CoverId, out FootballerState? cover) && cover.IsActiveOnPitch)
-            _painter.DashedLine(Ground(cover.Position, 0.09f), carrier, 0.045f, WithAlpha(CoordinationColour, 0.30f),
-                0.55f, 0.45f);
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A8.5: restart routine
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawRestartRoutine(MatchSimulationEngine engine)
-    {
-        if (!engine.Communication.Restarts.TryGetLive(engine.CurrentTick, out RestartRoutine routine)) return;
-
-        Color colour = WithAlpha(GoldColour, 0.60f);
-        Vector3 spot = Ground(routine.BallXZ, 0.085f);
-        Vector3 receiver = Ground(routine.ReceiverXZ, 0.085f);
-
-        _painter.Flag(spot, 1.10f, 0.05f, colour);
-        _painter.Ring(receiver, 0.60f, 0.055f, colour, 22);
-
-        if (_byId.TryGetValue(routine.TakerId, out FootballerState? taker) && taker.IsActiveOnPitch)
-            _painter.DashedLine(Ground(taker.Position, 0.085f), receiver, 0.05f, colour, 0.7f, 0.5f);
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // A7.2: calls heard by the watched team
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawHeardCalls(MatchSimulationEngine engine)
-    {
-        Color colour = WithAlpha(SeenColour, 0.16f);
-        foreach (FootballerState player in _activePlayers)
-        {
-            if (player.Team != _watchedTeam) continue;
-
+            FootballerState player = _activePlayers[index];
             FootballerObservation? observation = engine.GetLastObservation(player.Id);
-            if (observation is null || !observation.Calls.HasPlayerCall) continue;
-            if (!_byId.TryGetValue(observation.Calls.CallerId, out FootballerState? caller) ||
-                !caller.IsActiveOnPitch) continue;
+            TeamContext context = observation?.TacticalContext ?? engine.Tactics.ContextFor(player.Team);
+            Color phaseColour = context.Phase == TeamPhase.Attacking ? SupportColour : DefendColour;
 
-            _painter.DashedLine(Ground(caller.Position, 0.075f), Ground(player.Position, 0.075f),
-                0.025f, colour, 0.35f, 0.55f);
+            string state = DescribePlayerState(engine, player, observation, context);
+            float labelLift = 1.95f + player.Id % 3 * 0.20f;
+            _labels.Add(Ground(player.Position, labelLift), state, phaseColour, 13);
+
+            DrawMarkingTether(player, observation);
+            DrawTargetTether(engine, player, observation, context);
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // A3.3/A3.4: job anchors and marking links
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawJobs(MatchSimulationEngine engine)
+    private string DescribePlayerState(MatchSimulationEngine engine, FootballerState player,
+        FootballerObservation? observation, TeamContext context)
     {
-        foreach (FootballerState player in _activePlayers)
+        if (engine.Ball.HeldByPlayerId == player.Id) return "KEEPER_HOLD";
+        if (engine.Possession.ControllingPlayerId == player.Id) return "ON_BALL";
+        if (engine.Possession.IntendedReceiverId == player.Id &&
+            engine.Possession.State == BallControlState.InFlightPass) return "RECEIVING";
+        if (player.Role == TacticalRole.Goalkeeper) return "KEEPER";
+
+        TacticalJob job = observation?.TacticalJob ?? engine.TeamJobs.Get(player.Id)?.Job ?? TacticalJob.Shape;
+        bool attacking = context.Phase == TeamPhase.Attacking;
+
+        return job switch
         {
-            if (engine.TeamJobs.Get(player.Id) is not { } assignment) continue;
+            TacticalJob.BallResponder => attacking ? "SUPPORT" : "CHASING",
+            TacticalJob.Presser => "PRESSING",
+            TacticalJob.Marker => "MARKING",
+            TacticalJob.CoverDefender => "COVERING",
+            TacticalJob.DefensiveCover => "REST_DEFENCE",
+            TacticalJob.DefensiveLine => "LINE",
+            TacticalJob.ProtectGap => "COVER_GAP",
+            TacticalJob.NearOutlet => "OUTLET",
+            TacticalJob.ThirdPlayerOption => "THIRD_OPTION",
+            TacticalJob.DepthRun => "SUPPORT_RUN",
+            TacticalJob.Overlap => "OVERLAP",
+            TacticalJob.FarSideWidth => "HOLD_WIDTH",
+            _ => DescribeShapeState(engine, player, context, attacking)
+        };
+    }
 
-            bool shape = assignment.Job == TacticalJob.Shape;
-            Color colour = JobColour(assignment.Job);
-            Vector3 anchor = Ground(assignment.Anchor, 0.075f);
+    private static string DescribeShapeState(MatchSimulationEngine engine, FootballerState player,
+        TeamContext context, bool attacking)
+    {
+        if (attacking)
+            return context.Transition == TransitionMode.CounterAttack ? "COUNTER_RUN" : "SUPPORT";
 
-            _painter.Disc(anchor, shape ? 0.28f : 0.42f, WithAlpha(colour, shape ? 0.13f : 0.40f), 10);
-            if (!shape)
-            {
-                _painter.DashedLine(Ground(player.Position, 0.075f), anchor, 0.03f,
-                    WithAlpha(colour, 0.14f), 0.55f, 0.55f);
-            }
+        TurnoverSituation turnover = engine.TeamJobs.TurnoverOf(player.Team);
+        if (turnover.Response == TurnoverResponse.Retreat) return "RECOVERY";
+        if (turnover.Response == TurnoverResponse.CounterPress) return "COUNTER_PRESS";
+        return "DEFENDING";
+    }
 
-            if (assignment.IsTemporary)
-                _painter.Ring(anchor, 0.64f, 0.05f, new Color(1f, 1f, 1f, 0.50f), 18);
+    private void DrawMarkingTether(FootballerState player, FootballerObservation? observation)
+    {
+        if (observation is not { TacticalJob: TacticalJob.Marker, JobTargetPlayerId: int targetId }) return;
+        if (!_byId.TryGetValue(targetId, out FootballerState? target) || !target.IsActiveOnPitch) return;
 
-            if (assignment.Job == TacticalJob.Marker && assignment.TargetPlayerId is int targetId &&
-                _byId.TryGetValue(targetId, out FootballerState? marked) && marked.IsActiveOnPitch)
-            {
-                _painter.DashedLine(Ground(player.Position, 0.078f), Ground(marked.Position, 0.078f),
-                    0.04f, WithAlpha(OpponentColour, 0.30f), 0.6f, 0.5f);
-            }
-            else if (assignment.Job == TacticalJob.Presser)
-            {
-                _painter.DashedLine(Ground(player.Position, 0.078f), Ground(engine.Ball.Position, 0.078f),
-                    0.035f, WithAlpha(colour, 0.16f), 0.45f, 0.55f);
-            }
+        // Dark underlay + a dot on the marked man: a 1 px blue line alone was unassignable when several
+        // tethers crossed, and it read as just another pitch marking.
+        Vector3 from = Ground(player.Position, 0.070f);
+        Vector3 to = Ground(target.Position, 0.070f);
+        _painter.Line(from, to, 0.200f, new Color(0f, 0f, 0f, 0.30f));
+        _painter.Line(from, to, 0.120f, WithAlpha(DefendColour, 0.90f));
+        _painter.Disc(to + Vector3.Up * 0.005f, 0.35f, WithAlpha(DefendColour, 0.85f), 12);
+    }
+
+    private void DrawTargetTether(MatchSimulationEngine engine, FootballerState player,
+        FootballerObservation? observation, TeamContext context)
+    {
+        if (context.Phase != TeamPhase.Attacking) return;
+
+        TacticalJob job = observation?.TacticalJob ?? TacticalJob.Shape;
+        if (job is not (TacticalJob.DepthRun or TacticalJob.Overlap or TacticalJob.FarSideWidth or
+            TacticalJob.NearOutlet or TacticalJob.ThirdPlayerOption)) return;
+
+        Vector3 from = Ground(player.Position, 0.070f);
+        Vector3 target;
+        if (engine.Communication.Runs.TryGetAdvertisement(player.Team, player.Id, engine.CurrentTick,
+                out RunAdvertisement advertisement) && advertisement.IsUsableAt(engine.CurrentTick))
+        {
+            target = Ground(advertisement.MeetXZ, 0.070f);
+            _painter.DashedLine(from, target, 0.180f, new Color(0f, 0f, 0f, 0.28f), 0.55f, 0.45f);
+            _painter.DashedLine(from, target, 0.090f, WithAlpha(SupportColour, 0.88f), 0.55f, 0.45f);
         }
+        else
+        {
+            if (observation?.TacticalJobAnchor is not NVector3 anchor) return;
+            target = Ground(anchor, 0.070f);
+            _painter.Line(from, target, 0.180f, new Color(0f, 0f, 0f, 0.28f));
+            _painter.Line(from, target, 0.090f, WithAlpha(SupportColour, 0.80f));
+        }
+
+        _painter.Cross(target, 0.90f, 0.100f, WithAlpha(SupportColour, 0.90f));
     }
 
     // ---------------------------------------------------------------------------------------------
-    // A2.2/A2.6: team belief against the real bodies
+    // Pass forensics
     // ---------------------------------------------------------------------------------------------
 
-    private void DrawBelief(MatchSimulationEngine engine)
+    private void DrawDelivery(MatchSimulationEngine engine)
     {
-        TeamBelief belief = engine.TeamBeliefOf(_watchedTeam);
-        for (int index = 0; index < belief.Opponents.Count; index++)
+        DeliverySnapshot? delivery = _delivery;
+        if (delivery is null) return;
+
+        if (!delivery.Resolved)
         {
-            TeamBelief.Opponent opponent = belief.Opponents[index];
-            Vector3 ghost = Ground(opponent.PositionXZ, 0.09f);
-            float radius = 0.42f + MathF.Min(0.45f, opponent.AgeTicks * 0.004f);
-            float alpha = 0.28f + 0.57f * Mathf.Clamp(opponent.Confidence01, 0f, 1f);
-            _painter.Ring(ghost, radius, 0.11f, WithAlpha(BeliefColour, alpha), 18);
+            // In flight: the full forensic picture while the ball is travelling.
+            DrawCorridor(delivery);
+            DrawTargetMarker(delivery, withEtas: true);
+            DrawInitialVelocity(delivery);
+            DrawRestingPoint(delivery);
+            DrawReceiverVector(delivery);
+            DrawTrapRadius(engine, delivery);
+            return;
+        }
 
-            if (!_byId.TryGetValue(opponent.PlayerId, out FootballerState? actual) || !actual.IsActiveOnPitch)
-                continue;
+        // Resolved: keep only the marker and the outcome (the arrival delta), so the next passage is not
+        // read through the previous pass's clutter while its short result window is open.
+        DrawTargetMarker(delivery, withEtas: false);
+        DrawArrivalDelta(delivery);
+    }
 
-            Vector3 truth = Ground(actual.Position, 0.09f);
-            if ((truth - ghost).LengthSquared() <= 0.1225f) continue; // within 0.35 m: the ghost is the body
+    private void DrawCorridor(DeliverySnapshot delivery)
+    {
+        Vector3 start = delivery.ContactBallPosition;
+        Vector3 target = delivery.Target;
+        var delta = new Vector3(target.X - start.X, 0f, target.Z - start.Z);
+        float length = delta.Length();
+        if (length < 1f) return;
 
-            _painter.DashedLine(ghost, truth, 0.035f, new Color(0.92f, 0.95f, 1f, 0.22f), 0.45f, 0.45f);
-            _painter.Line(truth - new Vector3(0.22f, 0f, 0f), truth + new Vector3(0.22f, 0f, 0f), 0.035f,
-                new Color(0.92f, 0.95f, 1f, 0.30f));
-            _painter.Line(truth - new Vector3(0f, 0f, 0.22f), truth + new Vector3(0f, 0f, 0.22f), 0.035f,
-                new Color(0.92f, 0.95f, 1f, 0.30f));
+        Vector3 direction = delta / length;
+        Vector3 side = direction.Cross(Vector3.Up).Normalized() * delivery.CorridorHalfWidth;
+        Vector3 a = start - side;
+        Vector3 b = start + side;
+        Vector3 c = target + side;
+        Vector3 d = target - side;
+
+        Color fill = delivery.CorridorUnsafe
+            ? new Color(1f, 0.55f, 0.10f, 0.14f)
+            : new Color(0.75f, 0.90f, 1f, 0.075f);
+        _painter.Quad(a, b, c, d, fill);
+        _painter.QuadOutline(a, b, c, d, 0.160f,
+            delivery.CorridorUnsafe
+                ? WithAlpha(UnsafeCorridorColour, 0.92f)
+                : new Color(0.75f, 0.92f, 1f, 0.85f));
+
+        foreach (DefenderReach reach in delivery.DefenderReaches)
+        {
+            // Spoked rings rather than plain circles: a plain 14 m ring reads as a pitch marking, while the
+            // radial ticks make it obviously debug geometry. Orange is "this pass is unsafe", blue is a
+            // reachable sprint that misses the corridor; red stays reserved for the delta and the touch tag.
+            Color colour = reach.OverlapsCorridor
+                ? WithAlpha(UnsafeCorridorColour, 0.95f)
+                : new Color(0.35f, 0.60f, 1.00f, 0.70f);
+            _painter.WireCircle(reach.Position, reach.Radius, reach.OverlapsCorridor ? 0.180f : 0.110f,
+                colour, spokes: reach.OverlapsCorridor ? 10 : 6);
         }
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // A2.2/A7.1: the active player's sight cone and picture
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawPerception(MatchSimulationEngine engine, FootballerState activePlayer)
+    private void DrawTargetMarker(DeliverySnapshot delivery, bool withEtas)
     {
-        FootballerObservation? observation = engine.GetLastObservation(activePlayer.Id);
-        if (observation is null) return;
+        // White line over white pitch markings disappears; a dark underlay keeps the pass line readable.
+        _painter.Line(delivery.PasserPosition, delivery.Target, 0.300f, new Color(0f, 0f, 0f, 0.30f));
+        _painter.Line(delivery.PasserPosition, delivery.Target, 0.150f, new Color(1f, 1f, 1f, 0.82f));
+        _painter.Cross(delivery.Target, 1.10f, 0.180f, Cyan);
+        // A second X floating at head height: the ground marker disappears under the receiver's body when the
+        // meeting point is at his feet, and the aim point is the one thing the pass view must never hide.
+        _painter.Cross(delivery.Target + Vector3.Up * 1.75f, 0.45f, 0.110f, Cyan);
 
-        Vector3 eye = Ground(activePlayer.Position, 0.06f);
-        NVector2 gaze = observation.EffectiveGazeXZ;
-        if (gaze.LengthSquared() < 1e-4f) return;
+        if (!withEtas) return;
 
-        _painter.Wedge(eye, new Vector2(gaze.X, gaze.Y), 38f, SightHalfAngleRadians,
-            new Color(0.80f, 0.93f, 1f, 0.055f), 30);
-        _painter.Line(eye, eye + new Vector3(gaze.X, 0f, gaze.Y) * 2.4f, 0.07f,
-            new Color(0.88f, 0.96f, 1f, 0.55f));
-        // The two cone edges make the wedge boundary readable over the control map.
-        Vector2 gaze2D = new(gaze.X, gaze.Y);
-        foreach (float sign in new[] { -1f, 1f })
-        {
-            float angle = MathF.Atan2(gaze2D.Y, gaze2D.X) + sign * SightHalfAngleRadians;
-            var edge = new Vector3(MathF.Cos(angle), 0f, MathF.Sin(angle));
-            _painter.Line(eye, eye + edge * 30f, 0.035f, new Color(0.88f, 0.96f, 1f, 0.20f));
-        }
-
-        for (int index = 0; index < observation.VisiblePlayers.Count; index++)
-        {
-            PerceivedEntity entity = observation.VisiblePlayers[index];
-            if (entity.Team == activePlayer.Team) continue;
-
-            bool fresh = entity.ObservedAgeTicks == 0;
-            Color colour = fresh ? SeenColour : MemoryColour;
-            Vector3 position = Ground(entity.EstimatedPosition, 0.11f);
-            _painter.Disc(position, fresh ? 0.26f : 0.32f,
-                WithAlpha(colour, fresh ? 0.90f : 0.55f), 8);
-
-            if (entity.PositionUncertaintyMeters <= 0.30f) continue;
-            float uncertainty = MathF.Min(0.60f, entity.PositionUncertaintyMeters);
-            _painter.Ring(position, 0.30f + uncertainty, 0.04f, WithAlpha(colour, 0.32f), 14);
-        }
-
-        // Perceived ball vs the real ball: the gap is the reaction delay and observation noise (A7.5/A2.2).
-        Vector3 perceivedBall = Ground(observation.PerceivedBallPosition, 0.115f);
-        NVector3 realBall = engine.Ball.Position;
-        var realBallGround = new Vector3(realBall.X, 0.115f, realBall.Z);
-        if ((perceivedBall - realBallGround).LengthSquared() <= 0.04f) return;
-
-        _painter.Ring(perceivedBall, 0.17f, 0.035f, new Color(1f, 1f, 1f, 0.35f), 12);
-        _painter.DashedLine(perceivedBall, realBallGround, 0.025f, new Color(1f, 1f, 1f, 0.20f), 0.25f, 0.25f);
+        string eta = $"Ball: {FormatSeconds(delivery.BallEtaSeconds)}\nRecv: {FormatSeconds(delivery.ReceiverEtaSeconds)}";
+        _labels.Add(delivery.Target + Vector3.Up * 2.0f, eta, Cyan, 15, priority: 100, plate: true);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // Ball, carrier and the elected responders
-    // ---------------------------------------------------------------------------------------------
-
-    private void DrawBallState(MatchSimulationEngine engine)
+    private void DrawInitialVelocity(DeliverySnapshot delivery)
     {
-        Vector3 ball = Ground(engine.Ball.Position, 0.10f);
-        _painter.Ring(ball, 0.36f, 0.055f, new Color(1f, 1f, 1f, 0.80f), 18);
+        Vector3 velocity = delivery.InitialVelocity;
+        float speed = new Vector2(velocity.X, velocity.Z).Length();
+        if (speed < 0.25f) return;
 
-        if (engine.Ball.Velocity.LengthSquared() > 0.25f)
-        {
-            Vector3 velocity = new(engine.Ball.Velocity.X, 0f, engine.Ball.Velocity.Z);
-            _painter.Arrow(ball, ball + velocity * 0.55f, 0.05f,
-                new Color(1f, 0.93f, 0.55f, 0.55f), 0.55f, 0.28f);
-        }
+        Vector3 direction = new(velocity.X / speed, 0f, velocity.Z / speed);
+        float length = Mathf.Clamp(speed * 0.55f, 2f, 10f);
+        Vector3 from = delivery.ContactBallPosition;
+        Vector3 to = from + direction * length;
 
-        BallPossessionSnapshot possession = engine.Possession;
-        if (possession.ControllingPlayerId is int carrierId && _byId.TryGetValue(carrierId, out FootballerState? carrier) &&
-            carrier.IsActiveOnPitch)
-        {
-            Vector3 feet = Ground(carrier.Position, 0.085f);
-            _painter.Ring(feet, 0.62f, 0.07f, WithAlpha(TeamColour(carrier.Team), 0.75f), 22);
-            _painter.Line(feet, ball, 0.03f, WithAlpha(TeamColour(carrier.Team), 0.25f));
-        }
+        _painter.DashedLine(from, to, 0.140f, WithAlpha(Yellow, 0.92f), 0.40f, 0.30f);
+        Vector3 side = direction.Cross(Vector3.Up).Normalized() * 0.45f;
+        _painter.Line(to, to - direction * 0.80f + side, 0.120f, WithAlpha(Yellow, 0.92f));
+        _painter.Line(to, to - direction * 0.80f - side, 0.120f, WithAlpha(Yellow, 0.92f));
+        // Sit the speed beside the arrow rather than on it: the white pass line and the corridor fill run
+        // through the midpoint, and a label on top of them is unreadable at game resolution.
+        Vector3 perpendicular = direction.Cross(Vector3.Up).Normalized() * 1.6f;
+        _labels.Add(from.Lerp(to, 0.55f) + perpendicular + Vector3.Up * 0.8f, $"{speed:F1} m/s", Yellow,
+            14, priority: 80, plate: true);
+    }
 
-        if (possession.IntendedReceiverId is not int receiverId) return;
+    private void DrawRestingPoint(DeliverySnapshot delivery)
+    {
+        _painter.Ring(delivery.RestingPoint + Vector3.Up * 0.02f, 0.75f, 0.180f, WithAlpha(Magenta, 0.95f), 30);
+        _painter.Disc(delivery.RestingPoint + Vector3.Up * 0.015f, 0.22f, WithAlpha(Magenta, 0.90f), 10);
+
+        // The requested diagnostic stated as one number: how far the replayed ball stops from the aim point,
+        // and on which side. A big "short" or "past" is a power/turf mismatch, which is exactly the question
+        // the resting ring exists to answer. The number sits at the cyan X (always in view) and a magenta
+        // dashed line joins it to the ring, so the two can be compared even when the ring is far away.
+        var delta = new NVector2(delivery.RestingPoint.X - delivery.Target.X,
+            delivery.RestingPoint.Z - delivery.Target.Z);
+        float distance = delta.Length();
+        if (distance < 0.05f) return;
+
+        var passDirection = new NVector2(delivery.Target.X - delivery.ContactBallPosition.X,
+            delivery.Target.Z - delivery.ContactBallPosition.Z);
+        float along = passDirection.LengthSquared() > 1e-4f
+            ? NVector2.Dot(delta, NVector2.Normalize(passDirection))
+            : distance;
+        // "past" can mean past the touchline: the live ball goes out of play there, so say that instead of
+        // pretending the ball would keep rolling through the advertising boards.
+        string text = delivery.WouldLeavePitch
+            ? along < 0f
+                ? $"would leave pitch, {distance:F1} m short"
+                : $"would leave pitch, {distance:F1} m past"
+            : along < 0f
+                ? $"stopped {distance:F1} m short"
+                : $"stopped {distance:F1} m past";
+
+        if (distance > 1f)
+            _painter.DashedLine(delivery.Target, delivery.RestingPoint, 0.100f,
+                WithAlpha(Magenta, 0.65f), 0.55f, 0.45f);
+        _labels.Add(delivery.Target + Vector3.Up * 0.6f, text, Magenta, 14, priority: 95, plate: true);
+    }
+
+    private void DrawReceiverVector(DeliverySnapshot delivery)
+    {
+        if (delivery.ReceiverId is null) return;
+
+        // Dotted rather than long-dashed: the request distinguishes this from the velocity arrow by texture.
+        _painter.DashedLine(delivery.ReceiverStart, delivery.Target, 0.160f,
+            new Color(0.92f, 0.98f, 1f, 0.95f), 0.32f, 0.28f);
+    }
+
+    private void DrawTrapRadius(MatchSimulationEngine engine, DeliverySnapshot delivery)
+    {
+        if (delivery.Resolved || delivery.ReceiverId is not int receiverId) return;
         if (!_byId.TryGetValue(receiverId, out FootballerState? receiver) || !receiver.IsActiveOnPitch) return;
 
-        Vector3 target = Ground(receiver.Position, 0.09f);
-        _painter.Ring(target, 0.70f, 0.055f, new Color(1f, 1f, 1f, 0.50f), 22);
-        _painter.DashedLine(ball, target, 0.04f, new Color(1f, 1f, 1f, 0.22f), 0.65f, 0.45f);
+        bool receiving = BallContactRules.IsReceivingOrDribbling(
+            engine.Ball.LastTouchedByTeam, engine.Ball.LastTouchedByPlayerId, receiver.Team, receiver.Id);
+        float radius = BallContactRules.ReachRadius(
+            receiver.Attributes.ReachRadius, keeperHandling: false, receiver.IsDiving,
+            receiver.LastCommand.RequestTackle, receiving);
+
+        _painter.WireCircle(Ground(receiver.Position, 0.060f), radius, 0.120f,
+            WithAlpha(Cyan, 0.88f), spokes: 12);
     }
 
-    private void DrawResponders(MatchSimulationEngine engine)
+    private void DrawArrivalDelta(DeliverySnapshot delivery)
     {
-        DrawResponder(engine, TeamId.Home);
-        DrawResponder(engine, TeamId.Away);
-    }
+        if (!delivery.Resolved) return;
 
-    private void DrawResponder(MatchSimulationEngine engine, TeamId team)
-    {
-        int? responderId = engine.GetBallResponder(team);
-        if (responderId is not int id) return;
-        if (!_byId.TryGetValue(id, out FootballerState? responder) || !responder.IsActiveOnPitch) return;
-
-        _painter.Ring(Ground(responder.Position, 0.095f), 0.90f, 0.09f, WithAlpha(TeamColour(team), 0.85f), 26);
+        _painter.Line(delivery.Target, delivery.ReceiverEnd, 0.160f, WithAlpha(RejectColour, 0.95f));
+        _painter.Disc(delivery.ReceiverEnd + Vector3.Up * 0.02f, 0.30f, WithAlpha(RejectColour, 0.92f), 12);
+        Vector3 midpoint = (delivery.Target + delivery.ReceiverEnd) * 0.5f + Vector3.Up * 0.60f;
+        _labels.Add(midpoint, $"Δ {delivery.ArrivalDeltaMeters:F1} m", RejectColour, 15, priority: 70,
+            plate: true);
     }
 
     // ---------------------------------------------------------------------------------------------
-    // A4.6: the active AI player's last chosen target
+    // Frozen decision lines and touch-rejection labels
     // ---------------------------------------------------------------------------------------------
 
-    private void DrawSelectedAction(MatchSimulationEngine engine, FootballerState activePlayer)
+    private void DrawDecision()
     {
-        if (engine.GetController(activePlayer.Id) is not TacticalUtilityAiController controller) return;
-        if (controller.LastSelected.TargetXZ is not NVector3 target) return;
+        DecisionSnapshot? decision = _decision;
+        if (decision is null) return;
 
-        Vector3 from = Ground(activePlayer.Position, 0.10f);
-        Vector3 to = Ground(target, 0.10f);
-        if ((to - from).LengthSquared() <= 0.25f) return;
+        // While a pass is live the pass forensics own the pitch: the frozen option lines stay (they are the
+        // context the ball was played from) but fade back, and their score labels step aside for the X/ETA
+        // cluster. The panel still carries every decision number.
+        bool passLive = _delivery is { Resolved: false };
+        float lineAlpha = passLive ? 0.40f : 1f;
 
-        Color colour = WithAlpha(ActionColour, 0.70f);
-        _painter.Arrow(from, to, 0.055f, colour, 1.0f, 0.50f);
-        _painter.Ring(to, 0.48f, 0.05f, colour, 20);
+        for (int index = 0; index < decision.Options.Count; index++)
+        {
+            DecisionOption option = decision.Options[index];
+            if (option.Target == Vector3.Zero) continue;
+
+            Vector3 target = option.Target;
+            if ((target - decision.Origin).LengthSquared() < 0.8f) continue;
+
+            Color colour = option.Rejected ? RejectColour : option.Chosen ? ChosenColour : Yellow;
+            float width = option.Chosen ? 0.180f : option.Rejected ? 0.130f : 0.110f;
+
+            // Every option line carries a dark underlay: green/yellow/red over green grass washes out to
+            // pale mint/cream/salmon at this camera distance, and a 2 px dark edge keeps the semantics.
+            if (option.Rejected)
+            {
+                _painter.DashedLine(decision.Origin, target, width * 1.7f, new Color(0f, 0f, 0f, 0.50f),
+                    0.45f, 0.35f);
+                _painter.DashedLine(decision.Origin, target, width,
+                    WithAlpha(colour, (option.Rejected ? 0.95f : 0.92f) * lineAlpha), 0.45f, 0.35f);
+            }
+            else
+            {
+                _painter.Line(decision.Origin, target, width * 1.7f, new Color(0f, 0f, 0f, 0.45f));
+                _painter.Line(decision.Origin, target, width,
+                    WithAlpha(colour, (option.Chosen ? 1f : 0.92f) * lineAlpha));
+            }
+
+            if (passLive) continue;
+
+            // The score sits on its own line, like the request's hand-written example; a refusal prints the
+            // reason and the man it refused so the line can be matched to the box's [X] row.
+            string text = option.Rejected
+                ? option.TargetPlayerId > 0
+                    ? $"{option.Reason} {PlayerLabel(option.TargetPlayerId)}"
+                    : option.Reason
+                : option.Score.ToString("F2");
+            Vector3 labelPosition = decision.Origin.Lerp(target, 0.45f) + Vector3.Up * 0.45f;
+            _labels.Add(labelPosition, text, colour, option.Chosen ? 15 : 14,
+                priority: option.Chosen ? 65 : 55, plate: true);
+        }
+    }
+
+    private void DrawTouchRejections(MatchSimulationEngine engine)
+    {
+        int tick = engine.CurrentTick;
+        foreach (FootballerState player in _activePlayers)
+        {
+            if (!_touchRejections.TryGet(player.Id, tick, out string reason)) continue;
+            float lift = 2.85f + player.Id % 2 * 0.25f;
+            _labels.Add(Ground(player.Position, lift), reason, RejectColour, 15, priority: 90, plate: true);
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
 
-    private void BuildPlayerLookup(MatchSimulationEngine engine)
-    {
-        _byId.Clear();
-        _activePlayers.Clear();
-        foreach (FootballerState player in engine.Players)
-        {
-            _byId[player.Id] = player;
-            if (player.IsActiveOnPitch) _activePlayers.Add(player);
-        }
-    }
-
-    private Color TeamColour(TeamId team) => team == _watchedTeam ? WatchedColour : OpponentColour;
+    private static string FormatSeconds(float seconds) =>
+        float.IsFinite(seconds) && seconds >= 0f ? $"{seconds:F2}s" : "—";
 
     private static Color WithAlpha(Color colour, float alpha) => new(colour.R, colour.G, colour.B, alpha);
 
@@ -594,20 +1147,5 @@ public partial class MatchDebugView : Node3D
 
     private static Vector3 Ground(NVector2 position, float y) => new(position.X, y, position.Y);
 
-    private static Color JobColour(TacticalJob job) => job switch
-    {
-        TacticalJob.BallResponder => new Color(0.99f, 0.88f, 0.28f),
-        TacticalJob.Presser => new Color(0.99f, 0.57f, 0.23f),
-        TacticalJob.CoverDefender => new Color(0.96f, 0.44f, 0.18f),
-        TacticalJob.DefensiveCover => new Color(0.66f, 0.56f, 0.98f),
-        TacticalJob.Marker => new Color(0.97f, 0.44f, 0.44f),
-        TacticalJob.DefensiveLine => new Color(0.25f, 0.75f, 0.97f),
-        TacticalJob.DepthRun => new Color(0.30f, 0.88f, 0.50f),
-        TacticalJob.Overlap => new Color(0.18f, 0.84f, 0.76f),
-        TacticalJob.FarSideWidth => new Color(0.42f, 0.91f, 0.98f),
-        TacticalJob.NearOutlet => new Color(0.65f, 0.90f, 0.22f),
-        TacticalJob.ThirdPlayerOption => new Color(0.55f, 0.94f, 0.68f),
-        TacticalJob.ProtectGap => new Color(0.92f, 0.48f, 0.98f),
-        _ => new Color(0.60f, 0.67f, 0.74f)
-    };
+    private static Vector3 Ground(Vector2 position, float y) => new(position.X, y, position.Y);
 }

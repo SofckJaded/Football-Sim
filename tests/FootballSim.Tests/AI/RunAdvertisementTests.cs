@@ -399,9 +399,14 @@ public sealed class RunAdvertisementTests
 
     /// <summary>
     /// The A5 exit gate: "runs do not … force a return pass from a carrier". A team-mate announcing a region
-    /// <b>behind</b> the ball is information about one ball the carrier may play, not a debt he owes: every
-    /// forward option scores exactly the same as it does in a silent world. The A/B is the same world with
-    /// and without the shout, and the forward candidates are compared key by key.
+    /// <b>behind</b> the ball is information about one ball — his own run — not a debt the carrier owes.
+    ///
+    /// The pass candidate publishes the point the planner aimed at (<see cref="UtilityCandidate.TargetXZ"/>), so
+    /// the A/B is checked on aims rather than on a direction proxy: every forward option that is not the
+    /// announced runner's to-run ball scores exactly as it does in a silent world, while that one ball is
+    /// re-aimed at the region he named (A5.3) and priced <b>lower</b> — a ball played backwards is a worse
+    /// pass, not a preferred one. Before the aim point was published this test could only see movement
+    /// candidates, so the pass half of the comparison was silently vacuous.
     /// </summary>
     [Fact]
     public void AnAnnouncedRunBehindTheCarrier_DoesNotChangeTheForwardOptions()
@@ -420,15 +425,29 @@ public sealed class RunAdvertisementTests
         var silent = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
         silent.GenerateOnBallCandidates(CarrierObservation(), new Vector3(Pitch.HalfLength, 0f, 0f), 34f);
 
-        List<string> shouted = ForwardOptions(withShout);
-        List<string> quiet = ForwardOptions(silent);
+        List<string> shoutedOthers = ForwardOptionsExceptRunPass(withShout, RunnerId);
+        List<string> quietOthers = ForwardOptionsExceptRunPass(silent, RunnerId);
 
-        Assert.NotEmpty(quiet);
-        Assert.Equal(quiet, shouted);
+        Assert.NotEmpty(quietOthers);
+        Assert.Equal(quietOthers, shoutedOthers);
+
+        // The one ball the shout is about: the promise is honoured at the named region, and it does not become
+        // a preference the carrier is paid to take.
+        Assert.True(TryGetRunPass(withShout, RunnerId, out Vector3 shoutedAim, out float shoutedScore));
+        Assert.True(TryGetRunPass(silent, RunnerId, out Vector3 silentAim, out float silentScore));
+        Assert.Equal(-8f, shoutedAim.X, 3);
+        Assert.Equal(6f, shoutedAim.Z, 3);
+        Assert.True(silentAim.X > 2f, $"the silent to-run ball must be a forward ball, aimed {silentAim}");
+        Assert.True(shoutedScore < silentScore,
+            $"a backward promise must not be rewarded: shouted {shoutedScore:F4} vs silent {silentScore:F4}");
     }
 
-    /// <summary>Every candidate that plays the ball forward, as "key → score", in a stable order.</summary>
-    private static List<string> ForwardOptions(CandidateGenerator generator)
+    /// <summary>
+    /// Every forward option that is not the runner's own advertised to-run ball, as "key → score", in a
+    /// stable order. The announcement is information about exactly that ball, so it is excluded from the
+    /// comparison of *other* forward options rather than hidden by a coarse direction filter.
+    /// </summary>
+    private static List<string> ForwardOptionsExceptRunPass(CandidateGenerator generator, int runnerId)
     {
         var options = new List<string>();
         for (int i = 0; i < generator.CandidateCount; i++)
@@ -436,11 +455,34 @@ public sealed class RunAdvertisementTests
             UtilityCandidate candidate = generator.Candidates[i];
             if (candidate.TargetXZ is not Vector3 target) continue;
             if (target.X <= 2f) continue;
+            if (IsRunPassTo(candidate, runnerId)) continue;
             options.Add($"{candidate.Key.Describe()} {candidate.UtilityScore:F4}");
         }
 
         options.Sort(StringComparer.Ordinal);
         return options;
+    }
+
+    private static bool IsRunPassTo(UtilityCandidate candidate, int playerId) =>
+        candidate.Key.Kind == CandidateKind.Pass &&
+        candidate.Key.TargetPlayerId == playerId &&
+        candidate.Key.TargetTag == CandidateGenerator.RunPassTag;
+
+    private static bool TryGetRunPass(CandidateGenerator generator, int playerId, out Vector3 aim,
+        out float score)
+    {
+        for (int i = 0; i < generator.CandidateCount; i++)
+        {
+            UtilityCandidate candidate = generator.Candidates[i];
+            if (!IsRunPassTo(candidate, playerId) || candidate.TargetXZ is not Vector3 target) continue;
+            aim = target;
+            score = candidate.UtilityScore;
+            return true;
+        }
+
+        aim = default;
+        score = 0f;
+        return false;
     }
 
     [Fact]

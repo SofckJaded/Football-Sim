@@ -16,9 +16,11 @@ public readonly record struct UtilityCandidate(
 )
 {
     /// <summary>
-    /// Target point the action is trying to reach, when it has one (movement candidates). Exposed so
-    /// behaviour fields (discipline, freedom) and tests can check where the AI is actually going, not
-    /// just which direction it faces (audit F18).
+    /// Target point the action is trying to reach, when it has one. For movement candidates it is where the
+    /// body was sent; for pass candidates it is the meeting point the planner actually aimed at (the lead or
+    /// the announced run region, not necessarily the receiver's current position). Exposed so behaviour
+    /// fields (discipline, freedom), tests and the read-only debug overlay can check where the AI is going
+    /// and what it aimed at, not just which direction it faces (audit F18; debug overlay).
     /// </summary>
     public Vector3? TargetXZ { get; init; }
 
