@@ -16,7 +16,7 @@ public partial class MatchClientNode : Node3D
     /// <summary>
     /// Developer escape hatch for the old text debug dump. It is off by default and the HUD overhaul
     /// deliberately hides it: the supported debug path is <see cref="MatchDebugView"/> behind the Match
-    /// Setup "Debug mode" option (or F3 in a match). The text methods below are kept for now rather
+    /// Setup "Debug mode" option (or F5 in a match). The text methods below are kept for now rather
     /// than deleted, as requested.
     /// </summary>
     [Export] public bool ShowDebugOverlay { get; set; } = false;
@@ -39,6 +39,14 @@ public partial class MatchClientNode : Node3D
     private MatchHud _hud = null!;
     private MatchDebugView _debugView = null!;
     private bool _debugMode;
+
+    // Debug-only review controls (F1 slow / F2 pause / F3 fast). They change how many fixed ticks run per
+    // rendered second — never what the simulation does — so the same tick sequence is replayed either way.
+    private const float DebugTimeScaleStep = 0.25f;
+    private const float MinDebugTimeScale = 0.25f;
+    private const float MaxDebugTimeScale = 2f;
+    private float _debugTimeScale = 1f;
+    private bool _debugPaused;
     private readonly HumanControlReader _controls = new();
     private MeshInstance3D _humanAimArrow = null!;
     private int _inspectedPlayerId = 9;
@@ -76,6 +84,7 @@ public partial class MatchClientNode : Node3D
         BuildLightingAndPitchVisuals();
         BuildPlayerAndBallVisuals();
         BuildCameraAndHud();
+        UpdateDebugStatus();
     }
 
     public override void _Process(double delta)
@@ -106,6 +115,13 @@ public partial class MatchClientNode : Node3D
         _controls.Read(_engine.LockedHumanController, frameDelta, mouseAimPoint);
 
         double timeScale = _engine.IsSpectatorFastForwardActive ? 4.0 : 1.0;
+        if (_debugMode)
+        {
+            // Debug review controls. Pause stops the live tick for inspection; slow/fast only change the
+            // presentation cadence, so the simulated tick sequence is exactly the same at every speed.
+            timeScale = _debugPaused ? 0.0 : timeScale * _debugTimeScale;
+        }
+
         int steps = _clock.Advance(delta, (float)timeScale);
         for (int i = 0; i < steps; i++)
             _engine.StepTick();
@@ -125,18 +141,10 @@ public partial class MatchClientNode : Node3D
                 return;
             }
 
-            // The Match Setup option persists; these two are the in-match convenience switches.
-            if (keyEvent.Keycode == Key.F3)
+            // The Match Setup option persists; F5 and F4 are the in-match convenience switches, and while the
+            // overlay is on F1/F2/F3 drive the debug-only time controls.
+            if (HandleDebugShortcutKey(keyEvent.Keycode))
             {
-                _debugMode = !_debugMode;
-                _debugView.SetEnabled(_debugMode);
-                GetViewport().SetInputAsHandled();
-                return;
-            }
-
-            if (keyEvent.Keycode == Key.F4 && _debugMode)
-            {
-                _debugView.ToggleWatchedTeam();
                 GetViewport().SetInputAsHandled();
                 return;
             }
@@ -151,6 +159,76 @@ public partial class MatchClientNode : Node3D
                 CameraZoomHeight = Mathf.Clamp(CameraZoomHeight + 2.5f,
                     BroadcastCamera.MinZoomHeight, BroadcastCamera.MaxZoomHeight);
         }
+    }
+
+    /// <summary>
+    /// Handles the debug-only shortcut keys. F5 toggles the on-pitch overlay and F4 switches the inspected
+    /// team (both convenience, nothing is saved). While the overlay is on, F1 slows the live tick by 0.25,
+    /// F2 pauses/unpauses it and F3 speeds it up by 0.25 (0.25×–2×). The controls only change the presentation
+    /// cadence: the same fixed ticks are simulated, so pausing and resuming is deterministic and does not
+    /// touch the half clock, stamina or any timer.
+    /// </summary>
+    private bool HandleDebugShortcutKey(Key keycode)
+    {
+        if (keycode == Key.F5)
+        {
+            _debugMode = !_debugMode;
+            _debugView.SetEnabled(_debugMode);
+            if (!_debugMode)
+            {
+                _debugPaused = false;
+                _debugTimeScale = 1f;
+            }
+
+            UpdateDebugStatus();
+            return true;
+        }
+
+        if (!_debugMode) return false;
+
+        switch (keycode)
+        {
+            case Key.F1:
+                _debugPaused = false;
+                _debugTimeScale = Mathf.Max(MinDebugTimeScale, _debugTimeScale - DebugTimeScaleStep);
+                break;
+            case Key.F2:
+                _debugPaused = !_debugPaused;
+                break;
+            case Key.F3:
+                _debugPaused = false;
+                _debugTimeScale = Mathf.Min(MaxDebugTimeScale, _debugTimeScale + DebugTimeScaleStep);
+                break;
+            case Key.F4:
+                _debugView.ToggleWatchedTeam();
+                break;
+            default:
+                return false;
+        }
+
+        UpdateDebugStatus();
+        return true;
+    }
+
+    /// <summary>
+    /// Pushes the debug-only time status to the overlay: nothing at normal speed (no permanent text on the
+    /// pitch), the speed multiplier when slowed/sped up, and "PAUSED" while frozen.
+    /// </summary>
+    private void UpdateDebugStatus()
+    {
+        if (!_debugMode)
+        {
+            _debugView.SetStatus(string.Empty);
+            return;
+        }
+
+        string speed = _debugTimeScale.ToString("0.##");
+        string status = _debugPaused
+            ? $"PAUSED · {speed}× · F2 resumes"
+            : Mathf.Abs(_debugTimeScale - 1f) > 0.001f
+                ? $"{speed}× SPEED · F1 SLOW / F3 FAST"
+                : string.Empty;
+        _debugView.SetStatus(status);
     }
 
     private void SyncVisualTransforms(float alpha, float deltaSeconds)

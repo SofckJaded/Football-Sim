@@ -286,8 +286,9 @@ public partial class MainMenuNode : Control
             13, _mutedColor);
         AddParagraph("Debug mode draws the AI's state on the pitch instead of the old text lines: player states, " +
                      "marking/target tethers, pass target and ball ETAs, resting point, pass corridor, trap radius " +
-                     "and frozen decision lines with a small readout. F3 toggles it in a match, F4 switches the " +
-                     "team being inspected.", 13, _mutedColor);
+                     "and frozen decision lines with a small readout. F5 toggles it in a match, F4 switches the " +
+                     "team being inspected; while it is on, F1 slows the match, F2 pauses and F3 speeds it up " +
+                     "(0.25 steps).", 13, _mutedColor);
 
         AddMenuButton("Start Match", () =>
         {

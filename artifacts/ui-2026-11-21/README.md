@@ -19,8 +19,9 @@ Owner-requested presentation work in two passes:
   directly (testing-only path; the menu is the product path). Frames are 1280 × 720.
 - **How the rendered frames were captured:** `MatchSetupOptions.DebugMode` was temporarily defaulted to `true`
   and a temporary environment-gated harness saved viewport PNGs at 2 s intervals and in short bursts around
-  every pass kick, then quit after the half. Both hacks were reverted before the commit; the menu switch and F3
-  are the production path.
+  every pass kick, then quit after the half. A second, smaller harness drove the debug time-control keys on a
+  real-time script and saved the framed states for `debug-time-control-log.txt` / `debug-overhaul-pause.png`.
+  All hacks were reverted before the commit; the menu switch and F5 are the production path.
 - **Tests:** full suite `1047/1047`.
 
 ## Files
@@ -30,18 +31,27 @@ Owner-requested presentation work in two passes:
 | `hud-normal.png` | Clean HUD from the first pass (scoreboard, player cards; no debug text). |
 | `debug-on.png` | The first-pass debug overlay (the older A2–A8 layer set) — kept only as history; the current overlay is the overhaul below. |
 | `match-setup-debug-option.png` | Match Setup: the persisted **Debug mode** Off/On row and its explanation. |
-| `debug-overhaul-decision.png` | Current overlay: the frozen decision box (top-right, with `FROZEN x.xs` countdown) plus the pitch option-line fan — green chosen, yellow alternatives, red refusals with reason and shirt number — over the player state labels and tethers. |
-| `debug-overhaul-pass.png` | Current overlay, ball in flight: cyan intended-target X (ground and head height), solid white passer line, dashed yellow initial-velocity arrow with speed, cyan trap radius at the receiver, orange spoked defender-reach circles flagged on the corridor, magenta resting ring + link + "stopped … past", ETA plate, dotted receiver vector, corridor rectangle. |
-| `debug-overhaul-touch-rejection.png` | A 2 s `WRONG_STATE` touch-rejection tag above a player with a ball inside the trap radius that was not controlled. |
+| `debug-overhaul-pass.png` | Current overlay, ball in flight (owner follow-up: text now has **no boxes or outlines**, only a 1 px shadow): cyan intended-target X, solid white passer line, dashed yellow initial-velocity arrow with speed, cyan trap radius at the receiver, orange spoked defender-reach circles flagged on the corridor, magenta resting ring + link + "would leave pitch …" number, ETA text, dotted receiver vector, corridor rectangle. |
+| `debug-overhaul-decision.png` | Frozen decision box (top-right, `FROZEN x.xs`) plus the pitch option-line fan — green chosen, yellow alternatives, red refusals with reason and shirt number — over the player state labels and tethers; top centre shows the debug-only speed state ("0.75× SPEED"). |
+| `debug-overhaul-pause.png` | The debug-only time controls paused mid-move: top-centre "PAUSED · 0.5× · F2 resumes" while the live tick is frozen (the frozen decision countdown stops with it). Same bare-text labels. |
+| `debug-overhaul-touch-rejection.png` | A 2 s `WRONG_STATE` touch-rejection tag above a player with a ball inside the trap radius that was not controlled. Captured **before** the owner's follow-up that removed the text boxes; the tag text, reason, position and lifetime are what it documents, the dark plate has since been removed. |
 | `debug-overhaul-capture-log.txt` | Console log of the capture run: harness save count, and the touch-rejection probe lines proving the reasons fired (removed from the committed code). |
+| `debug-time-control-log.txt` | Console log of the debug time-control verification: every shortcut press with its engine tick and the saved-shot ticks. Tick rate reads 60/s → 45/s (0.75×) → 30/s (0.5×) → **frozen for 5 s** (F2 pause) → then 0.75×/1.0×/1.33×/1.53×/1.75× as F3 steps up, proving F1/F2/F3 change only the presentation cadence. |
 | `headless-debug.txt` | `--headless --quit-after 240` boot with debug mode: clean, no script errors. |
 
 ## Current overlay legend
 
 Text is drawn in **screen space at a fixed pixel size** (13–15 px) with a priority + collision-avoidance
-planner, so labels stay the same size at any camera distance/zoom and move apart instead of overprinting; the
-pass/touch labels get a dark plate. Priority: pass forensic plate > touch rejection > pass geometry > frozen
-option scores > player states.
+planner, so labels stay the same size at any camera distance/zoom and move apart instead of overprinting. Text
+is **bare — no boxes, plates or outlines**, only a 1 px dark shadow, so it does not obscure the view (owner
+follow-up). Priority: pass forensics > touch rejection > pass geometry > frozen option scores > player states.
+The debug-only time-control state is the one small always-on-screen line, top centre.
+
+**Debug-only time controls (F1/F2/F3, active only while Debug mode is on):** F1 slows the live tick by 0.25,
+F2 pauses/resumes it, F3 speeds it up by 0.25 (0.25×–2×; the status line appears at the top centre whenever it
+is not 1×). They change only how many fixed ticks run per rendered second — the tick sequence is identical, so
+pausing/resuming is deterministic and no timer, stamina or the half clock is touched. **F5** toggles the overlay
+in a match and **F4** switches the watched team.
 
 | Visual | Meaning |
 | :--- | :--- |
@@ -52,10 +62,10 @@ option scores > player states.
 | Solid white line, passer → X | The pass the carrier intended. |
 | Dashed yellow arrow + `x.x m/s` | The **actual initial velocity** after execution error/inaccuracy. |
 | Magenta ring + dashed link + `stopped x m short/past` | Where the ball would stop **untouched** under the match's drag/rolling/bounce model (or `would leave pitch` when the first line it crosses ends the play). The number is the distance from that point to the cyan X. |
-| `Ball: x.xxs` / `Recv: x.xxs` plate at the X | Ball flight ETA to the X and the receiver's ETA to the X, both frozen at kick time. |
+| `Ball: x.xxs` / `Recv: x.xxs` text at the X | Ball flight ETA to the X and the receiver's ETA to the X, both frozen at kick time. |
 | Dotted pale line, receiver → X | Predicted receiver vector at kick time. |
 | Cyan spoked wireframe circle at the receiver's feet | The exact trap/first-touch contact radius (`BallContactRules.ReachRadius`). |
-| Red plate over a player (e.g. `TOO_HIGH`, `ON_COOLDOWN`, `WRONG_STATE`, `CONTESTED`) | Touch rejection: the ball was inside the trap radius and was not controlled. Reasons come from the execution layer's own attempt log where it exists (`BallTooHigh`, `InRecovery`, `FacingAway`, `LostArbitration`, `BallHeld`, `RestartTriggered`); the receiver case re-evaluates the same `BallContactRules` gates read-only. 2 s lifetime. |
+| Red floating word over a player (e.g. `TOO_HIGH`, `ON_COOLDOWN`, `WRONG_STATE`, `CONTESTED`) | Touch rejection: the ball was inside the trap radius and was not controlled. Reasons come from the execution layer's own attempt log where it exists (`BallTooHigh`, `InRecovery`, `FacingAway`, `LostArbitration`, `BallHeld`, `RestartTriggered`); the receiver case re-evaluates the same `BallContactRules` gates read-only. 2 s lifetime. |
 | Blue/white rectangle along the pass line | Pass corridor, half-width = the widest opponent tackle/interception reach, so a body closer to the line than the rectangle is half-wide can play the ball. Blue = no defender can reach it in time, orange = at least one can. |
 | Spoked circle around a defender near the corridor | Time-scaled defender reach: sprint distance during the ball's ETA to his point on the line. Blue = does not overlap the corridor, orange = overlaps (the pass was never safe even if he was not on the line at the kick). |
 | Green / yellow / red straight lines from the carrier with a number or reason+shirt | Frozen carrier decision, held 3 s after it was made (the box shows the countdown): green = chosen with its score, yellow = other legal options with their scores, red dashed = refused options with the reason and the target's shirt number (`RANGE #7`, `BLOCKED #3`). They dim under a live pass so the pass forensics own the pitch. |
@@ -83,3 +93,11 @@ watched team. The overlay keeps no in-game text legend by design.
 - Touch rejection tags were observed for `WRONG_STATE` and `CONTESTED` (tackle-attempt arbitration) in the
   capture log; `TOO_HIGH`/`ON_COOLDOWN` are rarer in open play and were not caught on a saved frame, though the
   same code path produced the two observed reasons.
+- **The debug time controls were verified by driving the same shortcut handler from a script**, not by a human
+  pressing F1/F2/F3: the log shows the engine tick rate changing to 0.75×, 0.5×, frozen, then stepping up, and
+  the paused frame shows the status line. The feel of the speed steps is still a human playtest item, and the
+  keys are debug-only (the overlay must be on — otherwise F1/F2/F3 do nothing and F5 is the only shortcut that
+  works when it is off).
+- The text-box/outline removal was reviewed on the same frames that show the bare labels (`debug-overhaul-pass`,
+  `-decision`, `-pause`); the old `debug-overhaul-touch-rejection.png` predates it and still shows the removed
+  plate (the tag itself is unchanged).

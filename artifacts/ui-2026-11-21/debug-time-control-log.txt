@@ -1,0 +1,77 @@
+﻿Godot Engine v4.7.2.stable.mono.official.ed1daf0bf - https://godotengine.org
+Vulkan 1.4.359 - Forward+ - Using Device #0: AMD - AMD Radeon RX 7800 XT
+
+TIMECAPTURE dir=C:\Games\geminiball\artifacts\ui-2026-11-21\finalcapture
+SHOT t_0.1_tick000008 t=0.15
+SHOT t_0.6_tick000038 t=0.65
+SHOT t_1.1_tick000068 t=1.15
+SHOT t_1.7_tick000099 t=1.66
+SHOT t_2.2_tick000129 t=2.16
+SHOT t_2.7_tick000159 t=2.66
+SHOT t_3.2_tick000189 t=3.16
+SHOT t_3.7_tick000219 t=3.67
+KEY F1 slow 0.75 t=4.00 tick=240
+SHOT key_01_tick000240 t=4.00
+SHOT t_4.2_tick000247 t=4.17
+SHOT t_4.7_tick000270 t=4.67
+SHOT t_5.2_tick000292 t=5.17
+SHOT t_5.7_tick000315 t=5.67
+SHOT t_6.2_tick000338 t=6.18
+SHOT t_6.7_tick000360 t=6.68
+KEY F1 slow 0.50 t=7.00 tick=375
+SHOT key_02_tick000375 t=7.00
+SHOT t_7.2_tick000380 t=7.19
+SHOT t_7.7_tick000395 t=7.69
+SHOT t_8.2_tick000410 t=8.19
+SHOT t_8.7_tick000425 t=8.70
+SHOT t_9.2_tick000440 t=9.20
+SHOT t_9.7_tick000455 t=9.70
+KEY F2 pause t=10.00 tick=465
+SHOT key_03_tick000465 t=10.00
+SHOT t_10.2_tick000465 t=10.20
+SHOT t_10.7_tick000465 t=10.70
+SHOT t_11.2_tick000465 t=11.20
+SHOT t_11.7_tick000465 t=11.71
+SHOT t_12.2_tick000465 t=12.21
+SHOT t_12.7_tick000465 t=12.71
+SHOT t_13.2_tick000465 t=13.21
+SHOT t_13.7_tick000465 t=13.72
+SHOT t_14.2_tick000465 t=14.22
+SHOT t_14.7_tick000465 t=14.73
+KEY F2 resume t=15.00 tick=465
+SHOT key_04_tick000465 t=15.00
+SHOT t_15.2_tick000471 t=15.23
+SHOT t_15.7_tick000486 t=15.73
+SHOT t_16.2_tick000502 t=16.24
+SHOT t_16.7_tick000517 t=16.74
+KEY F3 fast t=17.00 tick=525
+SHOT key_05_tick000525 t=17.00
+SHOT t_17.2_tick000535 t=17.24
+SHOT t_17.7_tick000558 t=17.74
+SHOT t_18.2_tick000581 t=18.25
+SHOT t_18.8_tick000603 t=18.75
+KEY F3 fast t=19.00 tick=615
+SHOT key_06_tick000615 t=19.00
+SHOT t_19.3_tick000630 t=19.26
+SHOT t_19.8_tick000660 t=19.76
+SHOT t_20.3_tick000691 t=20.27
+SHOT t_20.8_tick000721 t=20.77
+KEY F3 fast t=21.00 tick=735
+SHOT key_07_tick000735 t=21.00
+SHOT t_21.3_tick000755 t=21.27
+SHOT t_21.8_tick000792 t=21.77
+KEY F3 fast t=22.00 tick=810
+SHOT key_08_tick000810 t=22.00
+SHOT t_22.3_tick000834 t=22.27
+SHOT t_22.8_tick000879 t=22.77
+SHOT t_23.3_tick000924 t=23.27
+SHOT t_23.8_tick000969 t=23.77
+KEY F3 fast t=24.00 tick=990
+SHOT key_09_tick000990 t=24.00
+SHOT t_24.3_tick001018 t=24.27
+SHOT t_24.8_tick001071 t=24.78
+SHOT t_25.3_tick001124 t=25.28
+SHOT t_25.8_tick001176 t=25.78
+SHOT t_26.3_tick001229 t=26.28
+SHOT t_26.8_tick001282 t=26.79
+TIMECAPTURE DONE shots=63 tick=1304 t=27.00

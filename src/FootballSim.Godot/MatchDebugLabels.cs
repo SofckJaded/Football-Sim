@@ -27,6 +27,7 @@ public partial class MatchDebugLabels : Control
     private readonly List<Rect2> _placed = new();
     private Font _font = null!;
     private bool _wantVisible;
+    private string _status = string.Empty;
 
     private struct Label
     {
@@ -35,7 +36,6 @@ public partial class MatchDebugLabels : Control
         public Color Colour;
         public int FontSize;
         public int Priority;
-        public bool Plate;
     }
 
     public override void _Ready()
@@ -52,11 +52,10 @@ public partial class MatchDebugLabels : Control
     /// <summary>
     /// Adds one label anchored at a world point. <paramref name="priority"/> decides draw order and which
     /// label keeps its spot: pass forensics (100) &gt; touch rejection (90) &gt; pass geometry (70-80) &gt;
-    /// frozen decision scores (55-65) &gt; player states (10). A <paramref name="plate"/> label gets a dark
-    /// translucent backing so it stays readable over a busy pitch.
+    /// frozen decision scores (55-65) &gt; player states (10). Text is drawn bare (a 1 px offset shadow only):
+    /// the owner asked for no boxes or outlines because they obscured the pitch.
     /// </summary>
-    public void Add(Vector3 world, string text, Color colour, int fontSize, int priority = 10,
-        bool plate = false)
+    public void Add(Vector3 world, string text, Color colour, int fontSize, int priority = 10)
     {
         if (string.IsNullOrEmpty(text)) return;
         _labels.Add(new Label
@@ -65,15 +64,23 @@ public partial class MatchDebugLabels : Control
             Text = text,
             Colour = colour,
             FontSize = fontSize,
-            Priority = priority,
-            Plate = plate
+            Priority = priority
         });
+    }
+
+    /// <summary>
+    /// One small always-on-screen line at the top centre, used by the debug-only time controls to say
+    /// "PAUSED" or the current speed. Empty hides it.
+    /// </summary>
+    public void SetStatus(string status)
+    {
+        _status = status ?? string.Empty;
     }
 
     /// <summary>Finishes the frame and schedules the redraw.</summary>
     public void End()
     {
-        Visible = _labels.Count > 0;
+        Visible = _labels.Count > 0 || !string.IsNullOrEmpty(_status);
         if (!Visible) return;
         QueueRedraw();
     }
@@ -89,15 +96,25 @@ public partial class MatchDebugLabels : Control
 
     public override void _Draw()
     {
-        if (_font is null || _labels.Count == 0) return;
-
-        Camera3D? camera = GetViewport()?.GetCamera3D();
-        if (camera is null) return;
+        if (_font is null) return;
 
         Vector2 viewport = Size;
         _placed.Clear();
 
+        // The time status claims its spot first so player labels lift around it instead of overprinting it.
+        Rect2 statusRect = DrawStatus(viewport);
+        if (statusRect.Size.X > 0f) _placed.Add(statusRect);
+
+        if (_labels.Count == 0) return;
+
+        Camera3D? camera = GetViewport()?.GetCamera3D();
+        if (camera is null) return;
+
         _labels.Sort((left, right) => right.Priority.CompareTo(left.Priority));
+
+        // One-pixel offset shadow instead of an outline or a plate: enough to keep a coloured word legible
+        // over turf and white pitch lines, without the dark halo/box that obscured the view.
+        var shadow = new Color(0f, 0f, 0f, 0.55f);
 
         foreach (Label label in _labels)
         {
@@ -116,24 +133,23 @@ public partial class MatchDebugLabels : Control
             var baseRect = new Rect2(anchor.X - width * 0.5f - PaddingX, anchor.Y - lines.Length * lineHeight,
                 width + PaddingX * 2f, lines.Length * lineHeight + PaddingY);
 
+            // Try the natural spot first, then alternate downward/upward nudges. Downward matters at the top
+            // edge: a label whose anchor is off-screen used to be clamped under the time status and could not
+            // move anywhere, so it printed over it.
             Rect2 rect = baseRect;
             for (int attempt = 0; attempt < MaxLiftAttempts; attempt++)
             {
-                rect = baseRect with { Position = baseRect.Position - new Vector2(0f, attempt * (lineHeight + 2f)) };
-                if (rect.Position.Y < 2f) break;
+                float direction = attempt % 2 == 1 ? 1f : -1f;
+                float distance = (attempt + 1) / 2 * (lineHeight + 2f);
+                var position = new Vector2(
+                    Mathf.Clamp(baseRect.Position.X, 2f, Mathf.Max(2f, viewport.X - baseRect.Size.X - 2f)),
+                    Mathf.Clamp(baseRect.Position.Y + direction * distance, 2f,
+                        Mathf.Max(2f, viewport.Y - baseRect.Size.Y - 2f)));
+                rect = new Rect2(position, baseRect.Size);
                 if (!Overlaps(rect)) break;
             }
 
-            // Keep the whole label inside the viewport: a player on the touchline used to have half his state
-            // label cut off by the screen edge, which made the one word that mattered unreadable.
-            var position = new Vector2(
-                Mathf.Clamp(rect.Position.X, 2f, Mathf.Max(2f, viewport.X - rect.Size.X - 2f)),
-                Mathf.Clamp(rect.Position.Y, 2f, Mathf.Max(2f, viewport.Y - rect.Size.Y - 2f)));
-            rect.Position = position;
             _placed.Add(rect);
-
-            if (label.Plate)
-                DrawRect(rect, new Color(0.015f, 0.025f, 0.04f, 0.78f));
 
             for (int index = 0; index < lines.Length; index++)
             {
@@ -142,10 +158,28 @@ public partial class MatchDebugLabels : Control
                 float x = rect.Position.X + (rect.Size.X - lineWidth) * 0.5f;
                 float baseline = rect.Position.Y + PaddingY * 0.5f + label.FontSize +
                                  index * lineHeight;
+                DrawString(_font, new Vector2(x + 1f, baseline + 1f), lines[index],
+                    HorizontalAlignment.Left, -1f, label.FontSize, shadow);
                 DrawString(_font, new Vector2(x, baseline), lines[index], HorizontalAlignment.Left, -1f,
                     label.FontSize, label.Colour);
             }
         }
+    }
+
+    /// <summary>Debug-only time-control state, drawn small at the top centre (never part of the player HUD).</summary>
+    private Rect2 DrawStatus(Vector2 viewport)
+    {
+        if (string.IsNullOrEmpty(_status)) return default;
+
+        const int fontSize = 13;
+        float width = _font.GetStringSize(_status, HorizontalAlignment.Left, -1f, fontSize).X;
+        var position = new Vector2((viewport.X - width) * 0.5f, 10f + _font.GetAscent(fontSize));
+        var shadow = new Color(0f, 0f, 0f, 0.55f);
+        DrawString(_font, position + new Vector2(1f, 1f), _status, HorizontalAlignment.Left, -1f, fontSize,
+            shadow);
+        DrawString(_font, position, _status, HorizontalAlignment.Left, -1f, fontSize,
+            new Color(0.93f, 0.97f, 1f, 0.95f));
+        return new Rect2(position.X - 2f, 8f, width + 4f, fontSize + 5f);
     }
 
     private bool Overlaps(Rect2 rect)

@@ -132,6 +132,15 @@ public partial class MatchDebugView : Node3D
         _heatBuiltTick = -1;
     }
 
+    /// <summary>
+    /// Debug-only time-control status (pause/speed), drawn small at the top centre. Empty hides it; the
+    /// overlay never shows permanent key hints on the pitch.
+    /// </summary>
+    public void SetStatus(string status)
+    {
+        if (_labels is not null) _labels.SetStatus(status);
+    }
+
     public void Refresh(MatchSimulationEngine engine, FootballerState activePlayer)
     {
         if (!_enabled || _painter is null) return;
@@ -971,7 +980,7 @@ public partial class MatchDebugView : Node3D
         if (!withEtas) return;
 
         string eta = $"Ball: {FormatSeconds(delivery.BallEtaSeconds)}\nRecv: {FormatSeconds(delivery.ReceiverEtaSeconds)}";
-        _labels.Add(delivery.Target + Vector3.Up * 2.0f, eta, Cyan, 15, priority: 100, plate: true);
+        _labels.Add(delivery.Target + Vector3.Up * 2.0f, eta, Cyan, 15, priority: 100);
     }
 
     private void DrawInitialVelocity(DeliverySnapshot delivery)
@@ -993,7 +1002,7 @@ public partial class MatchDebugView : Node3D
         // through the midpoint, and a label on top of them is unreadable at game resolution.
         Vector3 perpendicular = direction.Cross(Vector3.Up).Normalized() * 1.6f;
         _labels.Add(from.Lerp(to, 0.55f) + perpendicular + Vector3.Up * 0.8f, $"{speed:F1} m/s", Yellow,
-            14, priority: 80, plate: true);
+            14, priority: 80);
     }
 
     private void DrawRestingPoint(DeliverySnapshot delivery)
@@ -1028,7 +1037,7 @@ public partial class MatchDebugView : Node3D
         if (distance > 1f)
             _painter.DashedLine(delivery.Target, delivery.RestingPoint, 0.100f,
                 WithAlpha(Magenta, 0.65f), 0.55f, 0.45f);
-        _labels.Add(delivery.Target + Vector3.Up * 0.6f, text, Magenta, 14, priority: 95, plate: true);
+        _labels.Add(delivery.Target + Vector3.Up * 0.6f, text, Magenta, 14, priority: 95);
     }
 
     private void DrawReceiverVector(DeliverySnapshot delivery)
@@ -1062,8 +1071,7 @@ public partial class MatchDebugView : Node3D
         _painter.Line(delivery.Target, delivery.ReceiverEnd, 0.160f, WithAlpha(RejectColour, 0.95f));
         _painter.Disc(delivery.ReceiverEnd + Vector3.Up * 0.02f, 0.30f, WithAlpha(RejectColour, 0.92f), 12);
         Vector3 midpoint = (delivery.Target + delivery.ReceiverEnd) * 0.5f + Vector3.Up * 0.60f;
-        _labels.Add(midpoint, $"Δ {delivery.ArrivalDeltaMeters:F1} m", RejectColour, 15, priority: 70,
-            plate: true);
+        _labels.Add(midpoint, $"Δ {delivery.ArrivalDeltaMeters:F1} m", RejectColour, 15, priority: 70);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1119,7 +1127,7 @@ public partial class MatchDebugView : Node3D
                 : option.Score.ToString("F2");
             Vector3 labelPosition = decision.Origin.Lerp(target, 0.45f) + Vector3.Up * 0.45f;
             _labels.Add(labelPosition, text, colour, option.Chosen ? 15 : 14,
-                priority: option.Chosen ? 65 : 55, plate: true);
+                priority: option.Chosen ? 65 : 55);
         }
     }
 
@@ -1130,7 +1138,7 @@ public partial class MatchDebugView : Node3D
         {
             if (!_touchRejections.TryGet(player.Id, tick, out string reason)) continue;
             float lift = 2.85f + player.Id % 2 * 0.25f;
-            _labels.Add(Ground(player.Position, lift), reason, RejectColour, 15, priority: 90, plate: true);
+            _labels.Add(Ground(player.Position, lift), reason, RejectColour, 15, priority: 90);
         }
     }
 
