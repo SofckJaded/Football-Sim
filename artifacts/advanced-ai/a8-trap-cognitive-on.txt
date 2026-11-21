@@ -1,0 +1,17 @@
+﻿=== A7.5 separated-error evidence: 3 seeds x 2400 s, cognitive error ON ===
+Simulation version : ai50-rs1
+Error model        : observation x(1 + 0.45*fatigue), evaluation +/-0.08*error, reaction x(1 + 0.60*fatigue), first touch -0.90*pressure*(1-composure) -0.20*fatigue
+AI configuration   : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on)
+
+Seed 20260818: FT in 144390 ticks | score 2-1 | stamina 0.55 | 2877720 decisions, 32910 misjudged the choice | first touches 828+28+22 (free/light/heavy)
+
+Seed 20268737: FT in 144792 ticks | score 0-2 | stamina 0.55 | 2877720 decisions, 33179 misjudged the choice | first touches 835+33+23 (free/light/heavy)
+
+Seed 20276656: FT in 144458 ticks | score 1-0 | stamina 0.55 | 2877720 decisions, 33764 misjudged the choice | first touches 807+32+17 (free/light/heavy)
+
+=== Totals over 3 seeds (3 completed, 2384976 player-samples, 8633160 decisions) ===
+Causes             : mean stamina 0.55 (min 0.15) | observation noise x1.20 | evaluation 0.247 | reaction delay 0.102 s
+Decisions          : 8633160 scored | 99853 misjudged the choice (1.16 %)
+First touches      : 2625 | free 2470, light 93, heavy 62 | execution error 0.113/0.174/0.237 | ball pace relative to the receiver 1.34/1.48/1.43
+Anticipation       : 2239 planned touches met the ball 1.03 m from the planned meeting point | 590 beyond the 1.6 m tolerance (the touch was realised less)
+RESULT: fatigue and composure reach observation, judgement, reaction and the first touch

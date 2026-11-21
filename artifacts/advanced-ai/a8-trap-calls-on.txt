@@ -1,0 +1,22 @@
+﻿=== A7.2 team-call evidence: 4 seeds x 4800 s, calls ON ===
+Simulation version : ai50-rs1
+Call model         : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on)
+
+Seed 20260818: FT in 289741 ticks | score 0-2 | calls 37618 published, 948535 suppressed, 37478 expired, 11 evicted | 376059 player-observations heard one | 152340 carrier decisions
+
+Seed 20268737: FT in 289709 ticks | score 0-2 | calls 36724 published, 931236 suppressed, 36572 expired, 1 evicted | 371429 player-observations heard one | 156945 carrier decisions
+
+Seed 20276656: FT in 289693 ticks | score 1-1 | calls 36362 published, 935999 suppressed, 36208 expired, 13 evicted | 365076 player-observations heard one | 157485 carrier decisions
+
+Seed 20284575: FT in 289505 ticks | score 0-0 | calls 36663 published, 931607 suppressed, 36486 expired, 9 evicted | 367685 player-observations heard one | 153288 carrier decisions
+
+=== Totals over 4 seeds (4 completed, 25490168 player-observations) ===
+Calls published    : 147367 | 3747377 repeated shouts suppressed | 146744 expired | 34 evicted from the bounded board
+Received           : 1480249 player-observations carried a call (5.81 %) | 4352843 carried a step/drop line instruction
+By kind            : ManOn 53702, Turn 57348, Switch 10672, Run 9197, Cover 4901, Step 3794, Drop 7753
+Heard by kind      : ManOn 359106, Turn 317825, Switch 113057, Run 543438, Cover 146823
+Line band shift    : 376353 defending samples with a call shift (mean -0.94 m, range -2.00..1.50 m) | read from the band the allocator placed the line from
+Carrier decisions  : 620058 | 89275 under a man-on call | 250223 run choices while told to run
+Carrier actions    : DriveWithBall 576889, ShieldBall 13617, Job:BallResponder 10544
+Under man-on       : DriveWithBall 70043, ShieldBall 13611, Job:BallResponder 760
+RESULT: the channel is alive, heard after its delay, expires, and reaches the allocator

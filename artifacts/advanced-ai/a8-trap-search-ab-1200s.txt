@@ -1,0 +1,50 @@
+﻿=== A8.2 shallow continuation search: same-seed A/B, 3 seeds x 2400 s -- search on vs search off (combinations on in both) ===
+Simulation version : ai50-rs1
+Search model       : the carrier examines the best three eligible pass receivers and, from
+                     its own observation, at most three continuations each -- two one-two
+                     return regions (deep and short) and the best advertised layoff -- to depth
+                     two. Defender sighting uncertainty widens the second ball's lane; there is
+                     no truth-state rollout. The heuristic still covers receivers outside the
+                     bounded search, so the switch adds a choice rather than replacing play.
+Search ON          : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on)
+Search OFF         : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(off) switchrec(on) traps(on)
+
+Seed 20260818:
+  ON  : FT        | 144390 ticks, score 2-1, passes 509/523 attempted, shots 28/22, contracts 598 published / 103 continued
+  OFF : FT        | 144380 ticks, score 0-0, passes 474/504 attempted, shots 15/12, contracts 401 published / 73 continued
+Seed 20268737:
+  ON  : FT        | 144792 ticks, score 0-2, passes 516/562 attempted, shots 25/16, contracts 665 published / 102 continued
+  OFF : FT        | 144664 ticks, score 1-1, passes 515/508 attempted, shots 25/17, contracts 403 published / 81 continued
+Seed 20276656:
+  ON  : FT        | 144458 ticks, score 1-0, passes 551/452 attempted, shots 25/13, contracts 566 published / 106 continued
+  OFF : FT        | 144442 ticks, score 1-0, passes 499/477 attempted, shots 23/15, contracts 377 published / 65 continued
+
+=== Totals over 3 seeds ===
+metric                                ON         OFF       DELTA
+completed matches                      3           3           0
+live ticks                        433640      433486         154
+passes attempted                    3113        2977         136
+passes completed                    2492        2371         121
+shots                                129         107          22
+contracts published                 1829        1181         648
+continuations executed               311         219          92
+duplicate proposals suppressed          34          19          15
+live at full time                      0           0           0
+
+Published by kind:
+  OneTwo                        1721        1061         660
+  ThirdPlayer                    108         120         -12
+Continuations by kind:
+  OneTwo                         295         207          88
+  ThirdPlayer                     16          12           4
+Endings by reason (ON / OFF):
+  Continued                       94          69
+  Expired                         38          31
+  PossessionEnded                286         224
+  Replaced                        60          23
+  AbandonedByInitiator           729         394
+  AbandonedByReceiver            557         363
+  AbandonedByThirdRunner          35          52
+  Reset                           30          25
+
+RESULT: PASS -- the search build creates and executes more continuations than the build with the search off, and both finished every seed

@@ -1,0 +1,45 @@
+﻿=== A8.4 short-trap evidence: same-seed A/B, 3 seeds x 5400 s -- traps on vs off ===
+Simulation version : ai50-rs1
+Trap model         : from the defending team's shared picture (own exact positions, its
+                     belief of the carrier, the elected presser/second man and the allocator's
+                     cover), a carrier pinned to a touchline is trapped for 1.5 s by three named
+                     players: the presser takes A6.2's angled point, the screener (a shape-duty
+                     man) gets one bounded preference on the existing Screen act, and the
+                     allocator's cover stays behind the press. A trap ends once - won, escaped,
+                     loose, expired, presser/cover lost, participant removed or reset - and a
+                     failed trap puts the side into a 0.5 s recovery before it re-commits.
+Traps ON           : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on)
+Traps OFF          : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(off)
+
+Seed 20260818:
+  ON  : FT        | 325086 ticks, score 0-0, passes 614/609 attempted, shots 20/19, traps raised 240 (won 24, escaped 125, loose 1, expired 3, presser-lost 82, cover-lost 3), trap ticks 9505, roles S9553/P9553/C9553, screens chosen 9408
+  OFF : FT        | 326042 ticks, score 1-1, passes 1241/1186 attempted, shots 51/36, traps raised 0 (won 0, escaped 0, loose 0, expired 0, presser-lost 0, cover-lost 0), trap ticks 0, roles S0/P0/C0, screens chosen 0
+Seed 20268737:
+  ON  : FT        | 326052 ticks, score 3-2, passes 1205/1204 attempted, shots 69/34, traps raised 521 (won 46, escaped 244, loose 1, expired 17, presser-lost 198, cover-lost 14), trap ticks 17748, roles S17749/P17749/C17749, screens chosen 17629
+  OFF : FT        | 325976 ticks, score 2-1, passes 1159/1164 attempted, shots 31/41, traps raised 0 (won 0, escaped 0, loose 0, expired 0, presser-lost 0, cover-lost 0), trap ticks 0, roles S0/P0/C0, screens chosen 0
+Seed 20276656:
+  ON  : FT        | 326104 ticks, score 2-1, passes 1163/1181 attempted, shots 39/44, traps raised 534 (won 46, escaped 256, loose 0, expired 14, presser-lost 209, cover-lost 8), trap ticks 18624, roles S18641/P18641/C18641, screens chosen 18541
+  OFF : FT        | 325624 ticks, score 0-3, passes 1123/1288 attempted, shots 51/29, traps raised 0 (won 0, escaped 0, loose 0, expired 0, presser-lost 0, cover-lost 0), trap ticks 0, roles S0/P0/C0, screens chosen 0
+
+=== Totals over 3 seeds ===
+metric                                      ON         OFF       DELTA
+completed matches                            3           3           0
+live ticks                              977242      977642        -400
+passes attempted                          5976        7161       -1185
+passes completed                          4783        5767        -984
+shots                                      225         239         -14
+traps raised                              1295           0        1295
+trap ticks                               45877           0       45877
+traps won                                  116           0         116
+traps escaped                              625           0         625
+traps loose                                  2           0           2
+traps expired                               34           0          34
+traps presser-lost                         489           0         489
+traps cover-lost                            25           0          25
+recovery-blocked raises                  18125           0       18125
+screener decisions                       45943           0       45943
+screener chose Screen                    45578           0       45578
+presser decisions                        45943           0       45943
+cover decisions                          45943           0       45943
+
+RESULT: PASS -- the trap build raises traps that are won and escaped, the named roles reach the controllers, and the version-49 build raises none; both finished every seed
