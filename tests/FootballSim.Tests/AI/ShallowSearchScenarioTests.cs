@@ -110,12 +110,13 @@ public sealed class ShallowSearchScenarioTests
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// A home possession under pressure with a continuation worth promising that A8.1's heuristic cannot
-    /// make: the carrier is pressed, and a defender stands on the <b>deep</b> return line (the only region
-    /// A8.1 offers), so the heuristic's one-two has no lane there - while the short bounce the search examines
-    /// (A8.2's second return region) is open. The away side is scripted to hold where it stands, so the
-    /// fixture's pressure and its blocking defender are part of the fixture rather than of the opponent's
-    /// mood, and the difference between the two builds is the search and nothing else.
+    /// A home side in possession under pressure with a continuation worth promising that A8.1's heuristic
+    /// cannot make: the carrier is pressed, and a defender stands on the <b>deep</b> return line (the only
+    /// region A8.1 offers), so the heuristic's one-two has no lane there - while the short bounce the search
+    /// examines (A8.2's second return region) is open. The away side is scripted to hold where it stands, the
+    /// home side plays the neutral style (A9.1 — a style's own directness is a separate preference and must not
+    /// be measured by this gate), so the fixture's pressure, its blocking defender and its search are the only
+    /// variables.
     /// </summary>
     private static MatchScenario SearchScenario(bool search)
     {
@@ -124,6 +125,14 @@ public sealed class ShallowSearchScenarioTests
         {
             Name = search ? "search-on" : "search-off",
             Seed = 4822UL,
+            // A9.1: the fixture's subject is the search, not a style, so the home side holds the neutral
+            // profile. The possession preset used to be the implicit default and it now states a directness of
+            // 0.25, which discounts exactly the forward ball this fixture's continuation is made of: with it
+            // the executed-continuation count moved to the other side of the A/B (1 vs 2) even though the
+            // search still published more contracts, so the two preferences were being measured together. A
+            // neutral style keeps the two columns differing by the search alone, which is what this gate says.
+            HomeProfile = new TeamTacticalProfile(),
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
             Ai = new AiRuntimeConfig
             {
                 EnableCombinations = true,

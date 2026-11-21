@@ -559,7 +559,7 @@ public sealed class TeamJobCoordinator
                 _ => coverAnchor, baseScore: 0.05f);
 
             // A6.3: how many opponents this profile marks man-for-man is a style decision, not a constant.
-            AssignMarkers(players, available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, formation);
+            AssignMarkers(players, available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, formation, profile);
 
             // A6.3: the remaining defenders hold one shared depth band â€” the whole line steps together,
             // each man in his own lane, with the ball-side and far-side exceptions the band allows.
@@ -896,7 +896,8 @@ public sealed class TeamJobCoordinator
         Vector2 ownGoalXZ,
         float attackDirX,
         int tick,
-        TeamFormation formation)
+        TeamFormation formation,
+        TeamTacticalProfile profile)
     {
         // A2.6: markers are picked from what the team believes, so an opponent nobody has seen cannot
         // pull a defender out of shape.
@@ -921,7 +922,7 @@ public sealed class TeamJobCoordinator
             if (TryFindHeldMarker(threat.PlayerId, players, taken, out FootballerState? incumbent))
             {
                 TryHandOverMarking(threat, incumbent!, players, available, counts, taken,
-                    formation, ownGoalXZ, attackDirX, tick);
+                    formation, ownGoalXZ, attackDirX, tick, profile);
                 continue;
             }
 
@@ -931,7 +932,9 @@ public sealed class TeamJobCoordinator
             float bestScore = float.MinValue;
             Vector2 threatXZ = threat.PositionXZ;
             Vector2 goalSide = SimMath.SafeNormalize(ownGoalXZ - threatXZ, new Vector2(-attackDirX, 0f));
-            Vector3 anchor = new(threatXZ.X + goalSide.X * 1.9f, 0f, threatXZ.Y + goalSide.Y * 1.9f);
+            // A9.1: the standoff is the profile's own — a man-oriented side stands closer to its man.
+            float standoff = DefensiveLineModel.MarkerStandoffMeters(profile);
+            Vector3 anchor = new(threatXZ.X + goalSide.X * standoff, 0f, threatXZ.Y + goalSide.Y * standoff);
 
             foreach (FootballerState player in available)
             {
@@ -1006,7 +1009,8 @@ public sealed class TeamJobCoordinator
         TeamFormation formation,
         Vector2 ownGoalXZ,
         float attackDirX,
-        int tick)
+        int tick,
+        TeamTacticalProfile profile)
     {
         if (_handoversThisPass >= MaxHandoversPerPass) return false;
         if (!formation.TryGetWorldAnchor(incumbent.Id, attackDirX, out Vector3 incumbentSlot)) return false;
@@ -1077,7 +1081,9 @@ public sealed class TeamJobCoordinator
 
         Vector2 threatXZ = threat.PositionXZ;
         Vector2 goalSide = SimMath.SafeNormalize(ownGoalXZ - threatXZ, new Vector2(-attackDirX, 0f));
-        Vector3 anchor = new(threatXZ.X + goalSide.X * 1.9f, 0f, threatXZ.Y + goalSide.Y * 1.9f);
+        // A9.1: a handed-over marking job holds the same profile standoff as a fresh one.
+        float standoff = DefensiveLineModel.MarkerStandoffMeters(profile);
+        Vector3 anchor = new(threatXZ.X + goalSide.X * standoff, 0f, threatXZ.Y + goalSide.Y * standoff);
 
         Assign(owner, TacticalJob.Marker, anchor, threat.PlayerId,
             $"Mark #{threat.PlayerId} (handed over from #{incumbent.Id})", tick);

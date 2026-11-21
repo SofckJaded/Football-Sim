@@ -565,12 +565,24 @@ public enum TeamId
 /// candidate, placement, reach, sight, contact rule or second allocator is added, and
 /// <see cref="AI.AiRuntimeConfig.EnableRestartRoutines"/> off is the version-50 build exactly. Trajectories
 /// differ from version 50 wherever a restart routine is applied.</item>
+/// <item><c>AiBehaviour 52</c> — A9.1: <b>team styles</b>. The profile gains one explicit style axis,
+/// <see cref="TeamTacticalProfile.ManOrientation01"/> (the third term of A6.3's zone/man mix and the marker's
+/// goal-side standoff), and three presets join the vocabulary — <see cref="TeamTacticalProfile.Direct"/>,
+/// <see cref="TeamTacticalProfile.LowBlock"/> and <see cref="TeamTacticalProfile.ManOriented"/> — alongside the
+/// three that already existed. The existing presets keep every one of their numbers, but one field that only
+/// gated the counter-attack transition now reaches the carrier: <see cref="TeamTacticalProfile.Directness01"/>
+/// contributes the same forward-pass preference a player's own direct-pass tendency does, symmetric around the
+/// neutral 0.50, so a possession side values a forward ball less and a direct side more than before. The new
+/// marking axis is a bias around its neutral 0.50 too, so a profile that sets no style is unchanged. No new
+/// candidate, reach, contact, allocator or second tactical model is added — a style is a set of stated
+/// preferences on the one pipeline. Trajectories differ from version 51 wherever a team's directness is not
+/// 0.50.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 51;
+    public const int AiBehaviour = 52;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
@@ -1476,20 +1488,74 @@ public static class PlayerTendencyProfile
     };
 }
 
+/// <summary>
+/// A team's style: a set of stated <b>preferences</b> on the one decision pipeline, never a second tactical
+/// model, a candidate set or a capability. Every field is read by an existing scorer or shape rule — the
+/// presets below only choose the numbers, so a new style is a configuration and not a behaviour module.
+///
+/// A9.1 vocabulary (one preset for each configuration the plan names):
+/// <list type="bullet">
+/// <item><see cref="PossessionControl"/> — positional possession.</item>
+/// <item><see cref="Direct"/> — direct play from a mid-block.</item>
+/// <item><see cref="DirectCounterattack"/> — counter-attacking from a deep block.</item>
+/// <item><see cref="HighPressGegenpress"/> — high press / gegenpressing.</item>
+/// <item><see cref="LowBlock"/> — low block (deep, compact, minimal pressing).</item>
+/// <item><see cref="ManOriented"/> — man-oriented pressing (the explicit marking axis).</item>
+/// </list>
+/// The neutral profile (<see cref="Name"/> "Balanced", every field at its default) is not a style preset: it
+/// is the control a style is compared against, and it is the profile a fixture that mentions none gets.
+/// </summary>
 public sealed class TeamTacticalProfile
 {
     public string Name { get; init; } = "Balanced";
+
+    /// <summary>
+    /// How directly the team wants to attack, in 0–1. It gates the counter-attack transition (A3.2) and,
+    /// since A9.1, contributes the same forward-pass preference A4.4 already gives a player's own
+    /// direct-pass tendency — weighted around the neutral 0.50, so a balanced profile adds nothing.
+    /// </summary>
     public float Directness01 { get; init; } = 0.50f;
+
+    /// <summary>How quickly the team releases the ball after receiving it (A4.2 pass trigger).</summary>
     public float Tempo01 { get; init; } = 0.55f;
+
+    /// <summary>How wide the attacking shape is: width jobs, the anchor's width scale, run lanes.</summary>
     public float AttackingWidth01 { get; init; } = 0.65f;
+
+    /// <summary>How high the back line sits (A6.3 band, keeper sweep line, shape anchors).</summary>
     public float DefensiveLineHeight01 { get; init; } = 0.50f;
+
+    /// <summary>How tightly the out-of-possession shape compresses toward the ball and the goal.</summary>
     public float Compactness01 { get; init; } = 0.60f;
+
+    /// <summary>How hard the side presses (A6.1/A6.2 press policy, turnover response, counter-press gate).</summary>
     public float PressingIntensity01 { get; init; } = 0.55f;
+
+    /// <summary>How much risk the side tolerates in a pass lane (A4.4) and in the shot/carry split.</summary>
     public float RiskTolerance01 { get; init; } = 0.50f;
+
+    /// <summary>How long after a turnover the side keeps counter-pressing (A3.2, a maximum window).</summary>
     public float CounterPressDurationSeconds { get; init; } = 3.5f;
+
+    /// <summary>How far a player may stray from his formation anchor when taking up a support spot (F18).</summary>
     public float PositionalFreedom01 { get; init; } = 0.55f;
+
+    /// <summary>Whether the keeper looks short first (A6.5b) or always goes long.</summary>
     public bool ShortGoalkeeperDistribution { get; init; } = true;
 
+    /// <summary>
+    /// A9.1: how man-oriented the marking is, in 0–1. It is the explicit third term of A6.3's zone/man mix
+    /// (<see cref="AI.DefensiveLineModel.ManShare01"/>) and the standoff a marker holds from his man
+    /// (<see cref="AI.DefensiveLineModel.MarkerStandoffMeters"/>). It exists because "press hard" and
+    /// "pick up a man" are different statements: a pressing side can stay zonal, and a moderately pressing
+    /// side can mark aggressively. The default 0.50 is the neutral value of a bias — it adds exactly zero
+    /// to the share and leaves the 1.9 m standoff untouched, so every pre-A9.1 profile keeps its behaviour.
+    /// </summary>
+    public float ManOrientation01 { get; init; } = 0.50f;
+
+    /// <summary>
+    /// Positional possession: stretch the pitch, keep the ball, squeeze up behind it. The pre-A9.1 default.
+    /// </summary>
     public static TeamTacticalProfile PossessionControl => new()
     {
         Name = "Possession / Positional Play",
@@ -1505,6 +1571,31 @@ public sealed class TeamTacticalProfile
         ShortGoalkeeperDistribution = true
     };
 
+    /// <summary>
+    /// Direct play: go long and early from a mid-block, with no short build-up. Distinct from
+    /// <see cref="DirectCounterattack"/> by <i>where</i> it wins the ball and how compact it stays, not by
+    /// how directly it plays — a direct side defends in a mid-block, a counter-attacking side defends deep.
+    /// </summary>
+    public static TeamTacticalProfile Direct => new()
+    {
+        Name = "Direct",
+        Directness01 = 0.92f,
+        Tempo01 = 0.82f,
+        AttackingWidth01 = 0.50f,
+        DefensiveLineHeight01 = 0.58f,
+        Compactness01 = 0.55f,
+        PressingIntensity01 = 0.55f,
+        RiskTolerance01 = 0.66f,
+        CounterPressDurationSeconds = 2.5f,
+        PositionalFreedom01 = 0.45f,
+        ShortGoalkeeperDistribution = false,
+        ManOrientation01 = 0.45f
+    };
+
+    /// <summary>
+    /// Counter-attacking from a deep block: defend deep and compact, concede the ball, then break quickly.
+    /// The pre-A9.1 away default of the tactical gate; its numbers are unchanged.
+    /// </summary>
     public static TeamTacticalProfile DirectCounterattack => new()
     {
         Name = "Direct Counterattack",
@@ -1520,6 +1611,10 @@ public sealed class TeamTacticalProfile
         ShortGoalkeeperDistribution = false
     };
 
+    /// <summary>
+    /// High press / gegenpressing: squeeze high, press hard, counter-press for a long window. The pre-A9.1
+    /// third preset. Its marking stays the pressing-driven mix (A6.3's derived share), not man-oriented.
+    /// </summary>
     public static TeamTacticalProfile HighPressGegenpress => new()
     {
         Name = "High-Press Gegenpressing",
@@ -1533,6 +1628,50 @@ public sealed class TeamTacticalProfile
         CounterPressDurationSeconds = 5.5f,
         PositionalFreedom01 = 0.60f,
         ShortGoalkeeperDistribution = true
+    };
+
+    /// <summary>
+    /// Low block: sit deep and very compact, hardly press, take no risks, and clear the ball long when it
+    /// arrives. It is the mirror of <see cref="HighPressGegenpress"/> on every defensive axis, and it is
+    /// deliberately deeper and more passive than <see cref="DirectCounterattack"/> (12 % line height against
+    /// 28 %, minimal press and counter-press windows, lowest risk tolerance): a low block defends its box,
+    /// a counter-attacking side defends the middle third and breaks.
+    /// </summary>
+    public static TeamTacticalProfile LowBlock => new()
+    {
+        Name = "Low Block",
+        Directness01 = 0.70f,
+        Tempo01 = 0.38f,
+        AttackingWidth01 = 0.42f,
+        DefensiveLineHeight01 = 0.12f,
+        Compactness01 = 0.95f,
+        PressingIntensity01 = 0.15f,
+        RiskTolerance01 = 0.22f,
+        CounterPressDurationSeconds = 0.8f,
+        PositionalFreedom01 = 0.28f,
+        ShortGoalkeeperDistribution = false,
+        ManOrientation01 = 0.35f
+    };
+
+    /// <summary>
+    /// Man-oriented press: press hard <i>and</i> pick up opponents man-for-man, which the derived zone/man
+    /// mix cannot express — at this pressing and compactness a zonal side marks two, this side marks three
+    /// and stands 0.36 m tighter to each of them (A9.1's <see cref="ManOrientation01"/>).
+    /// </summary>
+    public static TeamTacticalProfile ManOriented => new()
+    {
+        Name = "Man-Oriented Press",
+        Directness01 = 0.55f,
+        Tempo01 = 0.62f,
+        AttackingWidth01 = 0.58f,
+        DefensiveLineHeight01 = 0.62f,
+        Compactness01 = 0.68f,
+        PressingIntensity01 = 0.85f,
+        RiskTolerance01 = 0.55f,
+        CounterPressDurationSeconds = 4.5f,
+        PositionalFreedom01 = 0.45f,
+        ShortGoalkeeperDistribution = true,
+        ManOrientation01 = 0.90f
     };
 }
 

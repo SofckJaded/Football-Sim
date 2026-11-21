@@ -241,14 +241,27 @@ public static class DefensiveLineModel
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// How man-oriented this profile is, in 0–1. Pressing intensity is the main term — a side that presses
-    /// has to pick up runners — and compactness is the second: a compact side can afford to mark because the
-    /// space it leaves behind is small. A deep, non-pressing side stays zonal.
+    /// How man-oriented this profile is, in 0–1. Pressing intensity is the main derived term — a side that
+    /// presses has to pick up runners — and compactness is the second: a compact side can afford to mark
+    /// because the space it leaves behind is small. A deep, non-pressing side stays zonal. A9.1 adds the
+    /// profile's own <see cref="TeamTacticalProfile.ManOrientation01"/> as the third term, because "press
+    /// hard" and "pick up a man" are different statements: at the same pressing and compactness a side can
+    /// choose to stay zonal or to mark. The term is a bias around the neutral 0.50, so a profile that does
+    /// not name a style gets exactly the share it got before A9.1.
     /// </summary>
     public static float ManShare01(in TeamTacticalProfile profile) => Clamp01(
         0.35f +
         0.90f * (Clamp01(profile.PressingIntensity01) - 0.5f) +
-        0.50f * (Clamp01(profile.Compactness01) - 0.5f));
+        0.50f * (Clamp01(profile.Compactness01) - 0.5f) +
+        ManOrientationShareWeight * (Clamp01(profile.ManOrientation01) - 0.5f));
+
+    /// <summary>
+    /// How much a fully man-oriented profile (<see cref="TeamTacticalProfile.ManOrientation01"/> 1) adds to
+    /// the derived share, in 0–1. Chosen so the explicit axis is a real but subordinate term: at the neutral
+    /// pressing and compactness alone it spans ±0.275 of share, enough to cross one marker threshold, and it
+    /// cannot on its own turn a passive side into a three-man-marking side.
+    /// </summary>
+    public const float ManOrientationShareWeight = 0.55f;
 
     /// <summary>
     /// How many opponents this profile marks man-for-man, 1–3. Two thresholds rather than a rounding, so the
@@ -259,6 +272,21 @@ public static class DefensiveLineModel
         float share = ManShare01(profile);
         return 1 + (share >= 0.50f ? 1 : 0) + (share >= 0.85f ? 1 : 0);
     }
+
+    /// <summary>
+    /// The goal-side standoff a marker holds from the man he picked up, in metres. It was the constant 1.9 m
+    /// before A9.1; the profile's <see cref="TeamTacticalProfile.ManOrientation01"/> now tightens it (to
+    /// 1.45 m at 1) or loosens it (2.35 m at 0), so a man-oriented side stands closer to its man than a zonal
+    /// side of the same pressing intensity would. Exactly 1.9 m at the neutral 0.5.
+    /// </summary>
+    public static float MarkerStandoffMeters(in TeamTacticalProfile profile) =>
+        MarkerStandoffBaseMeters - MarkerStandoffManSwingMeters * (Clamp01(profile.ManOrientation01) - 0.5f);
+
+    /// <summary>The pre-A9.1 marker standoff, in metres — the neutral value of <see cref="MarkerStandoffMeters"/>.</summary>
+    public const float MarkerStandoffBaseMeters = 1.9f;
+
+    /// <summary>How much a fully man-oriented profile tightens the marker standoff, in metres.</summary>
+    public const float MarkerStandoffManSwingMeters = 0.9f;
 
     // ---------------------------------------------------------------------------------------------
     // The band.

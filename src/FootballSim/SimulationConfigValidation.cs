@@ -190,6 +190,8 @@ public static class SimulationConfigValidation
         Require01(profile.PressingIntensity01, $"{name}.PressingIntensity01");
         Require01(profile.RiskTolerance01, $"{name}.RiskTolerance01");
         Require01(profile.PositionalFreedom01, $"{name}.PositionalFreedom01");
+        // A9.1: the explicit zone/man axis; 0.50 is its neutral value.
+        Require01(profile.ManOrientation01, $"{name}.ManOrientation01");
         RequireFinite(profile.CounterPressDurationSeconds, $"{name}.CounterPressDurationSeconds");
         if (profile.CounterPressDurationSeconds < 0f)
         {

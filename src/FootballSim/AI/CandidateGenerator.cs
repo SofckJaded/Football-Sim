@@ -1293,6 +1293,13 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         // Direct pass preference: how much a forward pass is worth to this player.
         preference += (tendencies.DirectPassPreference01 - PlayerTendencyBaselines.DirectPassPreference) * 0.30f * forwardRatio;
+
+        // A9.1: team directness. The profile's Directness01 used to reach only the counter-attack transition
+        // gate (A3.2) and the restart menu, so a "direct" side did not actually value a forward ball more
+        // than a possession side did. It now pays the same forward-progress preference a player's own
+        // direct-pass tendency pays, symmetric around the neutral 0.50: a balanced profile adds exactly
+        // nothing, a possession side discounts the forward ball, a direct side premiums it.
+        preference += (profile.Directness01 - 0.50f) * 0.30f * forwardRatio;
         return preference;
     }
 
