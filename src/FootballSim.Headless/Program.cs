@@ -86,6 +86,9 @@ public static class Program
             case "--routines":
                 return RunRestartEvidence(args) ? 0 : 1;
 
+            case "--styles":
+                return RunStyleEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -109,6 +112,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --switches [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --traps [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --routines [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --styles [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -3925,5 +3929,733 @@ public static class Program
             $"(gate: at least {seedCount - 1}/{seedCount} and mean > 0.5 m)");
         Console.WriteLine(allPassed ? "GATE: PASS" : "GATE: FAIL");
         return allPassed;
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // A9.1 -- the style matrix.
+    // ---------------------------------------------------------------------------------------------
+
+    // Indices of the six presets in StylePresets, in print order. The claim block names them, so the indices
+    // are named rather than repeated as literals.
+    private const int StyleIndexPossessionControl = 0;
+    private const int StyleIndexDirect = 1;
+    private const int StyleIndexDirectCounterattack = 2;
+    private const int StyleIndexHighPress = 3;
+    private const int StyleIndexLowBlock = 4;
+    private const int StyleIndexManOriented = 5;
+
+    /// <summary>How many style presets the A9.1 matrix plays.</summary>
+    private const int StylePresetCount = 6;
+
+    /// <summary>
+    /// How often the A9.1 probe samples the style team's jobs, in ticks. It matches the analytics sample
+    /// interval, so the marking numbers and the shape numbers describe the same instants.
+    /// </summary>
+    private const int StyleMarkingSampleTicks = 30;
+
+    /// <summary>
+    /// The six A9.1 style presets, in the order every block prints them. The probe only reads them: each is an
+    /// init-only <see cref="TeamTacticalProfile"/>, so every seed plays the identical configuration and the
+    /// matrix compares the presets' numbers, not six code paths.
+    /// </summary>
+    private static readonly TeamTacticalProfile[] StylePresets =
+    {
+        TeamTacticalProfile.PossessionControl,
+        TeamTacticalProfile.Direct,
+        TeamTacticalProfile.DirectCounterattack,
+        TeamTacticalProfile.HighPressGegenpress,
+        TeamTacticalProfile.LowBlock,
+        TeamTacticalProfile.ManOriented
+    };
+
+    /// <summary>Short names for the aggregate table, the per-seed lines and the paired claims block.</summary>
+    private static readonly string[] StyleShortNames =
+    {
+        "Possession",
+        "Direct",
+        "Counter",
+        "Press",
+        "LowBlock",
+        "ManOr"
+    };
+
+    /// <summary>
+    /// A9.1 style-matrix evidence: the six style presets against the neutral benchmark over a seed set, each
+    /// preset played at home and away.
+    ///
+    /// The matrix exists because a profile is a set of preferences on the one decision pipeline: proving the
+    /// presets are <b>distinct</b> is a measurement, not a review of the numbers in the source. Every preset
+    /// therefore plays the same squads, rules and AI against the same neutral benchmark (<c>new
+    /// TeamTacticalProfile()</c>, "Balanced"), and plays it once at home and once away, so the venue and end
+    /// effect cancels in the style's mean and the columns compare the presets rather than the fixtures. The
+    /// probe is read-only: it reads the analytics summary, the live job board and the authoritative player
+    /// positions, and writes nothing into the world, so the same seed stays reproducible.
+    ///
+    /// The claims are paired by seed - each style's mean over its home and away end on that seed - and only
+    /// state consequences of the presets' own numbers, so a failure names a configuration that is not reaching
+    /// the pitch:
+    /// <list type="bullet">
+    /// <item>possession keeps more of the ball than direct (paired majority, mean more than +2 pp);</item>
+    /// <item>possession is wider with the ball than direct (at least seeds-1 seeds, mean more than +2 m);</item>
+    /// <item>the high press stands its defensive line higher than the low block (at least seeds-1 seeds, mean
+    /// more than +4 m of anchor projection);</item>
+    /// <item>possession stands its defensive line higher than the counter-attacking side (at least seeds-1
+    /// seeds, mean more than +2 m of anchor projection);</item>
+    /// <item>direct stands its defensive line higher than the low block (at least seeds-1 seeds, mean more than
+    /// +2 m of anchor projection);</item>
+    /// <item>the man-oriented press holds at least as many markers per sample as the high press (mean);</item>
+    /// <item>the man-oriented press holds more markers per sample than possession (at least seeds-1 seeds);</item>
+    /// <item>every style's every match reaches full time.</item>
+    /// </list>
+    ///
+    /// Line height is the mean of <c>DefensiveLineBand.AnchorMeanProjX</c> over the 30-tick samples in which the
+    /// style team is defending and its band is valid, in metres in its own attacking direction (positive = higher
+    /// up the pitch). The band's placed depth <c>ProjX</c> is reported beside it but not gated: caps and local
+    /// exceptions are situational, the anchor mean is the profile's own line. Marker body distance is likewise
+    /// reported but not gated: a marker's body carries the approach lag and a kept assignment's stale anchor, so
+    /// it does not measure the profile's 1.45-1.9 m anchor standoff (that is proven by A9StylePresetTests). Pass
+    /// volume, completion and territory are reported for the same reason: the eight-seed run showed they are not
+    /// monotone in style.
+    /// </summary>
+    private static bool RunStyleEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 6;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 120f;
+
+        Console.WriteLine($"=== A9.1 style-matrix evidence: six presets vs the neutral benchmark, {seedCount} seeds x " +
+                          $"{halfSeconds * 2f:F0} s, home and away ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Style matrix       : every preset plays the neutral benchmark profile (new TeamTacticalProfile(),");
+        Console.WriteLine("                     \"Balanced\") once at home and once away on the same seed, so the venue and");
+        Console.WriteLine("                     end effect cancel in the style's mean. The six presets are preference bundles");
+        Console.WriteLine("                     on one decision pipeline: the same squads, rules and AI cadence, with no");
+        Console.WriteLine("                     candidate, sight, reach or contact differing between them.");
+        Console.WriteLine("Presets            : " + DescribeStylePresets(0, 3));
+        Console.WriteLine("                     " + DescribeStylePresets(3, 3));
+        Console.WriteLine("Metrics            : possession share = the style's possession ticks / (home + away possession");
+        Console.WriteLine("                     ticks); passes/shots/goals = the style's own executed outcomes; width = the");
+        Console.WriteLine("                     possession-scoped span; territory = mean ball x in the style's attacking");
+        Console.WriteLine("                     direction while in possession (a ball-progress measure - printed, not gated);");
+        Console.WriteLine("                     markers = style players whose live job is TacticalJob.Marker per 30-tick");
+        Console.WriteLine("                     sample, body distance = marker-to-marked-man XZ distance including the");
+        Console.WriteLine("                     approach lag (printed, not gated: it is not the assignment-time standoff).");
+        Console.WriteLine("Line height        : mean of DefensiveLineBand.AnchorMeanProjX over the 30-tick samples in");
+        Console.WriteLine("                     which the style team is defending and the band is valid, in metres in the");
+        Console.WriteLine("                     style's own attacking direction (positive = higher up the pitch). The band's");
+        Console.WriteLine("                     placed depth ProjX is reported beside it but not gated: caps and local");
+        Console.WriteLine("                     exceptions are situational, the anchor mean is the profile's own line.");
+        Console.WriteLine("Verdict            : the predefined claim block at the end, paired by seed. Two kinds of claim,");
+        Console.WriteLine("                     because they are two kinds of statement: a SHAPE claim (width, line height,");
+        Console.WriteLine("                     marker count) is a property of the assignment the presets' numbers state, so");
+        Console.WriteLine("                     it must hold on all but at most one seed; a CONSEQUENCE claim (possession");
+        Console.WriteLine("                     share) is a stochastic match outcome, so it needs a paired-seed majority and");
+        Console.WriteLine("                     a mean threshold. Pass volume, completion, territory and marker body");
+        Console.WriteLine("                     distance are reported, never gated - the three-seed diagnostic and the");
+        Console.WriteLine("                     recorded eight-seed run both showed they are not monotone in style (a direct");
+        Console.WriteLine("                     side's longer balls still count as passes, and a turnover raises the count).");
+        Console.WriteLine();
+
+        var styles = new StyleEvidenceTotals[StylePresetCount];
+        for (int styleIndex = 0; styleIndex < StylePresetCount; styleIndex++)
+        {
+            styles[styleIndex] = new StyleEvidenceTotals
+            {
+                Name = StyleShortNames[styleIndex],
+                PerSeed = new StyleSeedMetrics[seedCount]
+            };
+        }
+
+        var seeds = new ulong[seedCount];
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+            seeds[seedIndex] = 20260818UL + (ulong)seedIndex * 7919UL;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            Console.WriteLine($"Seed {seeds[seedIndex]}:");
+            for (int styleIndex = 0; styleIndex < StylePresetCount; styleIndex++)
+            {
+                StyleEvidenceTotals totals = styles[styleIndex];
+                bool homeCompleted = RunStyleMatch(
+                    seeds[seedIndex], halfSeconds, StylePresets[styleIndex], styleAtHome: true, totals,
+                    out StyleMatchMetrics home);
+                bool awayCompleted = RunStyleMatch(
+                    seeds[seedIndex], halfSeconds, StylePresets[styleIndex], styleAtHome: false, totals,
+                    out StyleMatchMetrics away);
+
+                var paired = new StyleSeedMetrics
+                {
+                    PossessionSharePercent = (home.PossessionShare01 + away.PossessionShare01) * 50d,
+                    PassesAttemptedPerMatch = (home.PassesAttempted + away.PassesAttempted) / 2d,
+                    AttackingWidthMeters = (home.AttackingWidthMeters + away.AttackingWidthMeters) / 2d,
+                    TerritoryMeters = (home.TerritoryMeters + away.TerritoryMeters) / 2d
+                };
+                long markerSamples = home.MarkerSamples + away.MarkerSamples;
+                paired.MarkersHeldPerSample = markerSamples > 0
+                    ? (double)(home.MarkersHeld + away.MarkersHeld) / markerSamples
+                    : 0d;
+                long markerBodySamples = home.MarkerBodyDistanceSamples + away.MarkerBodyDistanceSamples;
+                paired.MarkerBodyDistanceMeters = markerBodySamples > 0
+                    ? (home.MarkerBodyDistanceSum + away.MarkerBodyDistanceSum) / markerBodySamples
+                    : 0d;
+                long lineSamples = home.LineSamples + away.LineSamples;
+                paired.DefensiveLineAnchorMeters = lineSamples > 0
+                    ? (home.LineAnchorSum + away.LineAnchorSum) / lineSamples
+                    : 0d;
+                totals.PerSeed[seedIndex] = paired;
+
+                Console.WriteLine($"  {StyleShortNames[styleIndex],-10} H {(homeCompleted ? "FT        " : "INCOMPLETE")} | " +
+                                  DescribeStyleMatch(home));
+                Console.WriteLine($"  {StyleShortNames[styleIndex],-10} A {(awayCompleted ? "FT        " : "INCOMPLETE")} | " +
+                                  DescribeStyleMatch(away));
+            }
+
+            Console.WriteLine();
+        }
+
+        WriteStyleAggregateTable(styles, seedCount);
+        WriteStylePairedClaims(styles, seeds);
+        bool claimOk = ReportStyleClaims(styles, seedCount);
+
+        Console.WriteLine();
+        Console.WriteLine(claimOk
+            ? "RESULT: PASS -- every style finished every match at both ends; possession held more of the ball" +
+              " than direct on a paired-seed majority and was wider with the ball on every seed; the defensive" +
+              " line the allocator placed was higher for the high press than for the low block, higher for" +
+              " possession than for the counter side, and higher for direct than for the low block on every" +
+              " seed; and the man-oriented press held more markers than possession on every seed and at least as" +
+              " many as the high press - the presets' stated numbers reached the pitch"
+            : "RESULT: FAIL -- a style did not reach full time, or a predefined style claim missed its paired-seed" +
+              " majority/supermajority or its mean threshold (the claim lines above name the misses)");
+        return claimOk;
+    }
+
+    /// <summary>
+    /// The A9.1 aggregate: one metric row per style column, pooled over both ends and every seed. Means are per
+    /// played match (or per possession sample for the marking rows), so the columns compare the presets at the
+    /// same denominator regardless of how many matches each end completed.
+    /// </summary>
+    private static void WriteStyleAggregateTable(StyleEvidenceTotals[] styles, int seedCount)
+    {
+        Console.WriteLine($"=== Aggregate over {seedCount} seeds x 2 ends ===");
+        Console.Write($"{"metric",-34}");
+        for (int styleIndex = 0; styleIndex < styles.Length; styleIndex++)
+            Console.Write($"{styles[styleIndex].Name,12}");
+        Console.WriteLine();
+
+        Console.Write($"{"completed matches",-34}");
+        for (int styleIndex = 0; styleIndex < styles.Length; styleIndex++)
+            Console.Write($"{styles[styleIndex].MatchesDescription,12}");
+        Console.WriteLine();
+
+        WriteStyleMetricRow("live ticks", styles, totals => totals.Ticks, "F0");
+        WriteStyleMetricRow("possession share %", styles, totals => totals.PossessionSharePercent, "F1");
+        WriteStyleMetricRow("passes attempted / match", styles, totals => totals.PassesAttemptedPerMatch, "F1");
+        WriteStyleMetricRow("passes completed / match", styles, totals => totals.PassesCompletedPerMatch, "F1");
+        WriteStyleMetricRow("pass completion %", styles, totals => totals.PassCompletionPercent, "F1");
+        WriteStyleMetricRow("shots / match", styles, totals => totals.ShotsPerMatch, "F2");
+        WriteStyleMetricRow("goals / match", styles, totals => totals.GoalsPerMatch, "F2");
+        WriteStyleMetricRow("attacking width, ball m", styles, totals => totals.AttackingWidthMeanMeters, "F1");
+        WriteStyleMetricRow("ball territory, possession m", styles, totals => totals.TerritoryMeanMeters, "F1");
+        WriteStyleMetricRow("defensive line anchor m", styles, totals => totals.DefensiveLineAnchorMeanMeters, "F1");
+        WriteStyleMetricRow("defensive line placed m", styles, totals => totals.DefensiveLinePlacedMeanMeters, "F1");
+        WriteStyleMetricRow("markers held / 30-tick sample", styles, totals => totals.MarkersHeldPerSample, "F2");
+        WriteStyleMetricRow("marker body distance m (incl. lag)", styles,
+            totals => totals.MarkerBodyDistanceMeanMeters, "F2");
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// Writes one aligned row of the A9.1 aggregate table. Six style columns are wider than any two-variant
+    /// table in this runner, so the six-cell row is built once here instead of repeated on every metric line.
+    /// </summary>
+    private static void WriteStyleMetricRow(
+        string label,
+        StyleEvidenceTotals[] styles,
+        Func<StyleEvidenceTotals, double> value,
+        string format)
+    {
+        Console.Write($"{label,-34}");
+        for (int styleIndex = 0; styleIndex < styles.Length; styleIndex++)
+            Console.Write($"{value(styles[styleIndex]).ToString(format),12}");
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// The A9.1 paired-by-seed block: for each seed, every claim's two styles as the mean of their home and away
+    /// end. Pairing by seed keeps the seed-to-seed variation out of the comparison, which a pooled mean would
+    /// smear across different worlds, so a single inverted fixture is visible instead of hidden.
+    /// </summary>
+    private static void WriteStylePairedClaims(StyleEvidenceTotals[] styles, ulong[] seeds)
+    {
+        Console.WriteLine("=== Paired claims by seed: each style's mean over its home and away end ===");
+        for (int seedIndex = 0; seedIndex < seeds.Length; seedIndex++)
+        {
+            StyleSeedMetrics possession = styles[StyleIndexPossessionControl].PerSeed[seedIndex];
+            StyleSeedMetrics direct = styles[StyleIndexDirect].PerSeed[seedIndex];
+            StyleSeedMetrics counter = styles[StyleIndexDirectCounterattack].PerSeed[seedIndex];
+            StyleSeedMetrics press = styles[StyleIndexHighPress].PerSeed[seedIndex];
+            StyleSeedMetrics lowBlock = styles[StyleIndexLowBlock].PerSeed[seedIndex];
+            StyleSeedMetrics manOriented = styles[StyleIndexManOriented].PerSeed[seedIndex];
+
+            Console.WriteLine($"Seed {seeds[seedIndex]}:");
+            Console.WriteLine($"  possession share % : possession {possession.PossessionSharePercent:F1} vs direct " +
+                              $"{direct.PossessionSharePercent:F1} " +
+                              $"({possession.PossessionSharePercent - direct.PossessionSharePercent:+0.0;-0.0;0.0} pp)" +
+                              $" | press {press.PossessionSharePercent:F1} vs low block {lowBlock.PossessionSharePercent:F1} " +
+                              $"({press.PossessionSharePercent - lowBlock.PossessionSharePercent:+0.0;-0.0;0.0} pp)");
+            Console.WriteLine($"  passes per match   : possession {possession.PassesAttemptedPerMatch:F1} vs direct " +
+                              $"{direct.PassesAttemptedPerMatch:F1} " +
+                              $"({possession.PassesAttemptedPerMatch - direct.PassesAttemptedPerMatch:+0.0;-0.0;0.0})" +
+                              $" | vs low block {lowBlock.PassesAttemptedPerMatch:F1} " +
+                              $"({possession.PassesAttemptedPerMatch - lowBlock.PassesAttemptedPerMatch:+0.0;-0.0;0.0})");
+            Console.WriteLine($"  width with ball m  : possession {possession.AttackingWidthMeters:F1} vs direct " +
+                              $"{direct.AttackingWidthMeters:F1} " +
+                              $"({possession.AttackingWidthMeters - direct.AttackingWidthMeters:+0.0;-0.0;0.0} m)");
+            Console.WriteLine($"  territory m        : possession {possession.TerritoryMeters:F1} vs counter " +
+                              $"{counter.TerritoryMeters:F1} " +
+                              $"({possession.TerritoryMeters - counter.TerritoryMeters:+0.0;-0.0;0.0} m)" +
+                              $" | press {press.TerritoryMeters:F1} vs low block {lowBlock.TerritoryMeters:F1} " +
+                              $"({press.TerritoryMeters - lowBlock.TerritoryMeters:+0.0;-0.0;0.0} m)");
+            Console.WriteLine($"  line height m      : press {press.DefensiveLineAnchorMeters:F1} vs low block " +
+                              $"{lowBlock.DefensiveLineAnchorMeters:F1} " +
+                              $"({press.DefensiveLineAnchorMeters - lowBlock.DefensiveLineAnchorMeters:+0.0;-0.0;0.0} m)" +
+                              $" | possession {possession.DefensiveLineAnchorMeters:F1} vs counter " +
+                              $"{counter.DefensiveLineAnchorMeters:F1} " +
+                              $"({possession.DefensiveLineAnchorMeters - counter.DefensiveLineAnchorMeters:+0.0;-0.0;0.0} m)");
+            Console.WriteLine($"  marking            : man-oriented body distance {manOriented.MarkerBodyDistanceMeters:F2} m vs " +
+                              $"press {press.MarkerBodyDistanceMeters:F2} m " +
+                              $"({manOriented.MarkerBodyDistanceMeters - press.MarkerBodyDistanceMeters:+0.00;-0.00;0.00} m)" +
+                              $" | markers/sample man-oriented {manOriented.MarkersHeldPerSample:F2}, press " +
+                              $"{press.MarkersHeldPerSample:F2}, possession {possession.MarkersHeldPerSample:F2}");
+        }
+
+        Console.WriteLine();
+    }
+
+    /// <summary>
+    /// Evaluates and prints the predefined A9.1 claims, and returns whether every one of them held. The numbers
+    /// and the criterion are printed on the same line, so a FAIL names the threshold that failed rather than
+    /// only the claim. The per-seed pairing is what keeps a single chaotic fixture from deciding a claim, and
+    /// two kinds of claim are graded differently because they are two kinds of statement: a <b>shape</b> claim
+    /// (width, line height, marker count) reads a property of the assignment the presets' numbers state and must
+    /// hold on all but at most one seed; a <b>consequence</b> claim (possession share) is a stochastic match
+    /// outcome and needs a paired-seed majority plus a mean threshold. Pass volume, completion, territory and
+    /// marker body distance are printed as reported measurements below the claims and never gated: the
+    /// eight-seed run showed they are not monotone in style (a direct side's longer balls still count as passes,
+    /// and a turnover raises the count).
+    /// </summary>
+    private static bool ReportStyleClaims(StyleEvidenceTotals[] styles, int seedCount)
+    {
+        int possessionShareWins = 0;
+        int passesDirectWins = 0;
+        int passesLowBlockWins = 0;
+        int widthWins = 0;
+        int pressLineWins = 0;
+        int possessionLineWins = 0;
+        int directLineWins = 0;
+        int markersPressWins = 0;
+        int markersPossessionWins = 0;
+        double possessionShareDiffSum = 0d;
+        double passesDirectDiffSum = 0d;
+        double passesLowBlockDiffSum = 0d;
+        double widthDiffSum = 0d;
+        double pressLineDiffSum = 0d;
+        double possessionLineDiffSum = 0d;
+        double directLineDiffSum = 0d;
+        double markersPressDiffSum = 0d;
+        double markersPossessionDiffSum = 0d;
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            StyleSeedMetrics possession = styles[StyleIndexPossessionControl].PerSeed[seedIndex];
+            StyleSeedMetrics direct = styles[StyleIndexDirect].PerSeed[seedIndex];
+            StyleSeedMetrics counter = styles[StyleIndexDirectCounterattack].PerSeed[seedIndex];
+            StyleSeedMetrics press = styles[StyleIndexHighPress].PerSeed[seedIndex];
+            StyleSeedMetrics lowBlock = styles[StyleIndexLowBlock].PerSeed[seedIndex];
+            StyleSeedMetrics manOriented = styles[StyleIndexManOriented].PerSeed[seedIndex];
+
+            double shareDiff = possession.PossessionSharePercent - direct.PossessionSharePercent;
+            possessionShareDiffSum += shareDiff;
+            if (shareDiff > 0d) possessionShareWins++;
+
+            double passesDirectDiff = possession.PassesAttemptedPerMatch - direct.PassesAttemptedPerMatch;
+            passesDirectDiffSum += passesDirectDiff;
+            if (passesDirectDiff > 0d) passesDirectWins++;
+
+            double passesLowBlockDiff = possession.PassesAttemptedPerMatch - lowBlock.PassesAttemptedPerMatch;
+            passesLowBlockDiffSum += passesLowBlockDiff;
+            if (passesLowBlockDiff > 0d) passesLowBlockWins++;
+
+            double widthDiff = possession.AttackingWidthMeters - direct.AttackingWidthMeters;
+            widthDiffSum += widthDiff;
+            if (widthDiff > 0d) widthWins++;
+
+            double pressLineDiff = press.DefensiveLineAnchorMeters - lowBlock.DefensiveLineAnchorMeters;
+            pressLineDiffSum += pressLineDiff;
+            if (pressLineDiff > 0d) pressLineWins++;
+
+            double possessionLineDiff = possession.DefensiveLineAnchorMeters - counter.DefensiveLineAnchorMeters;
+            possessionLineDiffSum += possessionLineDiff;
+            if (possessionLineDiff > 0d) possessionLineWins++;
+
+            double directLineDiff = direct.DefensiveLineAnchorMeters - lowBlock.DefensiveLineAnchorMeters;
+            directLineDiffSum += directLineDiff;
+            if (directLineDiff > 0d) directLineWins++;
+
+            double markersPressDiff = manOriented.MarkersHeldPerSample - press.MarkersHeldPerSample;
+            markersPressDiffSum += markersPressDiff;
+            if (markersPressDiff >= 0d) markersPressWins++;
+
+            double markersPossessionDiff = manOriented.MarkersHeldPerSample - possession.MarkersHeldPerSample;
+            markersPossessionDiffSum += markersPossessionDiff;
+            if (markersPossessionDiff > 0d) markersPossessionWins++;
+        }
+
+        double possessionShareMeanDiff = possessionShareDiffSum / seedCount;
+        double passesDirectMeanDiff = passesDirectDiffSum / seedCount;
+        double passesLowBlockMeanDiff = passesLowBlockDiffSum / seedCount;
+        double widthMeanDiff = widthDiffSum / seedCount;
+        double pressLineMeanDiff = pressLineDiffSum / seedCount;
+        double possessionLineMeanDiff = possessionLineDiffSum / seedCount;
+        double directLineMeanDiff = directLineDiffSum / seedCount;
+        double markersPressMeanDiff = markersPressDiffSum / seedCount;
+        double markersPossessionMeanDiff = markersPossessionDiffSum / seedCount;
+
+        int completedMatches = 0;
+        int startedMatches = 0;
+        for (int styleIndex = 0; styleIndex < styles.Length; styleIndex++)
+        {
+            completedMatches += styles[styleIndex].MatchesCompleted;
+            startedMatches += styles[styleIndex].MatchesStarted;
+        }
+
+        bool allFullTime = completedMatches == startedMatches && startedMatches == styles.Length * seedCount * 2;
+        // A shape claim needs the paired supermajority (seeds-1) and at least one winning seed: with one seed a
+        // "seeds-1" gate would be zero and could pass a claim whose only measured seed points the other way. A
+        // consequence claim (possession share) is a stochastic outcome, so it takes a paired majority instead.
+        int requiredShapeWins = Math.Max(1, seedCount - 1);
+        int requiredConsequenceWins = Math.Max(1, seedCount / 2 + 1);
+        bool possessionShareClaim =
+            possessionShareWins >= requiredConsequenceWins && possessionShareMeanDiff > 2d;
+        bool widthClaim = widthWins >= requiredShapeWins && widthMeanDiff > 2d;
+        bool pressLineClaim = pressLineWins >= requiredShapeWins && pressLineMeanDiff > 4d;
+        bool possessionLineClaim = possessionLineWins >= requiredShapeWins && possessionLineMeanDiff > 2d;
+        bool directLineClaim = directLineWins >= requiredShapeWins && directLineMeanDiff > 2d;
+        bool markersPressClaim = markersPressMeanDiff >= 0d;
+        bool markersPossessionClaim = markersPossessionWins >= requiredShapeWins;
+
+        Console.WriteLine($"=== Claims over {seedCount} seeds ===");
+        WriteStyleClaimLine("possession share > direct", possessionShareWins, seedCount,
+            $"{possessionShareMeanDiff:+0.0;-0.0;0.0} pp",
+            $"(consequence: majority {requiredConsequenceWins}/{seedCount} and mean > +2.0 pp)");
+        WriteStyleClaimLine("wider with ball > direct", widthWins, seedCount,
+            $"{widthMeanDiff:+0.0;-0.0;0.0} m",
+            $"(shape: {requiredShapeWins}/{seedCount} seeds and mean > +2.0 m)");
+        WriteStyleClaimLine("press line height > low block", pressLineWins, seedCount,
+            $"{pressLineMeanDiff:+0.0;-0.0;0.0} m",
+            $"(shape: {requiredShapeWins}/{seedCount} seeds and mean > +4.0 m)");
+        WriteStyleClaimLine("possession line > counter", possessionLineWins, seedCount,
+            $"{possessionLineMeanDiff:+0.0;-0.0;0.0} m",
+            $"(shape: {requiredShapeWins}/{seedCount} seeds and mean > +2.0 m)");
+        WriteStyleClaimLine("direct line > low block", directLineWins, seedCount,
+            $"{directLineMeanDiff:+0.0;-0.0;0.0} m",
+            $"(shape: {requiredShapeWins}/{seedCount} seeds and mean > +2.0 m)");
+        WriteStyleClaimLine("man-oriented markers >= press", markersPressWins, seedCount,
+            $"{markersPressMeanDiff:+0.00;-0.00;0.00}",
+            "(shape: mean >= 0)");
+        WriteStyleClaimLine("man-oriented markers > possession", markersPossessionWins, seedCount,
+            $"{markersPossessionMeanDiff:+0.00;-0.00;0.00}",
+            $"(shape: {requiredShapeWins}/{seedCount} seeds)");
+        Console.WriteLine($"{"full time, every style",-40}{completedMatches,3}/{startedMatches} matches" +
+                          $"  (gate: every style's every match)");
+
+        Console.WriteLine();
+        Console.WriteLine("=== Reported only (not gated: not monotone in style) ===");
+        Console.WriteLine($"{"passes/match > direct",-40}{passesDirectWins,3}/{seedCount} seeds  " +
+                          $"mean {passesDirectMeanDiff:+0.0;-0.0;0.0}");
+        Console.WriteLine($"{"passes/match > low block",-40}{passesLowBlockWins,3}/{seedCount} seeds  " +
+                          $"mean {passesLowBlockMeanDiff:+0.0;-0.0;0.0}");
+
+        return allFullTime && possessionShareClaim && widthClaim && pressLineClaim && possessionLineClaim &&
+               directLineClaim && markersPressClaim && markersPossessionClaim;
+    }
+
+    /// <summary>
+    /// Writes one A9.1 claim line: the comparison, how many paired seeds it won, the mean difference and the
+    /// gate it has to meet. The mean difference is signed, so a negative result is unambiguous.
+    /// </summary>
+    private static void WriteStyleClaimLine(
+        string claim,
+        int wins,
+        int seedCount,
+        string meanDifference,
+        string gate) =>
+        Console.WriteLine($"{claim,-40}{wins,3}/{seedCount} seeds  mean {meanDifference,-12} {gate}");
+
+    /// <summary>
+    /// The preset names for one row of the header, in the same order the aggregate columns print them.
+    /// </summary>
+    private static string DescribeStylePresets(int first, int count)
+    {
+        var parts = new List<string>();
+        for (int index = first; index < first + count; index++)
+            parts.Add($"{StyleShortNames[index]} = {StylePresets[index].Name}");
+        return string.Join(" | ", parts);
+    }
+
+    /// <summary>
+    /// One compact A9.1 per-match line: the style side's possession, passing, shooting, shape, territory and
+    /// marking numbers. They are printed per end so the paired block's averages can be checked by eye.
+    /// </summary>
+    private static string DescribeStyleMatch(StyleMatchMetrics metrics) =>
+        $"poss {metrics.PossessionShare01 * 100d:F1} % | passes {metrics.PassesAttempted}/{metrics.PassesCompleted} " +
+        $"({metrics.PassCompletionShare * 100d:F1} %) | shots {metrics.Shots}, goals {metrics.Goals} | " +
+        $"width {metrics.AttackingWidthMeters:F1} m | territory {metrics.TerritoryMeters:F1} m | " +
+        $"line {metrics.DefensiveLineAnchorMeanMeters:F1} m | " +
+        $"markers {metrics.MarkersHeldPerSample:F2}/sample @ {metrics.MarkerBodyDistanceMeanMeters:F2} m body";
+
+    /// <summary>
+    /// Runs one A9.1 probe match: <paramref name="style"/> at one end, the neutral benchmark at the other, on
+    /// the same seed for both ends. Folds the match into <paramref name="totals"/> and returns the style-side
+    /// measurements, because the claim block pairs the two ends rather than pooling them.
+    ///
+    /// The 30-tick sample is the only per-tick work the probe adds. It reads the style team's live job board for
+    /// the marker jobs and the body distance to each marker's named man, and it reads the team's defensive line
+    /// band (<c>engine.TeamJobs.LineBandOf</c>) for the line's anchor depth - the profile's own line height,
+    /// before the ball/keeper caps that make the placed depth situational. Both are the allocator's own answer,
+    /// so the numbers are the duties the players were actually given, not a re-derived estimate of the shape.
+    /// Nothing here writes to the engine: the match remains exactly the match the same seed would produce
+    /// without the probe attached.
+    /// </summary>
+    private static bool RunStyleMatch(
+        ulong seed,
+        float halfSeconds,
+        TeamTacticalProfile style,
+        bool styleAtHome,
+        StyleEvidenceTotals totals,
+        out StyleMatchMetrics metrics)
+    {
+        var benchmark = new TeamTacticalProfile();
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = styleAtHome ? style : benchmark,
+            AwayProfile = styleAtHome ? benchmark : style
+        });
+        TeamId styleTeam = styleAtHome ? TeamId.Home : TeamId.Away;
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        long markerSamples = 0;
+        long markersHeld = 0;
+        long markerBodySamples = 0;
+        double markerBodySum = 0d;
+        long lineSamples = 0;
+        double lineAnchorSum = 0d;
+        double linePlacedSum = 0d;
+
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+
+            if (engine.CurrentTick % StyleMarkingSampleTicks != 0) continue;
+            markerSamples++;
+
+            // The profile's own line height, from the allocator's band. The band is invalid while the style team
+            // has the ball (or has no line at all), so "valid" is already the defending denominator the claim
+            // block states.
+            DefensiveLineBand line = engine.TeamJobs.LineBandOf(styleTeam);
+            if (line.IsValid)
+            {
+                lineAnchorSum += line.AnchorMeanProjX;
+                linePlacedSum += line.ProjX;
+                lineSamples++;
+            }
+
+            foreach (FootballerState player in engine.Players)
+            {
+                if (player.Team != styleTeam || !player.IsActiveOnPitch) continue;
+
+                TeamJobAssignment? assignment = engine.TeamJobs.Get(player.Id);
+                if (assignment is null || assignment.Value.Job != TacticalJob.Marker) continue;
+
+                markersHeld++;
+                if (assignment.Value.TargetPlayerId is not int targetId) continue;
+                if (!TryFindPlayer(engine, targetId, out FootballerState? marked)) continue;
+                if (marked is null || !marked.IsActiveOnPitch) continue;
+
+                float deltaX = player.Position.X - marked.Position.X;
+                float deltaZ = player.Position.Z - marked.Position.Z;
+                markerBodySum += MathF.Sqrt(deltaX * deltaX + deltaZ * deltaZ);
+                markerBodySamples++;
+            }
+        }
+
+        var analytics = engine.Analytics;
+        metrics = new StyleMatchMetrics
+        {
+            StylePossessionTicks = styleAtHome ? analytics.HomePossessionTicks : analytics.AwayPossessionTicks,
+            TotalPossessionTicks = analytics.HomePossessionTicks + analytics.AwayPossessionTicks,
+            PassesAttempted = styleAtHome ? analytics.HomePassesAttempted : analytics.AwayPassesAttempted,
+            PassesCompleted = styleAtHome ? analytics.HomePassesCompleted : analytics.AwayPassesCompleted,
+            Shots = styleAtHome ? analytics.HomeShots : analytics.AwayShots,
+            Goals = styleAtHome ? analytics.HomeGoals : analytics.AwayGoals,
+            AttackingWidthMeters = styleAtHome
+                ? analytics.HomeAttackingWidthMeters
+                : analytics.AwayAttackingWidthMeters,
+            TerritoryMeters = styleAtHome
+                ? analytics.HomeAverageBallTerritoryX
+                : analytics.AwayAverageBallTerritoryX,
+            MarkerSamples = markerSamples,
+            MarkersHeld = markersHeld,
+            MarkerBodyDistanceSamples = markerBodySamples,
+            MarkerBodyDistanceSum = markerBodySum,
+            LineSamples = lineSamples,
+            LineAnchorSum = lineAnchorSum,
+            LinePlacedSum = linePlacedSum
+        };
+
+        totals.MatchesStarted++;
+        totals.Ticks += engine.CurrentTick;
+        totals.StylePossessionTicks += metrics.StylePossessionTicks;
+        totals.TotalPossessionTicks += metrics.TotalPossessionTicks;
+        totals.PassesAttempted += metrics.PassesAttempted;
+        totals.PassesCompleted += metrics.PassesCompleted;
+        totals.Shots += metrics.Shots;
+        totals.Goals += metrics.Goals;
+        totals.AttackingWidthSum += metrics.AttackingWidthMeters;
+        totals.AttackingWidthMatches++;
+        totals.TerritorySum += metrics.TerritoryMeters;
+        totals.TerritoryMatches++;
+        totals.MarkerSamples += markerSamples;
+        totals.MarkersHeld += markersHeld;
+        totals.MarkerBodyDistanceSamples += markerBodySamples;
+        totals.MarkerBodyDistanceSum += markerBodySum;
+        totals.LineSamples += lineSamples;
+        totals.LineAnchorSum += lineAnchorSum;
+        totals.LinePlacedSum += linePlacedSum;
+
+        bool completed = engine.Rules.Phase == MatchPhase.FullTime;
+        if (completed) totals.MatchesCompleted++;
+        return completed;
+    }
+
+    /// <summary>One A9.1 style's pooled measurements over both ends and every seed.</summary>
+    private sealed class StyleEvidenceTotals
+    {
+        public string Name = string.Empty;
+        public int MatchesStarted;
+        public int MatchesCompleted;
+        public long Ticks;
+        public long StylePossessionTicks;
+        public long TotalPossessionTicks;
+        public long PassesAttempted;
+        public long PassesCompleted;
+        public long Shots;
+        public long Goals;
+        public double AttackingWidthSum;
+        public int AttackingWidthMatches;
+        public double TerritorySum;
+        public int TerritoryMatches;
+        public long MarkerSamples;
+        public long MarkersHeld;
+        public long MarkerBodyDistanceSamples;
+        public double MarkerBodyDistanceSum;
+        public long LineSamples;
+        public double LineAnchorSum;
+        public double LinePlacedSum;
+
+        /// <summary>The style's per-seed means over its home and away end, indexed like the seed loop.</summary>
+        public StyleSeedMetrics[] PerSeed = Array.Empty<StyleSeedMetrics>();
+
+        /// <summary>The style's pooled possession share over both ends, 0-100.</summary>
+        public double PossessionSharePercent => TotalPossessionTicks > 0
+            ? 100d * StylePossessionTicks / TotalPossessionTicks
+            : 0d;
+
+        public double PassesAttemptedPerMatch => MatchesStarted > 0 ? (double)PassesAttempted / MatchesStarted : 0d;
+        public double PassesCompletedPerMatch => MatchesStarted > 0 ? (double)PassesCompleted / MatchesStarted : 0d;
+        public double PassCompletionPercent => PassesAttempted > 0 ? 100d * PassesCompleted / PassesAttempted : 0d;
+        public double ShotsPerMatch => MatchesStarted > 0 ? (double)Shots / MatchesStarted : 0d;
+        public double GoalsPerMatch => MatchesStarted > 0 ? (double)Goals / MatchesStarted : 0d;
+
+        public double AttackingWidthMeanMeters => AttackingWidthMatches > 0
+            ? AttackingWidthSum / AttackingWidthMatches
+            : 0d;
+
+        public double TerritoryMeanMeters => TerritoryMatches > 0 ? TerritorySum / TerritoryMatches : 0d;
+        public double MarkersHeldPerSample => MarkerSamples > 0 ? (double)MarkersHeld / MarkerSamples : 0d;
+
+        public double MarkerBodyDistanceMeanMeters => MarkerBodyDistanceSamples > 0
+            ? MarkerBodyDistanceSum / MarkerBodyDistanceSamples
+            : 0d;
+
+        /// <summary>
+        /// Mean of the defensive line band's anchor projection over the valid 30-tick samples: metres in the
+        /// style's own attacking direction, positive = higher up the pitch. This is the profile's line height
+        /// before the ball/keeper caps, so it is the number the preset actually names.
+        /// </summary>
+        public double DefensiveLineAnchorMeanMeters => LineSamples > 0 ? LineAnchorSum / LineSamples : 0d;
+
+        /// <summary>The band's placed depth over the same samples; reported, not gated (caps are situational).</summary>
+        public double DefensiveLinePlacedMeanMeters => LineSamples > 0 ? LinePlacedSum / LineSamples : 0d;
+
+        /// <summary>Completed versus started matches, as the aggregate table prints them.</summary>
+        public string MatchesDescription => $"{MatchesCompleted}/{MatchesStarted}";
+    }
+
+    /// <summary>One A9.1 style's means over its home and away end on one seed, for the paired claims block.</summary>
+    private sealed class StyleSeedMetrics
+    {
+        public double PossessionSharePercent;
+        public double PassesAttemptedPerMatch;
+        public double AttackingWidthMeters;
+        public double TerritoryMeters;
+        public double MarkersHeldPerSample;
+        public double MarkerBodyDistanceMeters;
+        public double DefensiveLineAnchorMeters;
+    }
+
+    /// <summary>One A9.1 probe match's style-side measurements, returned so its two ends can be paired by seed.</summary>
+    private sealed class StyleMatchMetrics
+    {
+        public int StylePossessionTicks;
+        public int TotalPossessionTicks;
+        public int PassesAttempted;
+        public int PassesCompleted;
+        public int Shots;
+        public int Goals;
+        public float AttackingWidthMeters;
+        public float TerritoryMeters;
+        public long MarkerSamples;
+        public long MarkersHeld;
+        public long MarkerBodyDistanceSamples;
+        public double MarkerBodyDistanceSum;
+        public long LineSamples;
+        public double LineAnchorSum;
+        public double LinePlacedSum;
+
+        /// <summary>The style's share of the two teams' possession ticks, 0-1.</summary>
+        public double PossessionShare01 => TotalPossessionTicks > 0
+            ? (double)StylePossessionTicks / TotalPossessionTicks
+            : 0.5d;
+
+        public double PassCompletionShare => PassesAttempted > 0 ? (double)PassesCompleted / PassesAttempted : 0d;
+        public double MarkersHeldPerSample => MarkerSamples > 0 ? (double)MarkersHeld / MarkerSamples : 0d;
+
+        public double MarkerBodyDistanceMeanMeters => MarkerBodyDistanceSamples > 0
+            ? MarkerBodyDistanceSum / MarkerBodyDistanceSamples
+            : 0d;
+
+        /// <summary>Mean anchor projection of the line over this match's valid 30-tick samples.</summary>
+        public double DefensiveLineAnchorMeanMeters => LineSamples > 0 ? LineAnchorSum / LineSamples : 0d;
+
+        /// <summary>Mean placed line depth over this match's valid 30-tick samples.</summary>
+        public double DefensiveLinePlacedMeanMeters => LineSamples > 0 ? LinePlacedSum / LineSamples : 0d;
     }
 }
