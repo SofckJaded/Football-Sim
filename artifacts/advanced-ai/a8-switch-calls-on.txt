@@ -1,0 +1,22 @@
+﻿=== A7.2 team-call evidence: 4 seeds x 2400 s, calls ON ===
+Simulation version : ai49-rs1
+Call model         : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on)
+
+Seed 20260818: FT in 144666 ticks | score 1-0 | calls 17848 published, 456075 suppressed, 17763 expired, 4 evicted | 180614 player-observations heard one | 76743 carrier decisions
+
+Seed 20268737: FT in 144332 ticks | score 0-0 | calls 19106 published, 486880 suppressed, 19029 expired, 6 evicted | 189594 player-observations heard one | 80064 carrier decisions
+
+Seed 20276656: FT in 144410 ticks | score 0-1 | calls 18570 published, 468902 suppressed, 18489 expired, 7 evicted | 192331 player-observations heard one | 77465 carrier decisions
+
+Seed 20284575: FT in 144520 ticks | score 0-2 | calls 18473 published, 473109 suppressed, 18386 expired, 1 evicted | 185958 player-observations heard one | 78731 carrier decisions
+
+=== Totals over 4 seeds (4 completed, 12714328 player-observations) ===
+Calls published    : 73997 | 1884966 repeated shouts suppressed | 73667 expired | 18 evicted from the bounded board
+Received           : 748497 player-observations carried a call (5.89 %) | 2182169 carried a step/drop line instruction
+By kind            : ManOn 27079, Turn 28625, Switch 5354, Run 4769, Cover 2356, Step 1809, Drop 4005
+Heard by kind      : ManOn 179085, Turn 161049, Switch 55863, Run 282131, Cover 70369
+Line band shift    : 189176 defending samples with a call shift (mean -1.02 m, range -2.00..1.50 m) | read from the band the allocator placed the line from
+Carrier decisions  : 313003 | 45570 under a man-on call | 131105 run choices while told to run
+Carrier actions    : DriveWithBall 291289, ShieldBall 6913, Job:BallResponder 5574
+Under man-on       : DriveWithBall 35923, ShieldBall 6913, Job:BallResponder 384
+RESULT: the channel is alive, heard after its delay, expires, and reaches the allocator

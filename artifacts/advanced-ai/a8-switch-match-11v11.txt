@@ -1,0 +1,17 @@
+﻿=== 11v11 Headless Match in 70153 ms ===
+Simulation version: ai49-rs1 (seed 20260818)
+AI configuration  : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on)
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 326042 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 1 - 1 Away (Direct Counterattack)
+Possession Share  : Home 50.7% | Away 49.3%
+Controlled Ball   : Home 47.9% | Away 52.1%
+Passes Attempted  : Home 1241 | Away 1186
+Passes Completed  : Home 997 (80%) | Away 958 (81%)
+Shots Attempted   : Home 51 | Away 36
+Mean Team Width   : Home 46.8m | Away 43.0m
+Kicks (execution) : 2522 executed / 2606 requested | refused [OutOfReach, 70], [LostArbitration, 14]
+Run adverts (A5.3): 17383 published | 7908 withdrawn | 459 claims by a carrier
+Team calls (A7.2) : 41102 published | 1036798 suppressed | 40907 expired | ManOn 14940, Turn 15745, Switch 3040, Run 2649, Cover 1346, Step 1101, Drop 2281
+Airborne (A5.5)   : 0 crosses | 17 lofted | 81 driven executed
+Events Logged     : 90
