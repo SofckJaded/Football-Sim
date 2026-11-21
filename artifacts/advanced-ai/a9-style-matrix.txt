@@ -1,0 +1,233 @@
+﻿=== A9.1 style-matrix evidence: six presets vs the neutral benchmark, 8 seeds x 360 s, home and away ===
+Simulation version : ai52-rs1
+Style matrix       : every preset plays the neutral benchmark profile (new TeamTacticalProfile(),
+                     "Balanced") once at home and once away on the same seed, so the venue and
+                     end effect cancel in the style's mean. The six presets are preference bundles
+                     on one decision pipeline: the same squads, rules and AI cadence, with no
+                     candidate, sight, reach or contact differing between them.
+Presets            : Possession = Possession / Positional Play | Direct = Direct | Counter = Direct Counterattack
+                     Press = High-Press Gegenpressing | LowBlock = Low Block | ManOr = Man-Oriented Press
+Metrics            : possession share = the style's possession ticks / (home + away possession
+                     ticks); passes/shots/goals = the style's own executed outcomes; width = the
+                     possession-scoped span; territory = mean ball x in the style's attacking
+                     direction while in possession (a ball-progress measure - printed, not gated);
+                     markers = style players whose live job is TacticalJob.Marker per 30-tick
+                     sample, body distance = marker-to-marked-man XZ distance including the
+                     approach lag (printed, not gated: it is not the assignment-time standoff).
+Line height        : mean of DefensiveLineBand.AnchorMeanProjX over the 30-tick samples in
+                     which the style team is defending and the band is valid, in metres in the
+                     style's own attacking direction (positive = higher up the pitch). The band's
+                     placed depth ProjX is reported beside it but not gated: caps and local
+                     exceptions are situational, the anchor mean is the profile's own line.
+Verdict            : the predefined claim block at the end, paired by seed. Two kinds of claim,
+                     because they are two kinds of statement: a SHAPE claim (width, line height,
+                     marker count) is a property of the assignment the presets' numbers state, so
+                     it must hold on all but at most one seed; a CONSEQUENCE claim (possession
+                     share) is a stochastic match outcome, so it needs a paired-seed majority and
+                     a mean threshold. Pass volume, completion, territory and marker body
+                     distance are reported, never gated - the three-seed diagnostic and the
+                     recorded eight-seed run both showed they are not monotone in style (a direct
+                     side's longer balls still count as passes, and a turnover raises the count).
+
+Seed 20260818:
+  Possession H FT         | poss 48.1 % | passes 67/49 (73.1 %) | shots 1, goals 0 | width 51.4 m | territory -2.9 m | line -15.4 m | markers 0.43/sample @ 8.09 m body
+  Possession A FT         | poss 53.2 % | passes 83/64 (77.1 %) | shots 3, goals 0 | width 48.3 m | territory -1.7 m | line -15.1 m | markers 0.41/sample @ 8.82 m body
+  Direct     H FT         | poss 48.5 % | passes 72/50 (69.4 %) | shots 7, goals 0 | width 44.5 m | territory 8.2 m | line -17.4 m | markers 0.25/sample @ 8.73 m body
+  Direct     A FT         | poss 44.4 % | passes 86/69 (80.2 %) | shots 4, goals 0 | width 45.1 m | territory -2.5 m | line -20.3 m | markers 0.38/sample @ 7.79 m body
+  Counter    H FT         | poss 50.1 % | passes 65/51 (78.5 %) | shots 2, goals 0 | width 48.6 m | territory 3.7 m | line -20.9 m | markers 0.38/sample @ 7.37 m body
+  Counter    A FT         | poss 46.3 % | passes 63/48 (76.2 %) | shots 3, goals 0 | width 46.4 m | territory -0.1 m | line -22.1 m | markers 0.41/sample @ 7.52 m body
+  Press      H FT         | poss 50.8 % | passes 86/63 (73.3 %) | shots 1, goals 0 | width 47.6 m | territory -2.0 m | line -10.3 m | markers 0.26/sample @ 9.33 m body
+  Press      A FT         | poss 42.6 % | passes 76/60 (78.9 %) | shots 7, goals 0 | width 47.6 m | territory 3.8 m | line -12.5 m | markers 0.63/sample @ 7.71 m body
+  LowBlock   H FT         | poss 49.5 % | passes 58/46 (79.3 %) | shots 8, goals 0 | width 46.9 m | territory 9.2 m | line -21.9 m | markers 0.36/sample @ 7.56 m body
+  LowBlock   A FT         | poss 43.2 % | passes 75/61 (81.3 %) | shots 4, goals 0 | width 44.9 m | territory 0.0 m | line -24.9 m | markers 0.47/sample @ 6.99 m body
+  ManOr      H FT         | poss 43.8 % | passes 72/52 (72.2 %) | shots 2, goals 1 | width 45.7 m | territory -2.0 m | line -17.7 m | markers 0.70/sample @ 8.07 m body
+  ManOr      A FT         | poss 30.3 % | passes 51/38 (74.5 %) | shots 4, goals 0 | width 45.5 m | territory 3.0 m | line -10.5 m | markers 0.34/sample @ 9.17 m body
+
+Seed 20268737:
+  Possession H FT         | poss 53.4 % | passes 85/73 (85.9 %) | shots 9, goals 1 | width 50.7 m | territory 1.2 m | line -15.0 m | markers 0.32/sample @ 8.49 m body
+  Possession A FT         | poss 46.6 % | passes 76/57 (75.0 %) | shots 5, goals 0 | width 50.6 m | territory -0.7 m | line -14.7 m | markers 0.41/sample @ 7.89 m body
+  Direct     H FT         | poss 42.6 % | passes 63/46 (73.0 %) | shots 4, goals 0 | width 46.0 m | territory 2.3 m | line -18.8 m | markers 0.34/sample @ 8.84 m body
+  Direct     A FT         | poss 38.0 % | passes 59/40 (67.8 %) | shots 3, goals 0 | width 44.7 m | territory 3.7 m | line -18.7 m | markers 0.32/sample @ 8.42 m body
+  Counter    H FT         | poss 49.9 % | passes 71/60 (84.5 %) | shots 2, goals 0 | width 48.3 m | territory -2.4 m | line -21.0 m | markers 0.30/sample @ 7.75 m body
+  Counter    A FT         | poss 49.7 % | passes 78/61 (78.2 %) | shots 1, goals 0 | width 47.2 m | territory 1.9 m | line -20.3 m | markers 0.35/sample @ 7.26 m body
+  Press      H FT         | poss 43.8 % | passes 68/50 (73.5 %) | shots 7, goals 1 | width 47.0 m | territory 5.5 m | line -11.5 m | markers 0.54/sample @ 8.48 m body
+  Press      A FT         | poss 49.8 % | passes 80/63 (78.8 %) | shots 2, goals 0 | width 45.8 m | territory -9.2 m | line -14.6 m | markers 0.77/sample @ 8.06 m body
+  LowBlock   H FT         | poss 53.1 % | passes 80/67 (83.8 %) | shots 6, goals 0 | width 45.1 m | territory 0.9 m | line -21.9 m | markers 0.34/sample @ 6.46 m body
+  LowBlock   A FT         | poss 46.3 % | passes 69/52 (75.4 %) | shots 4, goals 0 | width 44.5 m | territory 1.2 m | line -23.2 m | markers 0.40/sample @ 7.55 m body
+  ManOr      H FT         | poss 52.0 % | passes 88/66 (75.0 %) | shots 5, goals 1 | width 47.9 m | territory -3.7 m | line -17.7 m | markers 0.54/sample @ 8.04 m body
+  ManOr      A FT         | poss 51.6 % | passes 90/75 (83.3 %) | shots 1, goals 0 | width 47.3 m | territory 3.1 m | line -15.6 m | markers 0.44/sample @ 8.74 m body
+
+Seed 20276656:
+  Possession H FT         | poss 56.8 % | passes 70/48 (68.6 %) | shots 7, goals 0 | width 50.5 m | territory 11.2 m | line -13.7 m | markers 0.25/sample @ 9.61 m body
+  Possession A FT         | poss 54.6 % | passes 86/73 (84.9 %) | shots 4, goals 0 | width 53.2 m | territory 0.7 m | line -14.7 m | markers 0.37/sample @ 7.38 m body
+  Direct     H FT         | poss 55.5 % | passes 89/67 (75.3 %) | shots 1, goals 0 | width 47.1 m | territory 4.5 m | line -17.9 m | markers 0.30/sample @ 8.09 m body
+  Direct     A FT         | poss 52.0 % | passes 90/70 (77.8 %) | shots 5, goals 2 | width 45.3 m | territory 6.7 m | line -17.7 m | markers 0.26/sample @ 7.88 m body
+  Counter    H FT         | poss 45.0 % | passes 69/57 (82.6 %) | shots 2, goals 0 | width 46.1 m | territory 0.9 m | line -21.5 m | markers 0.37/sample @ 7.31 m body
+  Counter    A FT         | poss 54.8 % | passes 77/71 (92.2 %) | shots 6, goals 0 | width 47.9 m | territory 7.3 m | line -20.4 m | markers 0.29/sample @ 8.20 m body
+  Press      H FT         | poss 47.9 % | passes 73/61 (83.6 %) | shots 5, goals 0 | width 48.5 m | territory 5.8 m | line -10.0 m | markers 0.39/sample @ 8.86 m body
+  Press      A FT         | poss 46.5 % | passes 81/60 (74.1 %) | shots 8, goals 0 | width 46.8 m | territory 8.6 m | line -11.0 m | markers 0.51/sample @ 8.43 m body
+  LowBlock   H FT         | poss 54.5 % | passes 75/59 (78.7 %) | shots 0, goals 0 | width 46.4 m | territory 7.0 m | line -22.8 m | markers 0.28/sample @ 8.61 m body
+  LowBlock   A FT         | poss 46.4 % | passes 62/45 (72.6 %) | shots 3, goals 0 | width 44.8 m | territory 3.7 m | line -21.8 m | markers 0.39/sample @ 6.33 m body
+  ManOr      H FT         | poss 54.0 % | passes 86/67 (77.9 %) | shots 2, goals 0 | width 46.9 m | territory -10.1 m | line -19.0 m | markers 0.64/sample @ 8.58 m body
+  ManOr      A FT         | poss 52.8 % | passes 102/78 (76.5 %) | shots 1, goals 0 | width 47.9 m | territory 2.7 m | line -17.0 m | markers 0.40/sample @ 7.87 m body
+
+Seed 20284575:
+  Possession H FT         | poss 50.5 % | passes 82/67 (81.7 %) | shots 5, goals 0 | width 50.6 m | territory 4.8 m | line -15.0 m | markers 0.38/sample @ 7.87 m body
+  Possession A FT         | poss 48.1 % | passes 72/53 (73.6 %) | shots 12, goals 0 | width 50.2 m | territory 7.5 m | line -13.9 m | markers 0.34/sample @ 7.76 m body
+  Direct     H FT         | poss 46.5 % | passes 70/53 (75.7 %) | shots 8, goals 0 | width 44.9 m | territory 1.1 m | line -19.3 m | markers 0.33/sample @ 8.39 m body
+  Direct     A FT         | poss 41.7 % | passes 63/47 (74.6 %) | shots 9, goals 0 | width 44.9 m | territory 13.0 m | line -17.3 m | markers 0.37/sample @ 7.32 m body
+  Counter    H FT         | poss 44.4 % | passes 71/52 (73.2 %) | shots 2, goals 0 | width 45.9 m | territory -3.2 m | line -20.6 m | markers 0.34/sample @ 7.19 m body
+  Counter    A FT         | poss 50.1 % | passes 77/56 (72.7 %) | shots 2, goals 0 | width 46.6 m | territory 0.5 m | line -22.6 m | markers 0.36/sample @ 7.48 m body
+  Press      H FT         | poss 52.1 % | passes 85/70 (82.4 %) | shots 2, goals 0 | width 48.5 m | territory 3.6 m | line -11.2 m | markers 0.36/sample @ 8.72 m body
+  Press      A FT         | poss 54.8 % | passes 88/69 (78.4 %) | shots 4, goals 0 | width 48.8 m | territory 8.5 m | line -9.5 m | markers 0.28/sample @ 8.80 m body
+  LowBlock   H FT         | poss 56.0 % | passes 94/75 (79.8 %) | shots 0, goals 0 | width 46.2 m | territory -8.3 m | line -23.9 m | markers 0.36/sample @ 6.82 m body
+  LowBlock   A FT         | poss 52.5 % | passes 93/75 (80.6 %) | shots 7, goals 1 | width 44.6 m | territory -0.0 m | line -24.0 m | markers 0.32/sample @ 7.40 m body
+  ManOr      H FT         | poss 47.9 % | passes 91/69 (75.8 %) | shots 4, goals 0 | width 45.7 m | territory 3.1 m | line -17.1 m | markers 0.47/sample @ 8.61 m body
+  ManOr      A FT         | poss 46.6 % | passes 80/63 (78.8 %) | shots 1, goals 0 | width 46.7 m | territory -4.8 m | line -17.8 m | markers 0.66/sample @ 7.65 m body
+
+Seed 20292494:
+  Possession H FT         | poss 55.7 % | passes 92/67 (72.8 %) | shots 3, goals 1 | width 49.2 m | territory 3.2 m | line -14.7 m | markers 0.33/sample @ 8.37 m body
+  Possession A FT         | poss 50.3 % | passes 99/71 (71.7 %) | shots 0, goals 0 | width 50.2 m | territory -4.7 m | line -15.8 m | markers 0.48/sample @ 8.17 m body
+  Direct     H FT         | poss 52.3 % | passes 82/63 (76.8 %) | shots 2, goals 0 | width 45.8 m | territory -4.9 m | line -18.3 m | markers 0.27/sample @ 8.21 m body
+  Direct     A FT         | poss 50.4 % | passes 79/64 (81.0 %) | shots 8, goals 0 | width 48.0 m | territory 8.4 m | line -18.6 m | markers 0.32/sample @ 7.87 m body
+  Counter    H FT         | poss 47.1 % | passes 71/49 (69.0 %) | shots 0, goals 0 | width 45.6 m | territory -5.0 m | line -22.4 m | markers 0.37/sample @ 7.60 m body
+  Counter    A FT         | poss 45.3 % | passes 73/55 (75.3 %) | shots 1, goals 0 | width 46.7 m | territory -8.7 m | line -22.7 m | markers 0.45/sample @ 6.61 m body
+  Press      H FT         | poss 49.5 % | passes 75/56 (74.7 %) | shots 8, goals 1 | width 46.8 m | territory 6.4 m | line -10.2 m | markers 0.40/sample @ 8.38 m body
+  Press      A FT         | poss 48.9 % | passes 75/57 (76.0 %) | shots 3, goals 0 | width 46.7 m | territory -2.1 m | line -11.4 m | markers 0.48/sample @ 8.01 m body
+  LowBlock   H FT         | poss 49.1 % | passes 75/62 (82.7 %) | shots 3, goals 0 | width 44.6 m | territory -4.6 m | line -23.9 m | markers 0.33/sample @ 7.26 m body
+  LowBlock   A FT         | poss 46.8 % | passes 74/57 (77.0 %) | shots 3, goals 0 | width 43.2 m | territory -4.5 m | line -23.9 m | markers 0.38/sample @ 6.68 m body
+  ManOr      H FT         | poss 47.6 % | passes 74/61 (82.4 %) | shots 4, goals 0 | width 48.6 m | territory 2.6 m | line -17.1 m | markers 0.58/sample @ 8.26 m body
+  ManOr      A FT         | poss 51.0 % | passes 72/54 (75.0 %) | shots 9, goals 0 | width 47.1 m | territory 9.0 m | line -14.2 m | markers 0.34/sample @ 7.52 m body
+
+Seed 20300413:
+  Possession H FT         | poss 50.3 % | passes 84/61 (72.6 %) | shots 0, goals 0 | width 49.3 m | territory -0.0 m | line -15.2 m | markers 0.44/sample @ 9.42 m body
+  Possession A FT         | poss 41.0 % | passes 58/45 (77.6 %) | shots 2, goals 1 | width 50.3 m | territory -5.3 m | line -16.6 m | markers 0.57/sample @ 7.72 m body
+  Direct     H FT         | poss 50.8 % | passes 80/64 (80.0 %) | shots 5, goals 1 | width 45.6 m | territory -1.0 m | line -19.4 m | markers 0.30/sample @ 8.91 m body
+  Direct     A FT         | poss 45.4 % | passes 75/59 (78.7 %) | shots 5, goals 0 | width 45.7 m | territory 0.4 m | line -17.7 m | markers 0.33/sample @ 8.01 m body
+  Counter    H FT         | poss 48.7 % | passes 70/53 (75.7 %) | shots 4, goals 0 | width 46.7 m | territory 16.3 m | line -18.8 m | markers 0.31/sample @ 8.08 m body
+  Counter    A FT         | poss 52.7 % | passes 88/68 (77.3 %) | shots 0, goals 0 | width 46.3 m | territory 1.6 m | line -21.1 m | markers 0.33/sample @ 8.10 m body
+  Press      H FT         | poss 49.7 % | passes 79/60 (75.9 %) | shots 5, goals 0 | width 46.5 m | territory -12.9 m | line -14.2 m | markers 0.67/sample @ 9.16 m body
+  Press      A FT         | poss 50.6 % | passes 82/63 (76.8 %) | shots 5, goals 0 | width 45.5 m | territory -0.0 m | line -10.8 m | markers 0.38/sample @ 9.54 m body
+  LowBlock   H FT         | poss 43.8 % | passes 68/50 (73.5 %) | shots 0, goals 0 | width 45.5 m | territory -5.8 m | line -23.7 m | markers 0.42/sample @ 7.19 m body
+  LowBlock   A FT         | poss 48.2 % | passes 65/54 (83.1 %) | shots 2, goals 1 | width 47.2 m | territory 0.7 m | line -23.0 m | markers 0.31/sample @ 6.89 m body
+  ManOr      H FT         | poss 50.1 % | passes 82/63 (76.8 %) | shots 1, goals 0 | width 47.1 m | territory -3.0 m | line -18.5 m | markers 0.58/sample @ 8.35 m body
+  ManOr      A FT         | poss 45.3 % | passes 74/51 (68.9 %) | shots 1, goals 0 | width 46.6 m | territory -4.7 m | line -18.1 m | markers 0.70/sample @ 8.24 m body
+
+Seed 20308332:
+  Possession H FT         | poss 46.1 % | passes 62/52 (83.9 %) | shots 5, goals 0 | width 50.8 m | territory 1.6 m | line -15.0 m | markers 0.38/sample @ 7.78 m body
+  Possession A FT         | poss 53.0 % | passes 92/69 (75.0 %) | shots 2, goals 0 | width 49.9 m | territory 0.8 m | line -15.8 m | markers 0.38/sample @ 7.83 m body
+  Direct     H FT         | poss 55.0 % | passes 76/58 (76.3 %) | shots 3, goals 1 | width 45.8 m | territory -0.6 m | line -17.9 m | markers 0.29/sample @ 8.53 m body
+  Direct     A FT         | poss 53.1 % | passes 80/62 (77.5 %) | shots 7, goals 0 | width 46.6 m | territory 4.7 m | line -18.2 m | markers 0.23/sample @ 8.47 m body
+  Counter    H FT         | poss 49.6 % | passes 70/59 (84.3 %) | shots 6, goals 0 | width 46.8 m | territory 4.6 m | line -21.2 m | markers 0.35/sample @ 8.50 m body
+  Counter    A FT         | poss 46.3 % | passes 78/57 (73.1 %) | shots 3, goals 0 | width 46.1 m | territory 5.0 m | line -21.7 m | markers 0.35/sample @ 8.05 m body
+  Press      H FT         | poss 49.8 % | passes 73/52 (71.2 %) | shots 1, goals 0 | width 48.2 m | territory 2.2 m | line -11.6 m | markers 0.33/sample @ 8.69 m body
+  Press      A FT         | poss 45.3 % | passes 70/56 (80.0 %) | shots 6, goals 0 | width 47.6 m | territory 1.2 m | line -9.8 m | markers 0.27/sample @ 9.07 m body
+  LowBlock   H FT         | poss 57.4 % | passes 97/80 (82.5 %) | shots 2, goals 0 | width 45.2 m | territory -6.2 m | line -25.2 m | markers 0.29/sample @ 7.34 m body
+  LowBlock   A FT         | poss 48.6 % | passes 77/60 (77.9 %) | shots 1, goals 0 | width 44.3 m | territory -8.9 m | line -24.0 m | markers 0.43/sample @ 6.51 m body
+  ManOr      H FT         | poss 47.8 % | passes 77/60 (77.9 %) | shots 3, goals 0 | width 46.9 m | territory 6.3 m | line -16.3 m | markers 0.56/sample @ 8.06 m body
+  ManOr      A FT         | poss 47.7 % | passes 78/61 (78.2 %) | shots 3, goals 1 | width 47.9 m | territory 6.7 m | line -17.3 m | markers 0.58/sample @ 7.34 m body
+
+Seed 20316251:
+  Possession H FT         | poss 57.1 % | passes 89/71 (79.8 %) | shots 3, goals 0 | width 50.9 m | territory -3.2 m | line -14.6 m | markers 0.24/sample @ 8.71 m body
+  Possession A FT         | poss 59.6 % | passes 92/77 (83.7 %) | shots 3, goals 0 | width 52.5 m | territory 8.8 m | line -13.1 m | markers 0.18/sample @ 9.58 m body
+  Direct     H FT         | poss 47.5 % | passes 85/62 (72.9 %) | shots 4, goals 1 | width 43.9 m | territory 7.3 m | line -16.3 m | markers 0.30/sample @ 9.55 m body
+  Direct     A FT         | poss 52.8 % | passes 77/62 (80.5 %) | shots 4, goals 0 | width 46.4 m | territory 0.8 m | line -19.7 m | markers 0.35/sample @ 8.75 m body
+  Counter    H FT         | poss 44.8 % | passes 70/53 (75.7 %) | shots 3, goals 0 | width 46.2 m | territory -0.9 m | line -20.9 m | markers 0.37/sample @ 8.56 m body
+  Counter    A FT         | poss 52.2 % | passes 98/78 (79.6 %) | shots 1, goals 0 | width 45.9 m | territory 2.4 m | line -21.9 m | markers 0.34/sample @ 7.21 m body
+  Press      H FT         | poss 46.6 % | passes 77/59 (76.6 %) | shots 3, goals 0 | width 47.0 m | territory 7.7 m | line -10.6 m | markers 0.35/sample @ 9.31 m body
+  Press      A FT         | poss 46.1 % | passes 85/67 (78.8 %) | shots 5, goals 0 | width 46.9 m | territory -3.7 m | line -11.8 m | markers 0.54/sample @ 7.73 m body
+  LowBlock   H FT         | poss 52.1 % | passes 94/76 (80.9 %) | shots 5, goals 0 | width 45.2 m | territory 0.6 m | line -22.8 m | markers 0.33/sample @ 7.67 m body
+  LowBlock   A FT         | poss 44.5 % | passes 70/56 (80.0 %) | shots 1, goals 0 | width 44.6 m | territory -5.2 m | line -24.5 m | markers 0.39/sample @ 6.88 m body
+  ManOr      H FT         | poss 51.4 % | passes 93/72 (77.4 %) | shots 0, goals 0 | width 46.1 m | territory -5.9 m | line -16.6 m | markers 0.52/sample @ 8.46 m body
+  ManOr      A FT         | poss 53.3 % | passes 87/62 (71.3 %) | shots 4, goals 0 | width 47.6 m | territory 2.4 m | line -17.9 m | markers 0.60/sample @ 7.87 m body
+
+=== Aggregate over 8 seeds x 2 ends ===
+metric                              Possession      Direct     Counter       Press    LowBlock       ManOr
+completed matches                        16/16       16/16       16/16       16/16       16/16       16/16
+live ticks                              347526      347774      347374      347862      347704      347714
+possession share %                        51.5        48.5        48.6        48.4        49.5        48.3
+passes attempted / match                  80.6        76.6        74.3        78.3        76.6        81.1
+passes completed / match                  62.3        58.5        58.0        60.4        60.9        62.0
+pass completion %                         77.3        76.3        78.0        77.1        79.5        76.5
+shots / match                             4.00        4.94        2.38        4.50        3.06        2.81
+goals / match                             0.19        0.31        0.00        0.12        0.12        0.19
+attacking width, ball m                   50.5        45.6        46.7        47.2        45.2        47.0
+ball territory, possession m               1.3         3.2         1.5         1.5        -1.3         0.3
+defensive line anchor m                  -14.9       -18.3       -21.3       -11.3       -23.5       -16.6
+defensive line placed m                  -20.6       -22.8       -25.4       -18.8       -27.2       -21.9
+markers held / 30-tick sample             0.37        0.31        0.35        0.45        0.36        0.54
+marker body distance m (incl. lag)        8.26        8.34        7.64        8.54        7.09        8.16
+
+=== Paired claims by seed: each style's mean over its home and away end ===
+Seed 20260818:
+  possession share % : possession 50.7 vs direct 46.5 (+4.2 pp) | press 46.7 vs low block 46.3 (+0.3 pp)
+  passes per match   : possession 75.0 vs direct 79.0 (-4.0) | vs low block 66.5 (+8.5)
+  width with ball m  : possession 49.9 vs direct 44.8 (+5.1 m)
+  territory m        : possession -2.3 vs counter 1.8 (-4.1 m) | press 0.9 vs low block 4.6 (-3.7 m)
+  line height m      : press -11.5 vs low block -23.5 (+12.0 m) | possession -15.2 vs counter -21.5 (+6.3 m)
+  marking            : man-oriented body distance 8.42 m vs press 8.18 m (+0.24 m) | markers/sample man-oriented 0.52, press 0.44, possession 0.42
+Seed 20268737:
+  possession share % : possession 50.0 vs direct 40.3 (+9.7 pp) | press 46.8 vs low block 49.7 (-2.9 pp)
+  passes per match   : possession 80.5 vs direct 61.0 (+19.5) | vs low block 74.5 (+6.0)
+  width with ball m  : possession 50.6 vs direct 45.3 (+5.3 m)
+  territory m        : possession 0.2 vs counter -0.3 (+0.5 m) | press -1.8 vs low block 1.1 (-2.9 m)
+  line height m      : press -13.0 vs low block -22.6 (+9.7 m) | possession -14.8 vs counter -20.6 (+5.8 m)
+  marking            : man-oriented body distance 8.35 m vs press 8.23 m (+0.12 m) | markers/sample man-oriented 0.49, press 0.65, possession 0.37
+Seed 20276656:
+  possession share % : possession 55.7 vs direct 53.8 (+1.9 pp) | press 47.2 vs low block 50.4 (-3.3 pp)
+  passes per match   : possession 78.0 vs direct 89.5 (-11.5) | vs low block 68.5 (+9.5)
+  width with ball m  : possession 51.9 vs direct 46.2 (+5.7 m)
+  territory m        : possession 6.0 vs counter 4.1 (+1.9 m) | press 7.2 vs low block 5.3 (+1.9 m)
+  line height m      : press -10.5 vs low block -22.3 (+11.8 m) | possession -14.2 vs counter -21.0 (+6.8 m)
+  marking            : man-oriented body distance 8.31 m vs press 8.61 m (-0.30 m) | markers/sample man-oriented 0.52, press 0.45, possession 0.31
+Seed 20284575:
+  possession share % : possession 49.3 vs direct 44.1 (+5.2 pp) | press 53.4 vs low block 54.2 (-0.8 pp)
+  passes per match   : possession 77.0 vs direct 66.5 (+10.5) | vs low block 93.5 (-16.5)
+  width with ball m  : possession 50.4 vs direct 44.9 (+5.5 m)
+  territory m        : possession 6.2 vs counter -1.4 (+7.5 m) | press 6.1 vs low block -4.1 (+10.2 m)
+  line height m      : press -10.4 vs low block -24.0 (+13.6 m) | possession -14.4 vs counter -21.6 (+7.1 m)
+  marking            : man-oriented body distance 8.05 m vs press 8.75 m (-0.70 m) | markers/sample man-oriented 0.56, press 0.32, possession 0.36
+Seed 20292494:
+  possession share % : possession 53.0 vs direct 51.3 (+1.7 pp) | press 49.2 vs low block 48.0 (+1.3 pp)
+  passes per match   : possession 95.5 vs direct 80.5 (+15.0) | vs low block 74.5 (+21.0)
+  width with ball m  : possession 49.7 vs direct 46.9 (+2.8 m)
+  territory m        : possession -0.8 vs counter -6.8 (+6.1 m) | press 2.2 vs low block -4.5 (+6.7 m)
+  line height m      : press -10.8 vs low block -23.9 (+13.1 m) | possession -15.3 vs counter -22.6 (+7.3 m)
+  marking            : man-oriented body distance 7.99 m vs press 8.18 m (-0.19 m) | markers/sample man-oriented 0.46, press 0.44, possession 0.41
+Seed 20300413:
+  possession share % : possession 45.7 vs direct 48.1 (-2.4 pp) | press 50.2 vs low block 46.0 (+4.1 pp)
+  passes per match   : possession 71.0 vs direct 77.5 (-6.5) | vs low block 66.5 (+4.5)
+  width with ball m  : possession 49.8 vs direct 45.7 (+4.1 m)
+  territory m        : possession -2.6 vs counter 8.9 (-11.6 m) | press -6.4 vs low block -2.5 (-3.9 m)
+  line height m      : press -12.5 vs low block -23.4 (+10.8 m) | possession -16.0 vs counter -19.9 (+3.9 m)
+  marking            : man-oriented body distance 8.29 m vs press 9.30 m (-1.00 m) | markers/sample man-oriented 0.64, press 0.53, possession 0.51
+Seed 20308332:
+  possession share % : possession 49.6 vs direct 54.0 (-4.5 pp) | press 47.6 vs low block 53.0 (-5.4 pp)
+  passes per match   : possession 77.0 vs direct 78.0 (-1.0) | vs low block 87.0 (-10.0)
+  width with ball m  : possession 50.3 vs direct 46.2 (+4.1 m)
+  territory m        : possession 1.2 vs counter 4.8 (-3.6 m) | press 1.7 vs low block -7.6 (+9.3 m)
+  line height m      : press -10.7 vs low block -24.6 (+13.9 m) | possession -15.4 vs counter -21.4 (+6.1 m)
+  marking            : man-oriented body distance 7.69 m vs press 8.86 m (-1.17 m) | markers/sample man-oriented 0.57, press 0.30, possession 0.38
+Seed 20316251:
+  possession share % : possession 58.4 vs direct 50.1 (+8.2 pp) | press 46.4 vs low block 48.3 (-1.9 pp)
+  passes per match   : possession 90.5 vs direct 81.0 (+9.5) | vs low block 82.0 (+8.5)
+  width with ball m  : possession 51.7 vs direct 45.2 (+6.5 m)
+  territory m        : possession 2.8 vs counter 0.8 (+2.1 m) | press 2.0 vs low block -2.3 (+4.3 m)
+  line height m      : press -11.2 vs low block -23.7 (+12.5 m) | possession -13.9 vs counter -21.4 (+7.5 m)
+  marking            : man-oriented body distance 8.14 m vs press 8.35 m (-0.21 m) | markers/sample man-oriented 0.56, press 0.44, possession 0.21
+
+=== Claims over 8 seeds ===
+possession share > direct                 6/8 seeds  mean +3.0 pp      (consequence: majority 5/8 and mean > +2.0 pp)
+wider with ball > direct                  8/8 seeds  mean +4.9 m       (shape: 7/8 seeds and mean > +2.0 m)
+press line height > low block             8/8 seeds  mean +12.2 m      (shape: 7/8 seeds and mean > +4.0 m)
+possession line > counter                 8/8 seeds  mean +6.3 m       (shape: 7/8 seeds and mean > +2.0 m)
+direct line > low block                   8/8 seeds  mean +5.2 m       (shape: 7/8 seeds and mean > +2.0 m)
+man-oriented markers >= press             7/8 seeds  mean +0.09        (shape: mean >= 0)
+man-oriented markers > possession         8/8 seeds  mean +0.17        (shape: 7/8 seeds)
+full time, every style                   96/96 matches  (gate: every style's every match)
+
+=== Reported only (not gated: not monotone in style) ===
+passes/match > direct                     4/8 seeds  mean +3.9
+passes/match > low block                  6/8 seeds  mean +3.9
+
+RESULT: PASS -- every style finished every match at both ends; possession held more of the ball than direct on a paired-seed majority and was wider with the ball on every seed; the defensive line the allocator placed was higher for the high press than for the low block, higher for possession than for the counter side, and higher for direct than for the low block on every seed; and the man-oriented press held more markers than possession on every seed and at least as many as the high press - the presets' stated numbers reached the pitch

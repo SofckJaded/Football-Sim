@@ -1,0 +1,36 @@
+﻿=== A8.3 switch-recognition evidence: same-seed A/B, 3 seeds x 2400 s -- recognition on vs off ===
+Simulation version : ai52-rs1
+Recognition model  : the carrier recognizes a switch from his own picture - local pressure
+                     on him, the far side's lateral distance and room, the receiver's matchup
+                     (an isolated one-v-one, scouted pace band), the pass model's completion
+                     for the ball, and a rest defence as good as the allocator's forward-
+                     commitment threshold. One bounded preference on an existing pass, plus the
+                     ordinary pre-rank rescue; no candidate, sight, reach or contact is added.
+                     There is no pass counter and no clock input: nothing forces a switch after N passes.
+Recognition ON     : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on)
+Recognition OFF    : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(off) traps(on) routines(on)
+
+Seed 20260818:
+  ON  : FT        | 144392 ticks, score 2-0, passes 622/459 attempted, shots 20/6, carrier decisions 77793, recognized 2358, switch passes chosen 250 / executed 270
+  OFF : FT        | 144426 ticks, score 1-0, passes 568/478 attempted, shots 23/9, carrier decisions 77501, recognized 0, switch passes chosen 207 / executed 224
+Seed 20268737:
+  ON  : FT        | 144506 ticks, score 0-1, passes 566/500 attempted, shots 30/22, carrier decisions 75098, recognized 1898, switch passes chosen 242 / executed 267
+  OFF : FT        | 144454 ticks, score 2-1, passes 594/497 attempted, shots 18/13, carrier decisions 79778, recognized 0, switch passes chosen 195 / executed 215
+Seed 20276656:
+  ON  : FT        | 144428 ticks, score 0-0, passes 559/445 attempted, shots 20/28, carrier decisions 78033, recognized 2017, switch passes chosen 214 / executed 235
+  OFF : FT        | 144552 ticks, score 0-2, passes 525/516 attempted, shots 26/16, carrier decisions 77043, recognized 0, switch passes chosen 199 / executed 220
+
+=== Totals over 3 seeds ===
+metric                                      ON         OFF       DELTA
+completed matches                            3           3           0
+live ticks                              433326      433432        -106
+passes attempted                          3151        3178         -27
+passes completed                          2537        2530           7
+shots                                      126         105          21
+carrier decisions                       230924      234322       -3398
+decisions recognizing a switch            6273           0        6273
+switch passes chosen                       706         601         105
+switch passes executed                     772         659         113
+chosen while recognized                    346           0         346
+
+RESULT: PASS -- the recognition build recognizes far-side opportunities and executes more switch passes than the version-48 build, which recognizes none; both finished every seed
