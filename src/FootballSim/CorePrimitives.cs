@@ -1635,12 +1635,15 @@ public sealed class TeamTacticalProfile
     /// arrives. It is the mirror of <see cref="HighPressGegenpress"/> on every defensive axis, and it is
     /// deliberately deeper and more passive than <see cref="DirectCounterattack"/> (12 % line height against
     /// 28 %, minimal press and counter-press windows, lowest risk tolerance): a low block defends its box,
-    /// a counter-attacking side defends the middle third and breaks.
+    /// a counter-attacking side defends the middle third and breaks. Its directness stays below the
+    /// counter-attack transition threshold, so winning the ball settles the side into its shape rather than
+    /// launching a counter — it still clears long (a forward ball is worth slightly more). The standoff is
+    /// looser than neutral: a deep block defends space, not men.
     /// </summary>
     public static TeamTacticalProfile LowBlock => new()
     {
         Name = "Low Block",
-        Directness01 = 0.70f,
+        Directness01 = 0.60f,
         Tempo01 = 0.38f,
         AttackingWidth01 = 0.42f,
         DefensiveLineHeight01 = 0.12f,
