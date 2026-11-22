@@ -1404,6 +1404,28 @@ configuration line was added (A9.1); a future `--styles` run prints it.
 
 ---
 
+## 2026-11-22 — A9.4 rendered review: FAIL (four findings) (`ai52-rs1`, no code change)
+
+The milestone's last gate was run by the repository owner on the rendered Godot client (4.7.2-stable mono,
+pinned), 11v11 AI-only with the F5 debug overlay. Captures: `a9-review-2026-11-22/`
+(`1a-passing-opportunity.png`, `1b-attack-stalled.png`, `1c-no-player-in-the-box.png`, `1d-ball-lost.png`).
+The review task is complete; the verdict is **FAIL**, so the A9 exit gate stays open and no release claim is
+made. Findings (full text in `docs/KNOWN_ISSUES.md`, "A9.4 rendered review"):
+
+1. no awareness under a closing defender — carries/dribbles into the press and loses the ball, ignores an open
+   pass ahead of a runner (`CARRY 0.92` beating a `PASS #6 0.70` whose gain and lane sub-scores are better);
+2. every attack goes down the wing, no variety;
+3. no box support — nobody to cross or cut back to, so attacks end in a zero-angle shot or a turnover;
+4. AI shots are near-maximum power and badly placed (bar/out/straight at the keeper), with an immediate re-shoot
+   after the rebound.
+
+These are behaviour defects, not subjective tuning. The fixes are tracked as A9.6 in `TASKS.md`; each is a
+behaviour change, so it bumps `AiBehaviour` and invalidates every `ai52` trajectory artifact (tactical gate,
+reference 11v11, perf, ablations matrix, style matrix all re-captured when the fixes land). No artifacts are
+re-captured for this entry: nothing changed yet.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
