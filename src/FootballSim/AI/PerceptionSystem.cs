@@ -212,6 +212,18 @@ public sealed class PerceptionSystem
             memory.Clear();
     }
 
+    /// <summary>
+    /// Builds one player's belief about the pitch for this tick: what he can see or remembers, the ball
+    /// state delayed by his reaction time, and the team-level context the engine has already decided.
+    /// </summary>
+    /// <param name="visibleBuffer">
+    /// A9.3 part 2: optional caller-owned list the sighted and remembered entities are written into instead
+    /// of a fresh allocation. The match engine owns exactly one per observer and passes the same instance on
+    /// every tick, so the list an observation publishes is only valid until that observer's next observation
+    /// is built — <c>GetLastObservation</c> callers read it between ticks, never across a rebuild of the same
+    /// player. Null — every fixture, probe and standalone controller — keeps the allocate-per-observation
+    /// behaviour, and two observations built from one system still never alias each other.
+    /// </param>
     public FootballerObservation BuildObservation(
         FootballerState self,
         IReadOnlyList<FootballerState> allPlayers,
@@ -236,7 +248,8 @@ public sealed class PerceptionSystem
         TeamCallContext teamCalls = default,
         CombinationContext combination = default,
         TrapContext trap = default,
-        RestartRoutineContext restartRoutine = default)
+        RestartRoutineContext restartRoutine = default,
+        List<PerceivedEntity>? visibleBuffer = null)
     {
         // Standalone controllers (probes, unit tests) have no match-level ownership model; derive a
         // conservative snapshot from the ball so behaviour stays sensible without inventing control.
@@ -275,10 +288,24 @@ public sealed class PerceptionSystem
                 occluderCount = CollectOccluders(self, allPlayers, occluderIds, occluderDistances, occluderOffsets);
         }
 
-        var visible = new List<PerceivedEntity>(allPlayers.Count - 1);
-        int knowledgeAgeTicks = 0;
-        foreach (var other in allPlayers)
+        // A9.3 part 2: the production caller reuses one list per observer; everything else keeps the
+        // allocate-per-observation path. The buffer is cleared here, not by the caller, so an observer's
+        // published list is exactly this tick's entities.
+        List<PerceivedEntity> visible;
+        if (visibleBuffer is null)
         {
+            visible = new List<PerceivedEntity>(allPlayers.Count - 1);
+        }
+        else
+        {
+            visibleBuffer.Clear();
+            visible = visibleBuffer;
+        }
+        int knowledgeAgeTicks = 0;
+        // A9.3 part 2: index loop over the list rather than its enumerator, which the interface type boxes.
+        for (int playerIndex = 0; playerIndex < allPlayers.Count; playerIndex++)
+        {
+            FootballerState other = allPlayers[playerIndex];
             if (other.Id == self.Id || !other.IsActiveOnPitch) continue;
 
             Vector2 toOther = new(other.Position.X - self.Position.X, other.Position.Z - self.Position.Z);
@@ -494,8 +521,11 @@ public sealed class PerceptionSystem
         Span<Vector2> offsets)
     {
         int count = 0;
-        foreach (FootballerState other in allPlayers)
+        // A9.3 part 2: index loop — the interface-typed foreach boxes the list's enumerator once per
+        // observer per tick, and this runs immediately before the sight loop below.
+        for (int playerIndex = 0; playerIndex < allPlayers.Count; playerIndex++)
         {
+            FootballerState other = allPlayers[playerIndex];
             if (other.Id == self.Id || !other.IsActiveOnPitch) continue;
 
             Vector2 offset = new(other.Position.X - self.Position.X, other.Position.Z - self.Position.Z);
@@ -635,4 +665,4 @@ public sealed class PerceptionSystem
 
         return BallPossessionSnapshot.Loose;
     }
-}
+}

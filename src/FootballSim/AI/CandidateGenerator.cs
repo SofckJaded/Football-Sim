@@ -3314,6 +3314,25 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
+    /// A9.3 part 2: the job candidates' display names, built once. A job candidate's identity is its
+    /// <see cref="CandidateKey"/> (kind + target tag + adjusted flag); the action name is a label for the
+    /// trace, the inspector and the probes, so caching the text cannot change a decision. Indexed by the
+    /// enum's own value: <see cref="TacticalJob"/> is contiguous from <see cref="TacticalJob.Shape"/>.
+    /// </summary>
+    private static readonly string[] JobActionNames = BuildJobNameTable(prefix: "Job:", suffix: string.Empty);
+    private static readonly string[] JobAdjustedActionNames = BuildJobNameTable(prefix: "Job:", suffix: "Adj");
+    private static readonly string[] JobTargetTags = BuildJobNameTable(prefix: string.Empty, suffix: string.Empty);
+
+    private static string[] BuildJobNameTable(string prefix, string suffix)
+    {
+        TacticalJob[] jobs = Enum.GetValues<TacticalJob>();
+        var names = new string[jobs.Length];
+        for (int index = 0; index < jobs.Length; index++)
+            names[(int)jobs[index]] = prefix + jobs[index] + suffix;
+        return names;
+    }
+
+    /// <summary>
     /// Turns one job anchor into one or two reachable movement candidates: the anchor itself and a
     /// variant stepped out of the nearest opponent's cover shadow (audit F04). Utility combines the
     /// job value with passing-lane visibility, opponent separation and travel cost.
@@ -3340,21 +3359,21 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 alternativeXZ = StepOutOfCoverShadow(obs, jobTargetXZ, selfXZ);
 
         float baseUtility = JobBaseUtility(obs.TacticalJob);
-        AddJobCandidate(obs, $"{obs.TacticalJob}", jobTargetXZ, baseUtility);
+        // A9.3 part 2: the names are cached by job, not interpolated per candidate per decision.
+        AddJobCandidate(obs, adjusted: false, jobTargetXZ, baseUtility);
 
         // The defensive line's target is the allocator's band, not a support point: stepping it out of
         // a cover shadow locally would reopen the depth disagreement A6.3 removed.
         if (obs.TacticalJob != TacticalJob.DefensiveLine &&
             Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
-            AddJobCandidate(obs, $"{obs.TacticalJob}Adj", alternativeXZ, baseUtility - 0.03f, adjusted: true);
+            AddJobCandidate(obs, adjusted: true, alternativeXZ, baseUtility - 0.03f);
     }
 
     private void AddJobCandidate(
         in FootballerObservation obs,
-        string actionName,
+        bool adjusted,
         Vector2 targetXZ,
-        float baseUtility,
-        bool adjusted = false)
+        float baseUtility)
     {
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
@@ -3382,13 +3401,15 @@ public sealed class CandidateGenerator : IAiStateResettable
             moveDir, faceDir, sprint, false, false, false, false, Vector3.Zero,
             KickIntentType.None, Vector3.UnitX, 0f, 0f);
 
-        _lastCandidates.Add(new UtilityCandidate($"Job:{actionName}", utility, command)
+        _lastCandidates.Add(new UtilityCandidate(
+            adjusted ? JobAdjustedActionNames[(int)obs.TacticalJob] : JobActionNames[(int)obs.TacticalJob],
+            utility, command)
         {
             TargetXZ = new Vector3(targetXZ.X, 0f, targetXZ.Y),
             // The job is the target identity, and the adjusted point is a variant of the same job, not a
             // different action — that is what lets commitment distinguish "still marking" from "shifted
             // the mark two metres" without inventing a new action every tick.
-            Key = new CandidateKey(CandidateKind.Job, TargetTag: obs.TacticalJob.ToString(), Adjusted: adjusted)
+            Key = new CandidateKey(CandidateKind.Job, TargetTag: JobTargetTags[(int)obs.TacticalJob], Adjusted: adjusted)
         });
     }
 
@@ -3478,8 +3499,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 segDir = seg / segLen;
 
         float minClearanceRatio = 1.0f;
-        foreach (var p in visiblePlayers)
+        // A9.3 part 2: index loop, same order and skips — foreach over the interface type boxes the
+        // list's enumerator, and this runs several times per off-ball decision.
+        for (int index = 0; index < visiblePlayers.Count; index++)
         {
+            PerceivedEntity p = visiblePlayers[index];
             if (p.Team == selfTeam) continue;
             Vector2 oppXZ = new(p.EstimatedPosition.X, p.EstimatedPosition.Z);
             Vector2 rel = oppXZ - fromXZ;
@@ -3547,8 +3571,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         TeamId selfTeam)
     {
         float minOppDist = 15.0f;
-        foreach (var p in visiblePlayers)
+        // A9.3 part 2: index loop; see EvaluateLaneClearance for why the interface foreach is avoided.
+        for (int index = 0; index < visiblePlayers.Count; index++)
         {
+            PerceivedEntity p = visiblePlayers[index];
             if (p.Team == selfTeam) continue;
             float d = Vector2.Distance(spotXZ, new Vector2(p.EstimatedPosition.X, p.EstimatedPosition.Z));
             if (d < minOppDist) minOppDist = d;

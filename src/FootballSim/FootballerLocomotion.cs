@@ -294,8 +294,11 @@ public sealed class FootballerExecutionSystem
             if (_tackleShieldSeconds <= 0f) _tackleShieldPlayerId = -1;
         }
 
-        foreach (var p in players)
+        // A9.3 part 2: index loop over the list rather than its enumerator, which the interface type boxes.
+        // The loop changes player state only; it does not add or remove players.
+        for (int index = 0; index < players.Count; index++)
         {
+            FootballerState p = players[index];
             if (!p.IsActiveOnPitch) continue;
             p.PreviousPosition = p.Position;
             p.KickRecoveryTimer = MathF.Max(0f, p.KickRecoveryTimer - dt);

@@ -55,7 +55,15 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     private CandidateKey _committedKey;
     private float _commitmentTimer;
     private float _timeOnBall;
-    private string _debugSummary = "Uninitialized";
+    /// <summary>
+    /// A9.3 part 2: a preformatted summary for the rare paths (no decision yet, a phase reset, a
+    /// set-piece restart). Null on the ordinary path, where the getter formats the summary lazily from
+    /// the three fields below instead of allocating a string on every decision.
+    /// </summary>
+    private string? _debugSummaryOverride = "Uninitialized";
+    private string _debugActionName = "Idle";
+    private TacticalJob _debugJob;
+    private float _debugUtility;
     private UtilityCandidate _lastSelected = new("Idle", 0f, FootballerCommand.Idle) { Key = CandidateKey.None };
     private UtilityCandidate? _lastRunnerUp;
     private int _lastCandidateCount;
@@ -156,7 +164,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     /// </summary>
     public RunCandidateGenerator Runs => _generator.Runs;
 
-    public string GetDebugSummary() => _debugSummary;
+    /// <summary>
+    /// A9.3 part 2: the one-line decision summary the inspector and the probes read. Formatted on demand —
+    /// the decision path only stores the three values — so ~20 decisions per tick no longer allocate a
+    /// string that nothing reads. The rare paths keep their preformatted text verbatim.
+    /// </summary>
+    public string GetDebugSummary() =>
+        _debugSummaryOverride ?? $"{_debugActionName} [{_debugJob}] (U={_debugUtility:F2})";
 
     /// <summary>
     /// A9.3: cumulative candidate-generation work this controller has done (carrier and off-ball
@@ -189,7 +203,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         LastReceptionPlan = ReceptionPlan.None;
         _generator.ResetForPhase(reason);
         _executor.Clear();
-        _debugSummary = $"Reset ({reason})";
+        _debugSummaryOverride = $"Reset ({reason})";
         LastResetReason = reason;
     }
 
@@ -217,7 +231,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         if (obs.IsSetPieceTaker && distToBall < 4.5f)
         {
             var restartCmd = EvaluateSetPieceRestart(obs, oppGoalCenter);
-            _debugSummary = $"SetPieceRestart ({obs.CurrentMatchPhase})";
+            _debugSummaryOverride = $"SetPieceRestart ({obs.CurrentMatchPhase})";
             // A restart taker has exactly one thing to do, but the trace still has to be able to name
             // it. Until the A4 pass audit this path left the *previous* decision — or, after a reset,
             // the zero value of the field — as LastSelected, so the recorder published a stale utility
@@ -416,7 +430,11 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             : ReceptionPlan.None;
         LastReceptionPlan = receptionPlan;
 
-        _debugSummary = $"{best.ActionName} [{obs.TacticalJob}] (U={best.UtilityScore:F2})";
+        // A9.3 part 2: store the three summary values; GetDebugSummary formats them only when read.
+        _debugSummaryOverride = null;
+        _debugActionName = best.ActionName;
+        _debugJob = obs.TacticalJob;
+        _debugUtility = best.UtilityScore;
         StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job,
             receptionPlan);
         return best.Command;

@@ -94,6 +94,21 @@ public sealed class MatchSimulationEngine
     private readonly List<FootballerState> _players = new();
     private readonly Dictionary<int, IFootballerController> _controllers = new();
     private readonly Dictionary<int, FootballerObservation> _latestObservations = new();
+
+    /// <summary>
+    /// A9.3 part 2: one reusable visible-entity list per observer, owned here and refilled by
+    /// <see cref="PerceptionSystem.BuildObservation"/> on every observation. The observation object is
+    /// still fresh each tick; only the list it publishes is reused, so a list is valid until that
+    /// observer's next observation is built. Each observer has its own buffer, so two players' views in
+    /// the same tick never alias.
+    /// </summary>
+    private readonly Dictionary<int, List<PerceivedEntity>> _observationVisibleBuffers = new();
+
+    /// <summary>
+    /// A9.3 part 2: the tackle-foul verdict the execution layer asks for on contact, cached once in the
+    /// constructor. The equivalent capturing lambda allocated a closure every tick.
+    /// </summary>
+    private readonly Func<int, int, Vector3, float, bool> _tackleFoulCallback;
     // A9.2: the communication context owns the run-advertisement board, whose channel is one of the
     // ablation switches, so it is built from the validated configuration rather than field-initialised.
     private readonly MatchCommunicationContext _communication;
@@ -174,6 +189,8 @@ public sealed class MatchSimulationEngine
         _communication = new MatchCommunicationContext(_config.Ai);
         _teamJobs = new TeamJobCoordinator(_pitch, _config.Ai);
         _rulesEngine = new MatchRulesEngine(_pitch, _ballSolver.Parameters.Radius);
+        // A9.3 part 2: one delegate for the match instead of a fresh capturing lambda per tick.
+        _tackleFoulCallback = EvaluateTackleFoulForContact;
         Analytics = new MatchAnalyticsSummary();
         _statistics = new MatchStatisticsTracker(Analytics);
 
@@ -698,6 +715,15 @@ public sealed class MatchSimulationEngine
                 float attackDirX = p.Team == TeamId.Home ? homeDirX : -homeDirX;
                 bool isTaker = _rulesEngine.DesignatedSetPieceTakerId == p.Id;
 
+                // A9.3 part 2: the observation's entity list is reused per observer. It is valid until this
+                // player's next observation (next tick); everything that reads a published observation does
+                // so between ticks, and nothing may hold one across that player's rebuild.
+                if (!_observationVisibleBuffers.TryGetValue(p.Id, out List<PerceivedEntity>? visibleBuffer))
+                {
+                    visibleBuffer = new List<PerceivedEntity>(_players.Count - 1);
+                    _observationVisibleBuffers[p.Id] = visibleBuffer;
+                }
+
                 var obs = _perceptionSystem.BuildObservation(
                     p, _players, Ball, _tacticalCoordinator.ConfirmedPossessingTeam,
                     _rulesEngine.Phase, _rulesEngine.MatchClockSeconds,
@@ -723,7 +749,8 @@ public sealed class MatchSimulationEngine
                     // A8.5: the restart routine this player is part of, if any. Read once here from the match's own
                     // board for the same reason: the taker's delivery and the keeper's goal-kick distribution both
                     // read the routine from the observation, never from the board.
-                    _communication.Restarts.ContextFor(p.Team, p.Id, CurrentTick));
+                    _communication.Restarts.ContextFor(p.Team, p.Id, CurrentTick),
+                    visibleBuffer);
                 _latestObservations[p.Id] = obs;
 
                 // A7.2: the player's own shout, decided from the observation he just built. Only an AI
@@ -740,7 +767,7 @@ public sealed class MatchSimulationEngine
 
             _executionSystem.UpdateLocomotionAndContacts(
                 _players, Ball, _executionRng, dt,
-                (tacklerId, victimId, pos, sev) => _rulesEngine.EvaluateTackleFoul(tacklerId, victimId, pos, sev, _players, Ball),
+                _tackleFoulCallback,
                 CurrentTick,
                 new ReceptionAssistContext(possession.State, possession.IntendedReceiverId, humanPlayerId));
 
@@ -856,6 +883,14 @@ public sealed class MatchSimulationEngine
         _communication.Calls.TryGetLineDirective(team, CurrentTick, out TeamCall directive)
             ? TeamCallPlanner.LineShiftMeters(directive.Kind)
             : 0f;
+
+    /// <summary>
+    /// A9.3 part 2: the tackle-foul verdict the execution layer asks for on contact. Kept as a method so
+    /// the delegate can be created once in the constructor instead of as a closure per tick; it reads the
+    /// same rules engine, players and ball the lambda did.
+    /// </summary>
+    private bool EvaluateTackleFoulForContact(int tacklerId, int victimId, Vector3 position, float severity) =>
+        _rulesEngine.EvaluateTackleFoul(tacklerId, victimId, position, severity, _players, Ball);
 
     /// <summary>
     /// Records what the installed controller chose. A utility AI exposes its scored candidates, so the

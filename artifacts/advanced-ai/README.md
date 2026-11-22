@@ -1281,6 +1281,31 @@ test per player per tick. **PASS** (empty buffer, identical world, inside the 60
 Reference match identity (`a9-profile-match-11v11.txt`): tick 325 628, 0–1, passes 1367/1089, 2530/2583 kicks,
 17 828 run adverts, 63/63 restart routines, 65 events — the same numbers as `a9-style-match-11v11.txt`.
 
+### Part 2 — buffer reuse in the A2–A8 hot paths (`a9-profile2-*`)
+
+Same machine, same tag, same reference world: `a9-profile2-match-11v11.txt` reproduces the numbers above
+exactly. Commands were `--perf 20000` twice and `--tracing 20000` after the reuse. The reuses: an
+engine-owned visible-entity list per observer passed into `PerceptionSystem.BuildObservation` (the allocating
+path is kept for every fixture), lazily formatted debug summaries and cached job candidate labels, index loops
+replacing `foreach` over `IReadOnlyList` (which boxes the list enumerator), reused team-job assignment
+containers/snapshot/threat list, and a cached per-tick tackle-foul delegate.
+
+| Metric | Part 1 | Part 2 run 1 | Part 2 run 2 |
+| :--- | :--- | :--- | :--- |
+| Per-tick mean | 255.4 µs | 258.0 µs | 253.2 µs |
+| p50 / p95 | 202.7 / 613.1 µs | 203.0 / 599.2 µs | 192.5 / 650.4 µs |
+| p99 / max | 913.9 / 1726.9 µs | 900.8 / 1911.7 µs | 971.3 / 1759.4 µs |
+| Allocated per tick | 66 961 B | **27 169 B** | **24 752 B** |
+| GC collections (0/1/2) | 80/0/0 | 32/0/0 | 29/0/0 |
+
+Debug `--perf 4000` before/after the reuse: 916.5 → 895.6 µs mean and **80 381 → 38 904 B/tick** (−51.6 %),
+GC gen0 19 → 9. The measured work is identical to part 1 (carrier max 14 generated / cap 20 / 0 trims; off-ball
+max 6 / cap 12 / 0 trims; search max 8 continuations, budget 9; trajectory 30 samples, bound 32; belief rebuilds
+0.17/tick), so the allocation drop is the reuse and not a change of work.
+
+`a9-profile2-tracing.txt`: tracing off 242.4 µs mean / 27 171 B/tick / 0 entries vs on 352.2 µs / 4 096 entries,
+world identical — **PASS**.
+
 ---
 
 ## Still to capture (A0.5, part 2)

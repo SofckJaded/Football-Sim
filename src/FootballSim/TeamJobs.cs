@@ -168,6 +168,29 @@ public sealed class TeamJobCoordinator
     private readonly List<AssignedRegion> _assignedRegions = new();
 
     /// <summary>
+    /// A9.3 part 2: the working containers of one team's assignment pass — the duties already handed out,
+    /// the players already taken, the players still available — reused across passes and cleared at the
+    /// start of each, like <see cref="_assignedRegions"/>. Only <see cref="AssignTeam"/> and the helpers it
+    /// calls touch them, and one team's pass completes before the next team's starts.
+    /// </summary>
+    private readonly Dictionary<TacticalJob, int> _jobCounts = new();
+    private readonly HashSet<int> _takenPlayerIds = new();
+    private readonly List<FootballerState> _availablePlayers = new();
+
+    /// <summary>
+    /// A9.3 part 2: the copy of <see cref="_availablePlayers"/> iterated while the line duty removes from
+    /// the live list. A reused snapshot replaces <c>available.ToArray()</c> without changing the iteration:
+    /// the copy is taken at the same point and in the same order.
+    /// </summary>
+    private readonly List<FootballerState> _availablePlayersSnapshot = new();
+
+    /// <summary>
+    /// A9.3 part 2: the marking pass's threat list, reused per recompute. Cleared and refilled before the
+    /// sort, so its contents and order are exactly the ones the per-pass allocation produced.
+    /// </summary>
+    private readonly List<TeamBelief.Opponent> _threats = new();
+
+    /// <summary>
     /// How wide the team currently being assigned wants to be (A3.4). Set at the start of its pass so the
     /// width and channel terms score regions against the profile rather than against the full pitch.
     /// </summary>
@@ -393,9 +416,13 @@ public sealed class TeamJobCoordinator
             }
         }
 
-        var counts = new Dictionary<TacticalJob, int>();
-        var taken = new HashSet<int>();
-        var available = new List<FootballerState>();
+        // A9.3 part 2: reused working containers instead of three allocations per team per recompute.
+        Dictionary<TacticalJob, int> counts = _jobCounts;
+        HashSet<int> taken = _takenPlayerIds;
+        List<FootballerState> available = _availablePlayers;
+        counts.Clear();
+        taken.Clear();
+        available.Clear();
 
         // Keep incumbents on their job for a bounded period, unless the phase no longer fits.
         foreach (FootballerState player in players)
@@ -591,8 +618,13 @@ public sealed class TeamJobCoordinator
 
             // A6.3: the remaining defenders hold one shared depth band â€” the whole line steps together,
             // each man in his own lane, with the ball-side and far-side exceptions the band allows.
-            foreach (FootballerState player in available.ToArray())
+            // A9.3 part 2: the copy is taken before the loop, exactly where ToArray took it, because the
+            // loop removes from the live list; a reused snapshot replaces the array allocation only.
+            _availablePlayersSnapshot.Clear();
+            _availablePlayersSnapshot.AddRange(available);
+            for (int index = 0; index < _availablePlayersSnapshot.Count; index++)
             {
+                FootballerState player = _availablePlayersSnapshot[index];
                 if (player.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack)) continue;
 
                 Vector3 anchor = AnchorOf(player);
@@ -940,8 +972,10 @@ public sealed class TeamJobCoordinator
         TeamTacticalProfile profile)
     {
         // A2.6: markers are picked from what the team believes, so an opponent nobody has seen cannot
-        // pull a defender out of shape.
-        var threats = new List<TeamBelief.Opponent>();
+        // pull a defender out of shape. A9.3 part 2: the threat list is reused, cleared first, so the
+        // contents and order match the per-pass list it replaces.
+        List<TeamBelief.Opponent> threats = _threats;
+        threats.Clear();
         for (int i = 0; i < opponents.Opponents.Count; i++)
         {
             TeamBelief.Opponent opponent = opponents.Opponents[i];
