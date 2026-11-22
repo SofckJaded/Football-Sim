@@ -99,32 +99,74 @@ public sealed class AiRuntimeConfig
     // invented inside the consumers.
     //
     // The candidate caps below (MaxPassTargets, MaxCarrierCandidates, MaxOffBallCandidates) are read by the
-    // current build. The scheduler fields are read by AiScheduler and only take effect when
-    // EnableScheduledDecisions is on, so they are the part that is declared ahead of its default.
+    // current build. Of the cadence fields, PerceptionRefreshTicks, CarrierDecisionTicks,
+    // OutfieldDecisionTicks and LocalCoordinationTicks are consumed; the other four are declared here ahead
+    // of the mechanism that will read them (AUD-12 — see each field's documentation).
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>Live ticks between perception refreshes (plan §3: 15 Hz, i.e. every 4 ticks).</summary>
+    /// <summary>
+    /// Live ticks between perception refreshes (plan §3: 15 Hz, i.e. every 4 ticks).
+    ///
+    /// AUD-12: consumed by the match engine's team-anchor refresh cadence — how often the shared tactical
+    /// anchor each player's picture is built from is recomputed
+    /// (<see cref="FootballSim.Tactics.TeamTacticalCoordinator.UpdateTeamAnchors"/>). It is <b>not</b> the
+    /// decision cadence: that is <see cref="CarrierDecisionTicks"/> / <see cref="OutfieldDecisionTicks"/>.
+    /// </summary>
     public int PerceptionRefreshTicks { get; init; } = 4;
 
-    /// <summary>Live ticks between utility updates for the carrier and nearby defenders (10 Hz).</summary>
+    /// <summary>
+    /// Live ticks between utility updates for the carrier and nearby defenders (10 Hz). Read by
+    /// <see cref="AiScheduler"/> and only takes effect when <see cref="EnableScheduledDecisions"/> is on.
+    /// </summary>
     public int CarrierDecisionTicks { get; init; } = 6;
 
-    /// <summary>Live ticks between utility updates for other outfield players (6 Hz).</summary>
+    /// <summary>
+    /// Live ticks between utility updates for other outfield players (6 Hz). Read by <see cref="AiScheduler"/>
+    /// and only takes effect when <see cref="EnableScheduledDecisions"/> is on.
+    /// </summary>
     public int OutfieldDecisionTicks { get; init; } = 10;
 
-    /// <summary>Live ticks between refreshes of cached local spatial queries (10 Hz).</summary>
+    /// <summary>
+    /// Live ticks between refreshes of cached local spatial queries (10 Hz).
+    ///
+    /// AUD-12: <b>reserved for an unimplemented cadence.</b> The field is validated and printed in
+    /// <see cref="Describe"/>, but no mechanism reads it yet, so changing it does not change behaviour. It is
+    /// kept rather than removed because the cadence table is declared in one place and the wiring can land
+    /// without a configuration change.
+    /// </summary>
     public int LocalSpatialCacheTicks { get; init; } = 6;
 
-    /// <summary>Live ticks between rebuilds of the coarse team-belief spatial map (5 Hz).</summary>
+    /// <summary>
+    /// Live ticks between rebuilds of the coarse team-belief spatial map (5 Hz).
+    ///
+    /// AUD-12: <b>reserved for an unimplemented cadence.</b> The field is validated and printed in
+    /// <see cref="Describe"/>, but no mechanism reads it yet, so changing it does not change behaviour.
+    /// </summary>
     public int TeamBeliefMapTicks { get; init; } = 12;
 
-    /// <summary>Live ticks between tactical-structure updates (3 Hz).</summary>
+    /// <summary>
+    /// Live ticks between tactical-structure updates (3 Hz).
+    ///
+    /// AUD-12: <b>reserved for an unimplemented cadence.</b> The field is validated and printed in
+    /// <see cref="Describe"/>, but no mechanism reads it yet, so changing it does not change behaviour.
+    /// </summary>
     public int TacticalStructureTicks { get; init; } = 20;
 
-    /// <summary>Live ticks between local coverage/coordination updates (10 Hz).</summary>
+    /// <summary>
+    /// Live ticks between local coverage/coordination updates (10 Hz).
+    ///
+    /// AUD-12: consumed by <see cref="FootballSim.Tactics.TeamJobCoordinator"/>'s local-coordination
+    /// recompute interval (it replaces the coordinator's former hard-coded six-tick constant), so changing
+    /// it changes how often persistent jobs are re-assigned. It is not a decision cadence.
+    /// </summary>
     public int LocalCoordinationTicks { get; init; } = 6;
 
-    /// <summary>Live ticks between slow structural reassessments (1 Hz).</summary>
+    /// <summary>
+    /// Live ticks between slow structural reassessments (1 Hz).
+    ///
+    /// AUD-12: <b>reserved for an unimplemented cadence.</b> The field is validated and printed in
+    /// <see cref="Describe"/>, but no mechanism reads it yet, so changing it does not change behaviour.
+    /// </summary>
     public int StructuralReassessmentTicks { get; init; } = 60;
 
     /// <summary>
@@ -407,10 +449,12 @@ public sealed class AiRuntimeConfig
 
     /// <summary>
     /// Whether commitment holds a chosen action (A1.1c/A4.5): the live commitment window plus the score
-    /// bonus that protects it from per-tick wobble. <b>On by default</b>. Off sets the window to zero and
-    /// the bonus to nothing — every decision is taken on this tick's raw scores, which is the "how much
-    /// is the hold worth?" ablation. The action set, the switch-margin rule and the candidate scores are
-    /// unchanged; only the hold and its bonus disappear.
+    /// bonus that protects it from per-tick wobble, <b>and</b> the switch-margin hysteresis
+    /// (<see cref="SwitchAbsoluteMargin"/> / <see cref="SwitchRelativeMargin"/>) that decides whether a
+    /// challenger is clearly better. <b>On by default</b>. Off removes the whole hold: the window is never
+    /// started, no bonus is paid, no committed action is tracked, and every decision is taken on this
+    /// tick's raw scores — without the A4.5 switch margin — which is the "how much is the hold worth?"
+    /// ablation (AUD-10). The action set and the candidate scores are unchanged.
     /// </summary>
     public bool EnableCommitment { get; init; } = true;
 
@@ -438,9 +482,13 @@ public sealed class AiRuntimeConfig
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
         $"switch(abs {SwitchAbsoluteMargin:F2}, rel {SwitchRelativeMargin:F2}) " +
+        // AUD-12: only cadences a mechanism actually reads appear in cadence(...). The four reserved fields
+        // are still printed (an artifact records every configured number) but in their own group, so a
+        // reader cannot mistake them for cadences that governed the run.
         $"cadence(p{PerceptionRefreshTicks} c{CarrierDecisionTicks} o{OutfieldDecisionTicks} " +
-        $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
-        $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
+        $"l{LocalCoordinationTicks}) " +
+        $"reserved(s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
+        $"r{StructuralReassessmentTicks}) " +
         $"sched({(EnableScheduledDecisions ? "on" : "off")}) " +
         $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets}, " +
         $"runs {MaxRunCandidates}) " +
