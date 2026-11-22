@@ -560,8 +560,15 @@ public sealed class TeamJobCoordinator
             // A depth run (a box run) only makes sense when there is space behind the line to attack,
             // *and* the side can afford to send somebody: the transition picture decides that, not a
             // fixed count behind the ball (A3.6).
+            //
+            // A9.6c (rendered-review finding 3): the old gate was "space behind the line", which is false exactly
+            // when the ball reaches the byline — the ball IS the deepest point — so the one duty that may run a
+            // box arrival was withdrawn at the moment a delivery target was needed. A final-third ball now also
+            // asks for the box run; the rest-defence allowance still decides whether the side can afford it.
+            bool boxRunPossible = referenceProj >= 30f;
             bool depthRunPossible = forwardCommitted < forwardAllowance &&
-                                    offsideLineProj - referenceProj > 4f && offsideLineProj > 10f;
+                                    (boxRunPossible ||
+                                     (offsideLineProj - referenceProj > 4f && offsideLineProj > 10f));
             if (depthRunPossible)
             {
                 if (AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
@@ -569,6 +576,22 @@ public sealed class TeamJobCoordinator
                     {
                         if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
                             return null;
+
+                        if (boxRunPossible)
+                        {
+                            // A9.6c: a box arrival, not a generic depth run — 11 m from the goal line (the
+                            // penalty-spot area), in the player's own lane but pulled to the far half-space from
+                            // the ball so a wide carrier has somebody to cross to. The run kinds' own box path
+                            // still clamps to the believed offside line.
+                            float boxLaneZ = player.TacticalAnchor == Vector3.Zero
+                                ? player.Position.Z
+                                : player.TacticalAnchor.Z;
+                            float farSideSign = referenceXZ.Y >= 0f ? -1f : 1f;
+                            float boxZ = Math.Clamp(
+                                MathF.Abs(boxLaneZ) > 4f ? boxLaneZ : farSideSign * 7f,
+                                -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
+                            return new Vector2(attackDirX * (_pitch.HalfLength - 11f), boxZ);
+                        }
 
                         float runProj = MathF.Max(2f, MathF.Min(offsideLineProj - 1.5f,
                             MathF.Max(referenceProj + 8f, offsideLineProj - 6f)));

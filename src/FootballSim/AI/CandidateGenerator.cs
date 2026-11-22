@@ -53,6 +53,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     internal const float CarryDirectionHysteresis = 0.04f;
 
+    /// <summary>
+    /// A9.6d: time after a shot during which the same player may not shoot again. Every AI shot is parried by
+    /// the keeper (the catch speed is below the minimum shot speed), the parry comes back at the shooter, and
+    /// without this the first touch after a save was another shot from a worse position — the rendered-review
+    /// "bounced back to him and he shot out of bound". A reaction timer, not a cadence: it ticks every live
+    /// tick like the tackle cooldown.
+    /// </summary>
+    internal const float ShotRecoverySeconds = 0.55f;
+
     // ---------------------------------------------------------------------------------------------
     // A4.1 — the explicit on-ball action set.
     //
@@ -390,6 +399,7 @@ public sealed class CandidateGenerator : IAiStateResettable
     private Vector2 _lastCarryDirection;
     private bool _hasLastCarryDirection;
     private float _tackleCooldown;
+    private float _shotCooldown;
     private float _timeOnBall;
 
     public CandidateGenerator(
@@ -497,7 +507,12 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// Advances the timers this object owns. Called once per live tick, not once per decision (L7): the
     /// tackle cooldown is a reaction timer, and slowing the utility cadence must not slow it down.
     /// </summary>
-    public void TickTimers(float dt) => _tackleCooldown = MathF.Max(0f, _tackleCooldown - dt);
+    public void TickTimers(float dt)
+    {
+        _tackleCooldown = MathF.Max(0f, _tackleCooldown - dt);
+        // A9.6d: the shot recovery is a reaction timer too (L7: it ticks every live tick, not per decision).
+        _shotCooldown = MathF.Max(0f, _shotCooldown - dt);
+    }
 
     /// <summary>
     /// Drops the candidate set and the tackle cooldown (A1.5). The cooldown is passage-of-play state: a
@@ -513,6 +528,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         _switchPreferencesApplied = 0;
         _lastSwitchOpportunity = default;
         _tackleCooldown = 0f;
+        _shotCooldown = 0f;
         _timeOnBall = 0f;
         _hasLastCarryDirection = false;
         _lastCarryDirection = Vector2.Zero;
@@ -526,6 +542,11 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     public void NoteDecision(in FootballerObservation obs, in CandidateKey key)
     {
+        // A9.6d: a shot is a one-off act, and the body needs a moment before the next strike — otherwise the
+        // rebound of a parry (which comes straight back at the shooter) was shot again from a worse angle.
+        if (key.Kind == CandidateKind.Shot)
+            _shotCooldown = ShotRecoverySeconds;
+
         _runs.NoteSelected(obs, key);
 
         // A pass into an advertised region is a promise in the other direction: the runner has announced
@@ -629,7 +650,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     private void AddShotCandidate(in FootballerObservation obs, float distToGoal, Vector3 oppGoalCenter)
     {
-        if (distToGoal >= 23.5f) return;
+        if (distToGoal >= ActionValueScale.ShotRangeMeters) return;
+        // A9.6d: the body is still recovering from the last strike — the rebound of a parry (which comes
+        // straight back at the shooter) is not a second shot.
+        if (_shotCooldown > 0f) return;
 
         PlayerTendencies tendencies = obs.SelfTendencies;
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
@@ -644,6 +668,11 @@ public sealed class CandidateGenerator : IAiStateResettable
             }
         }
 
+        // A9.6d: how much goal the shooter can actually see. A shot from the byline subtends a sliver; the
+        // same distance centrally sees the whole mouth. The execution layer prices the physical launch but
+        // cannot know this geometry, so the value must.
+        float goalMouthAngle = GoalMouthAngleDegrees(selfXZ, oppGoalCenter);
+
         float targetZ = oppGkZ >= 0f ? -2.95f : 2.95f;
         Vector3 shotTarget = new(oppGoalCenter.X, 1.0f, targetZ);
         // L9: SafeNormalize, not a raw Normalize — a shooter standing exactly on the aim point would otherwise
@@ -653,7 +682,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             new Vector2(obs.AttackingDirectionX, 0f));
         float laneClearance = EvaluateLaneClearance(selfXZ, new Vector2(shotTarget.X, shotTarget.Z), obs.VisiblePlayers, obs.SelfTeam);
 
-        float shotValue = ActionValueScale.ShotValue(distToGoal, laneClearance);
+        float shotValue = ActionValueScale.ShotValue(distToGoal, laneClearance, goalMouthAngle);
         // Shooting appetite: a striker (0.85) pulls the trigger where a defender (0.20) lays it off.
         float shotPreference = (tendencies.ShootingAppetite01 - PlayerTendencyBaselines.ShootingAppetite) * 0.40f;
         // Risk tolerance: the more risk-tolerant player takes on the low-percentage shot from range.
@@ -665,8 +694,9 @@ public sealed class CandidateGenerator : IAiStateResettable
             shotDir2D, shotDir2D, false, false, false, false, false, Vector3.Zero,
             KickIntentType.Shot,
             new Vector3(shotDir2D.X, 0f, shotDir2D.Y),
-            // AI shots sit in the power sweet spot: over ~92 % the new trajectory flies over.
-            Math.Clamp(0.80f + distToGoal / 120.0f, 0.80f, 0.90f),
+            // A9.6d: a placed shot band that stays under the bar. Execution's ShotTargetHeight puts the old
+            // 0.80-0.90 band at 2.69-3.10 m against a 2.44 m bar, so every AI shot was at the top edge or over.
+            ActionValueScale.ShotPowerForDistance(distToGoal),
             0f);
 
         _lastCandidates.Add(new UtilityCandidate("ShootAtGoal", shotUtility, shotCmd)
@@ -675,6 +705,21 @@ public sealed class CandidateGenerator : IAiStateResettable
             Key = new CandidateKey(CandidateKind.Shot, TargetTag: "goal"),
             Terms = new ValueTerms(1f, shotValue, 0f, shotPreference)
         });
+    }
+
+    /// <summary>
+    /// A9.6d: the angle the goal mouth subtends at the shooter, in degrees. Uses the pitch's real goal width,
+    /// so a sliver of goal from the byline is the same number the physics and the rules see.
+    /// </summary>
+    private float GoalMouthAngleDegrees(Vector2 selfXZ, Vector3 oppGoalCenter)
+    {
+        Vector2 toNearPost = new Vector2(oppGoalCenter.X, _pitch.HalfGoalWidth) - selfXZ;
+        Vector2 toFarPost = new Vector2(oppGoalCenter.X, -_pitch.HalfGoalWidth) - selfXZ;
+        if (toNearPost.LengthSquared() < 1e-6f || toFarPost.LengthSquared() < 1e-6f) return 180f;
+
+        float cosine = Math.Clamp(
+            Vector2.Dot(Vector2.Normalize(toNearPost), Vector2.Normalize(toFarPost)), -1f, 1f);
+        return MathF.Acos(cosine) * (180f / MathF.PI);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -2223,8 +2268,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         bool inFinalThird,
         float nearestOppDist)
     {
+        // A9.6b: outside the final third a winger drives into the half-space, not at the touchline. The old
+        // target was `HalfWidth - 6`, which made every wide attack a run at the line and left the flank as
+        // the only place a carry could go.
         Vector2 idealDriveTarget = obs.SelfRole == TacticalRole.Winger && !inFinalThird
-            ? new Vector2(oppGoalCenter.X * 0.85f, MathF.Sign(obs.SelfPosition.Z) * (_pitch.HalfWidth - 6.0f))
+            ? new Vector2(oppGoalCenter.X * 0.85f, MathF.Sign(obs.SelfPosition.Z) * (_pitch.HalfWidth * 0.50f))
             : goalXZ;
 
         Vector2 forwardDir = SimMath.SafeNormalize(idealDriveTarget - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
@@ -2233,12 +2281,26 @@ public sealed class CandidateGenerator : IAiStateResettable
         // action below — one pressure estimate, not one per action.
         _pressure.TryBuild(obs, selfXZ, _pitch);
 
+        // A9.6a: how soon an opponent can arrive at the carrier's own feet. The field was always built here but
+        // read only 5 m ahead, so a carry into a closing defender cost nothing (rendered-review finding 1).
+        // The risk is contact, not shadow: it ramps in as the nearest opponent reaches the player himself, so a
+        // settled build-up (nearest man ~2.6 m away and closing slowly) keeps its sequence.
+        float ContactRisk(float nearestOpponentDistance)
+        {
+            float closeness = Math.Clamp(
+                (ActionValueScale.ContactRiskMeters - nearestOpponentDistance) / ActionValueScale.ContactRiskRampMeters,
+                0f, 1f);
+            return ActionValueScale.CarryContactRiskCost * closeness;
+        }
+
+        float contactRisk = ContactRisk(nearestOppDist);
+
         Vector2 bestDir = forwardDir;
         float bestScore = ScoreCarryDirection(obs, selfXZ, forwardDir, out float bestSpace);
 
         // Candidate carries around the forward direction. The old set only looked at open space, so near
         // a touchline the *emptiest* direction was out of the pitch and the AI dutifully carried the ball
-        // out of play. Boundary safety is part of the score now.
+        // out of play. Boundary safety and the contact risk are part of the score now.
         ReadOnlySpan<float> angles = [-0.45f, 0.45f, -0.85f, 0.85f, -1.25f, 1.25f];
         foreach (float ang in angles)
         {
@@ -2303,7 +2365,9 @@ public sealed class CandidateGenerator : IAiStateResettable
         float carryGain = ActionValueScale.CarryBaseValue
                           + ActionValueScale.CarrySpaceBonus * bestSpace
                           + carryBonus
-                          - ActionValueScale.CarryLinePenalty * linePressure;
+                          - ActionValueScale.CarryLinePenalty * linePressure
+                          // A9.6a: carrying into a closing defender costs the ball, so it costs value.
+                          - contactRisk;
         // Preferences: forward progress (the same one a pass carries) and this player's dribbling.
         float carryPreference = ActionValueScale.ProgressBonus
                                 * Math.Clamp((carryTarget.X - selfXZ.X) * obs.AttackingDirectionX / 20f, -1f, 1f);

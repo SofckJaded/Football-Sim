@@ -129,6 +129,28 @@ public static class ActionValueScale
     /// <summary>Penalty for carrying the ball into a touchline or goal line.</summary>
     public const float CarryLinePenalty = 0.30f;
 
+    // ---------------------------------------------------------------------------------------------
+    // A9.6a — the contact risk a carry has always ignored (rendered-review finding 1).
+    //
+    // The carry kept its pre-A4 heuristic shape (probability 1, loss 0), so it could never lose value to a
+    // closing defender: the only pressure it read was the freedom of the point 5 m ahead. This puts the
+    // *imminent tackle* on the same scale — the one A2.4 pressure estimate, read at the direction's probe, is
+    // subtracted from the carry's gain. The gain shape is deliberately kept: A4.4's probability/loss carry
+    // collapsed the reference match (see the block comment above), so this is a stated deduction.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// What an opponent who is on the carrier is worth to a carry, in scale units. Sized so a defender at
+    /// ~1-2 m makes the observed 0.85 carry fall below a real 0.70 pass.
+    /// </summary>
+    public const float CarryContactRiskCost = 0.45f;
+
+    /// <summary>Nearest-opponent distance at which contact risk starts, in metres.</summary>
+    public const float ContactRiskMeters = 2.2f;
+
+    /// <summary>Distance over which the contact risk ramps from zero to its full cost, in metres.</summary>
+    public const float ContactRiskRampMeters = 1.0f;
+
     /// <summary>Weight on shielding the ball at the base of the range.</summary>
     public const float ShieldBaseValue = 0.30f;
 
@@ -185,24 +207,65 @@ public static class ActionValueScale
     /// <summary>Distance inside which a shot is considered at all, in metres.</summary>
     public const float ShotRangeMeters = 23.5f;
 
+    // ---------------------------------------------------------------------------------------------
+    // A9.6d — the finish, not just the distance (rendered-review finding 4).
+    //
+    // The old AI shot was priced by distance and lane alone and struck at 0.80-0.90 power, whose execution
+    // height is 2.69-3.10 m against a 2.44 m bar — every shot was at the top edge or over it. These add the
+    // one thing the execution layer cannot infer: how much of the goal the shooter can actually see.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>Goal-mouth angle at which the whole goal is visible and the angle costs nothing, in degrees.</summary>
+    public const float ShotMouthAngleFullDegrees = 30f;
+
+    /// <summary>Floor on the goal-mouth angle factor, so a sliver of a goal is not worth literally nothing.</summary>
+    public const float ShotMouthAngleFloor = 0.25f;
+
+    /// <summary>Shot power at the near end of the range: low and placed rather than lashed.</summary>
+    public const float ShotPowerNear = 0.45f;
+
+    /// <summary>Shot power at the far end of the range: enough reach, still under the bar.</summary>
+    public const float ShotPowerFar = 0.70f;
+
     /// <summary>
-    /// Stated heuristic conversion curve: a function of range and of how clear the shooting lane is.
-    /// <b>Not</b> a measured model — A10 owns replacing it with data. It is the curve A4.4 asks for ("a
-    /// better chance beats a poor shot") and was put back once the reception value stopped outbidding the
-    /// shot from inside the box: with the earlier, larger reception weights the carrier preferred passing
-    /// the ball into the box to shooting from it.
+    /// AI shot power for a range. Execution maps power to a goal-line target height (<c>ShotTargetHeight</c>):
+    /// up to ~0.73 the ball stays under the 2.44 m bar, so the whole band is a placed shot with enough pace to
+    /// arrive. The old 0.80-0.90 band aimed 2.69-3.10 m high — over the bar in the execution model's own terms.
     /// </summary>
-    public static float ShotConversion(float distanceMeters, float laneClearance01)
+    public static float ShotPowerForDistance(float distanceMeters)
+    {
+        if (!float.IsFinite(distanceMeters)) return ShotPowerNear;
+        float range = Clamp01((distanceMeters - ShotNearMeters) / (ShotRangeMeters - ShotNearMeters));
+        return ShotPowerNear + (ShotPowerFar - ShotPowerNear) * range;
+    }
+
+    /// <summary>
+    /// Stated heuristic conversion curve: a function of range, of how clear the shooting lane is, and (A9.6d) of
+    /// how much of the goal mouth the shooter can see. <b>Not</b> a measured model — A10 owns replacing it with
+    /// data. It is the curve A4.4 asks for ("a better chance beats a poor shot") and was put back once the
+    /// reception value stopped outbidding the shot from inside the box: with the earlier, larger reception
+    /// weights the carrier preferred passing the ball into the box to shooting from it.
+    /// </summary>
+    /// <param name="goalMouthAngleDegrees">
+    /// Angle the goal mouth subtends from the shooter's position. The default (180°) applies no angle penalty,
+    /// which keeps every existing caller that has no shooter position bit-identical.
+    /// </param>
+    public static float ShotConversion(
+        float distanceMeters,
+        float laneClearance01,
+        float goalMouthAngleDegrees = 180f)
     {
         if (!float.IsFinite(distanceMeters)) return 0f;
         float range = Clamp01(1f - (distanceMeters - ShotNearMeters) / (ShotFarMeters - ShotNearMeters));
         float lane = 1f - ShotLaneWeight + ShotLaneWeight * Clamp01(laneClearance01);
-        return Clamp01((ShotConversionFar + (ShotConversionNear - ShotConversionFar) * range) * lane);
+        float mouthAngle = float.IsFinite(goalMouthAngleDegrees) ? goalMouthAngleDegrees : 180f;
+        float angle = Math.Clamp(mouthAngle / ShotMouthAngleFullDegrees, ShotMouthAngleFloor, 1f);
+        return Clamp01((ShotConversionFar + (ShotConversionNear - ShotConversionFar) * range) * lane * angle);
     }
 
     /// <summary>The shot's value on the documented scale: conversion × goal − (1 − conversion) × miss cost.</summary>
-    public static float ShotValue(float distanceMeters, float laneClearance01) =>
-        ExpectedValue(ShotConversion(distanceMeters, laneClearance01), GoalValue, ShotMissCost);
+    public static float ShotValue(float distanceMeters, float laneClearance01, float goalMouthAngleDegrees = 180f) =>
+        ExpectedValue(ShotConversion(distanceMeters, laneClearance01, goalMouthAngleDegrees), GoalValue, ShotMissCost);
 
     /// <summary>
     /// How much one unit of forward progress is worth as a <i>preference</i>, in scale units, on top of what

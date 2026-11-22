@@ -31,7 +31,7 @@ pre-match; the AI must never take that player over.
 | Audit probe JSON | `dotnet run --project tools\FootballSim.AuditProbe -c Debug` |
 | Shortcut wrapper | `start.bat check` (build + test), `start.bat verify` (build + test + probe) |
 
-Tests take ~65 s. Always run the full suite after a change; it currently passes **1116/1116**.
+Tests take ~65 s. Always run the full suite after a change; it currently passes **1121/1121**.
 
 ### 2.1 Repository scope
 

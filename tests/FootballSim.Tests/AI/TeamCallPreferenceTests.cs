@@ -222,8 +222,10 @@ public sealed class TeamCallPreferenceTests
         calls: calls,
         visible:
         [
-            Opponent(201, 1.2f, 8.2f),
-            Opponent(205, 1.8f, 6.8f),
+            // A9.6a: an opponent inside ~2.2 m now carries real contact risk and the shield wins on its own, so
+            // the call's flip is measured just outside that ring, where the carry is still the better action.
+            Opponent(201, 2.5f, 8.2f),
+            Opponent(205, 2.9f, 6.8f),
             Mate(MateId, 20f, 16f)
         ]);
 

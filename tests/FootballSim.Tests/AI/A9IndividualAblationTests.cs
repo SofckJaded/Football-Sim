@@ -452,7 +452,7 @@ public sealed class A9IndividualAblationTests
             new(9, TeamId.Home, TacticalRole.Striker,
                 new Vector3(mateDistance, 0f, 3f), Vector3.Zero, 0.9f),
             new(12, TeamId.Away, TacticalRole.CenterBack,
-                new Vector3(0f, 0f, 2f), Vector3.Zero, 0.9f)
+                new Vector3(0f, 0f, 2.4f), Vector3.Zero, 0.9f)
         },
         TeamProfile = TeamTacticalProfile.PossessionControl,
         SelfTendencies = new PlayerTendencies(),

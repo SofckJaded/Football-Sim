@@ -139,7 +139,14 @@ public sealed class ReceptionValueModelTests
 
         ReceptionValueTerms terms = Model.Evaluate(observation, 9, point, 0.2f);
 
-        Assert.Equal(ActionValueScale.ShotConversion(distance, 1f), terms.ShootingChance01, precision: 3);
+        // A9.6d: the conversion also prices the visible goal-mouth angle now, so the reference must compute
+        // the angle from this point — still one estimate, shared with the shot model.
+        Vector2 nearPost = new(Pitch.HalfLength, Pitch.HalfGoalWidth);
+        Vector2 farPost = new(Pitch.HalfLength, -Pitch.HalfGoalWidth);
+        float mouthAngle = MathF.Acos(Math.Clamp(Vector2.Dot(
+            Vector2.Normalize(nearPost - point), Vector2.Normalize(farPost - point)), -1f, 1f)) * (180f / MathF.PI);
+
+        Assert.Equal(ActionValueScale.ShotConversion(distance, 1f, mouthAngle), terms.ShootingChance01, precision: 3);
     }
 
     /// <summary>

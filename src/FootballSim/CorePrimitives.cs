@@ -577,12 +577,25 @@ public enum TeamId
 /// candidate, reach, contact, allocator or second tactical model is added — a style is a set of stated
 /// preferences on the one pipeline. Trajectories differ from version 51 wherever a team's directness is not
 /// 0.50.</item>
+/// <item><c>AiBehaviour 53</c> — A9.6, the rendered-review fixes. (1) A carry prices the contact it is about to
+/// take: the one A2.4 pressure estimate is read at the carrier's feet and subtracted from the carry's gain, a
+/// shield gains a contact bonus and stays offered while a defender is on him, and a pinned carrier gains a
+/// hold-up direction away from the presser. (2) The carrier's pass preference is computed from where the ball
+/// lands, not from where the receiver stands, and a run pass's lead is aimed at the open patch beside the
+/// runner's heading. (3) A carry direction now values forward progress, so the emptiest flank no longer wins
+/// every time, and a winger outside the final third drives into the half-space instead of at the touchline.
+/// (4) A final-third ball keeps the depth duty alive as a box arrival, and the far-side winger can attack the
+/// far post, so a cross or cutback has an announced target. (5) AI shots are placed at a power band that stays
+/// under the execution model's bar, priced by the visible goal-mouth angle, and a ~0.55 s recovery stops the
+/// rebound of a parry being re-shot. All of it is candidate/scoring and duty-level — no new model, allocator,
+/// channel or second pipeline. Trajectories differ from version 52 wherever a carrier, winger or shooter
+/// decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 52;
+    public const int AiBehaviour = 53;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

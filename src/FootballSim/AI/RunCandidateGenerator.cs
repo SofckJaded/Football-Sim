@@ -383,7 +383,9 @@ public sealed class RunCandidateGenerator
             case TacticalJob.FarSideWidth:
                 buffer[0] = RunKind.HoldWidth;
                 buffer[1] = RunKind.InBehind;
-                buffer[2] = RunKind.CheckShort;
+                // A9.6c: the far-side winger attacks the far post off a wide carrier, so a delivery has a second
+                // announced target beside the depth duty's box arrival. The hold-width and decoy kinds stay.
+                buffer[2] = RunKind.BlindSideArrival;
                 buffer[3] = RunKind.Decoy;
                 return 4;
 

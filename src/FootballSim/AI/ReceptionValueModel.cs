@@ -184,7 +184,18 @@ public sealed class ReceptionValueModel
         {
             float shotLane = CandidateGenerator.EvaluateLaneClearance(
                 arrivalPointXZ, opponentGoalXZ, obs.VisiblePlayers, obs.SelfTeam);
-            shootingChance = ActionValueScale.ShotConversion(toGoal, shotLane);
+            // A9.6d: the same goal-mouth angle a shot from this point would see. A reception at the byline is
+            // not a shooting chance just because it is close to the goal — one conversion estimate, not two.
+            Vector2 toNearPost = new Vector2(opponentGoalXZ.X, _pitch.HalfGoalWidth) - arrivalPointXZ;
+            Vector2 toFarPost = new Vector2(opponentGoalXZ.X, -_pitch.HalfGoalWidth) - arrivalPointXZ;
+            float mouthAngle = 180f;
+            if (toNearPost.LengthSquared() > 1e-6f && toFarPost.LengthSquared() > 1e-6f)
+            {
+                float cosine = Math.Clamp(
+                    Vector2.Dot(Vector2.Normalize(toNearPost), Vector2.Normalize(toFarPost)), -1f, 1f);
+                mouthAngle = MathF.Acos(cosine) * (180f / MathF.PI);
+            }
+            shootingChance = ActionValueScale.ShotConversion(toGoal, shotLane, mouthAngle);
         }
 
         float pressure = Clamp01(1f - receptionPressure01);
