@@ -159,6 +159,31 @@ public sealed class PassSuccessModel
     public const float MinCompletion01 = 0.02f;
 
     /// <summary>
+    /// AUD-06 (audit 2026-11-22): completion ceiling when the lane is physically blocked. The driven ball
+    /// carries no raised-ball escape: it is struck flat and fast, so a body the height-aware lane test finds
+    /// in its path has the ball at playable height for most of the flight. It therefore takes the cap the
+    /// ground estimate has always applied — the driven case intentionally mirrors the ground ball.
+    /// </summary>
+    public const float BlockedLaneCompletionCap01 = 0.05f;
+
+    /// <summary>
+    /// AUD-06: share of a raised delivery's control charge that survives a body the height-aware lane test can
+    /// play. A lofted or whipped ball climbs and can clear a body that stands near the launch or under the
+    /// early flight — the flagged defender is a contest, not a wall — so it keeps half of its control share
+    /// rather than the near-zero a blocked ground or driven ball takes. (The driven case deliberately mirrors
+    /// the ground cap; see <see cref="BlockedLaneCompletionCap01"/>.)
+    /// </summary>
+    public const float BlockedRaisedControlShare01 = 0.5f;
+
+    /// <summary>
+    /// AUD-06: completion ceiling for a blocked <b>lofted</b> or <b>whipped</b> delivery — half of that
+    /// profile's own control share. Deliberately above <see cref="CandidateGenerator.MinViableCompletion01"/>
+    /// so the documented A4 case (a blocked ground lane whose raised alternative is the only route to the same
+    /// receiver) is still offered, while the ~0.60 a blocked raised ball used to report is impossible.
+    /// </summary>
+    public const float BlockedRaisedCompletionCap01 = AirborneControl01 * BlockedRaisedControlShare01;
+
+    /// <summary>
     /// Ceiling on the reported probability. Even a perfect pass can be mis-controlled or miss its
     /// target, and the execution layer's own error terms are charged at the contact, not here.
     /// </summary>
@@ -394,7 +419,7 @@ public sealed class PassSuccessModel
         }
 
         bool blocked = IsLaneBlocked(plan, obs);
-        if (blocked) completion = MathF.Min(completion, 0.05f);
+        if (blocked) completion = MathF.Min(completion, BlockedLaneCompletionCap01);
 
         return new PassSuccessTerms(
             CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01),
@@ -516,6 +541,7 @@ public sealed class PassSuccessModel
         }
 
         float defenderTerm = 1f;
+        float defenderUncertaintySeconds = 0f;
         float horizon = MathF.Max(flight + DefenderHorizonSlackSeconds, 1f);
         float defenderScale = profile == RaisedPassProfile.Driven
             ? DefenderMarginScaleSeconds
@@ -526,24 +552,54 @@ public sealed class PassSuccessModel
             ReachEstimate reach = TimeToReachModel.ToPoint(
                 ReachKinematics.FromEntity(entity), landing, horizon);
             float arrival = (reach.Reachable ? reach.Seconds : horizon) + OpponentReactionSeconds;
-            float term = Math.Clamp(0.5f + (arrival - flight) / defenderScale, 0f, 1f);
-            if (term < defenderTerm) defenderTerm = term;
+
+            // AUD-06 (audit 2026-11-22): the ground estimate charges a remembered defender's positional
+            // uncertainty against the pass; this one did not, so a stale sighting of a defender at the
+            // landing read exactly as safe as a fresh one. Same clamp, same direction: the defender may be
+            // nearer than remembered, so he is charged as if he can be there earlier.
+            float uncertainty = Math.Clamp(
+                entity.PositionUncertaintyMeters * UncertaintyArrivalSecondsPerMeter, 0f, MaxUncertaintySeconds);
+            float effective = arrival - uncertainty;
+
+            float term = Math.Clamp(0.5f + (effective - flight) / defenderScale, 0f, 1f);
+            if (term < defenderTerm)
+            {
+                defenderTerm = term;
+                defenderUncertaintySeconds = uncertainty;
+            }
         }
 
-        float lane = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
-
-        // A5.5: the ground lane clearance is the wrong question for a ball two to four metres up. Every
-        // raised profile is judged from the calibrated height profile instead — a defender only blocks if
-        // the ball is low enough to be played where he stands. A driven ball is low at the point it passes
-        // most defenders, which is exactly why it needs a lane, and the test says so.
+        // AUD-06: the clamped caller metric is no longer dead. A5.5 is right that the ground lane clearance is
+        // the wrong question for a ball two to four metres up — so the height-aware test above still decides
+        // whether the ball is playable at all — but "not blocked" is not the same as "open": a driven ball is
+        // struck flat and stays in the ground corridor, so its caller clearance is charged exactly as the
+        // ground estimate charges it; a lofted or whipped ball is above the corridor where the height test
+        // says so, and the corridor can only trim its lane term by the model's own lane weight.
+        float laneClearance = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
         bool laneBlocked = IsAirborneLaneBlocked(
             selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam);
-        lane = laneBlocked ? 0f : 1f;
+        float lane = laneBlocked
+            ? 0f
+            : profile == RaisedPassProfile.Driven
+                ? laneClearance
+                : 1f - LaneWeight * (1f - laneClearance);
 
         float control = profile == RaisedPassProfile.Driven ? DrivenControl01 : AirborneControl01;
         float completion = receiverTerm
                            * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane)
                            * control;
+
+        // AUD-06: a body the height-aware test found where the ball is low enough to be played is a real
+        // interception, so a blocked raised ball is near-zero rather than losing only its 30 % lane term. A
+        // driven ball is flat for most of its flight and takes the ground cap; a lofted or whipped ball keeps
+        // the small chance that it clears the man.
+        if (laneBlocked)
+        {
+            float blockedCap = profile == RaisedPassProfile.Driven
+                ? BlockedLaneCompletionCap01
+                : BlockedRaisedCompletionCap01;
+            completion = MathF.Min(completion, blockedCap);
+        }
 
         return new LoftedPassTerms(
             Feasible: true,
@@ -557,7 +613,9 @@ public sealed class PassSuccessModel
             LandingXZ = landing,
             TargetXZ = targetXZ,
             Profile = profile,
-            LaneBlocked = laneBlocked
+            LaneBlocked = laneBlocked,
+            LaneClearance01 = laneClearance,
+            DefenderUncertaintySeconds = defenderUncertaintySeconds
         };
     }
 
@@ -809,6 +867,19 @@ public readonly record struct LoftedPassTerms(
     /// for a raised ball that it asks for a ground one (L8).
     /// </summary>
     public bool LaneBlocked { get; init; }
+
+    /// <summary>
+    /// The caller's ground lane clearance, clamped to 0..1, as used by the estimate (AUD-06). Published so a
+    /// trace can show that the metric the caller paid to compute reached the completion instead of being
+    /// overwritten by the block flag.
+    /// </summary>
+    public float LaneClearance01 { get; init; }
+
+    /// <summary>
+    /// Worst-case arrival time the estimate deducted from the closest defender for a stale sighting, in
+    /// seconds (AUD-06). Zero when every visible opponent was freshly seen.
+    /// </summary>
+    public float DefenderUncertaintySeconds { get; init; }
 
     /// <summary>No raised route to this receiver: out of the model's band, or landing too far away.</summary>
     public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);

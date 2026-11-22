@@ -89,8 +89,17 @@ public sealed class TeamBelief
                     entity.ObservedAgeTicks,
                     entity.Confidence01);
 
+                // AUD-04 (audit 2026-11-22): age alone used to decide the keep, so when the goalkeeper and a
+                // close outfield defender both saw the same opponent on this tick (both AgeTicks == 0) the
+                // first observer in squad order won — and InitializeSquads always inserts the goalkeeper
+                // first. The keeper's sighting is the noisiest one the team has (long range, Confidence01
+                // near its floor), so every team-level consumer read his coordinates instead of the
+                // defender's. An equal-age sighting now replaces the stored one only when it is strictly
+                // more confident. Equal age *and* confidence keeps the first sighting, which is squad order
+                // and therefore deterministic.
                 if (_byId.TryGetValue(seen.PlayerId, out Opponent existing) &&
-                    existing.AgeTicks <= seen.AgeTicks)
+                    (existing.AgeTicks < seen.AgeTicks ||
+                     (existing.AgeTicks == seen.AgeTicks && existing.Confidence01 >= seen.Confidence01)))
                 {
                     continue;
                 }

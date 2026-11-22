@@ -200,9 +200,15 @@ public sealed class LocalPressureField
 
         // Insertion into a tiny fixed array: the five nearest opponents by distance to the centre. No
         // per-build collection and no LINQ in a path that runs for every decision.
+        //
+        // AUD-09 (audit 2026-11-22): opposing goalkeepers used to be skipped here, so a keeper sweeping or
+        // rushing out had zero local pressure and a carrier probing the space he was closing into read it as
+        // empty ground. Keepers are included now; the arrival kernel already excludes one parked on his own
+        // goal line because he cannot reach any cell inside the horizon, and the MaxOpponents clamp keeps the
+        // per-cell loop exactly the same size.
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
         {
-            if (entity.Team == obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
+            if (entity.Team == obs.SelfTeam) continue;
 
             Vector2 positionXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
             float distance = Vector2.Distance(positionXZ, centreXZ);
