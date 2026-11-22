@@ -145,11 +145,31 @@ public static class ActionValueScale
     /// </summary>
     public const float CarryContactRiskCost = 0.45f;
 
-    /// <summary>Nearest-opponent distance at which contact risk starts, in metres.</summary>
-    public const float ContactRiskMeters = 2.2f;
+    // AIB-01 (audit 2026-11-22): the risk is the tackle arriving, not the static distance. The old curve
+    // only started inside ContactRiskMeters = 2.2 m and ramped over 1.0 m, so at 2.3 m a defender closing at
+    // 8 m/s — 0.13 s from tackle reach — cost the carry exactly nothing, and a sprinting presser crossed the
+    // whole ring in the 0.18 s the carrier was committed to his carry (report §1). The two constants below
+    // price the carry from the same local-pressure arrival estimate the rest of the file already builds:
+    // zero at ContactRiskArrivalSeconds, full at ContactRiskFullArrivalSeconds.
 
-    /// <summary>Distance over which the contact risk ramps from zero to its full cost, in metres.</summary>
-    public const float ContactRiskRampMeters = 1.0f;
+    /// <summary>Opponent arrival time, in seconds, at which carry contact risk starts.</summary>
+    /// <remarks>
+    /// Half a second is the calibrated line: a sprinting presser at 8 m/s arrives from 4.5 m in ~0.3 s and
+    /// pays real risk, while a settled build-up (a defender ~2.5 m away who is not closing) estimates at
+    /// ~0.55 s and keeps its sequence. The old 2.2 m ring charged nothing at all for the presser.
+    /// </remarks>
+    public const float ContactRiskArrivalSeconds = 0.50f;
+
+    /// <summary>Opponent arrival time, in seconds, at which the full contact risk applies.</summary>
+    public const float ContactRiskFullArrivalSeconds = 0.22f;
+
+    /// <summary>
+    /// Opponent arrival time, in seconds, below which the early-carry bonus is not paid (AIB-01): the tempo
+    /// bonus paid for driving into a touch is exactly the wrong advice once the contact-risk window is open.
+    /// Equal to <see cref="ContactRiskArrivalSeconds"/> so "risk is being charged" and "bonus is withdrawn"
+    /// are the same statement.
+    /// </summary>
+    public const float CarryEarlySuppressArrivalSeconds = 0.50f;
 
     /// <summary>Weight on shielding the ball at the base of the range.</summary>
     public const float ShieldBaseValue = 0.30f;
@@ -178,8 +198,8 @@ public static class ActionValueScale
     /// <summary>
     /// What scoring is worth in possession units. Higher than any reception because a goal ends the
     /// attack. Calibrated so that a plausible chance beats the carry and pass alternatives that sit at
-    /// 0.8–1.2: with the conversion curve, a clear sight of goal from eight metres (conversion ≈ 0.35) is
-    /// worth ≈ 2.2 here, and a covered shot from twenty metres (≈ 0.12) is worth ≈ 0.3.
+    /// 0.8–1.2: with the conversion curve, a clear sight of goal from eight metres (conversion ≈ 0.42) is
+    /// worth ≈ 2.6 here, and a heavily covered shot from twenty metres (≈ 0.15) is worth ≈ 0.54.
     /// </summary>
     public const float GoalValue = 7.0f;
 
@@ -190,7 +210,13 @@ public static class ActionValueScale
     public const float ShotMissCost = 0.60f;
 
     /// <summary>Conversion baseline just outside the six-yard box, as a probability.</summary>
-    public const float ShotConversionNear = 0.42f;
+    /// <remarks>
+    /// AIB-05: raised from 0.42 to 0.46. The audit's arithmetic had a clear in-box chance losing to a 96 %
+    /// backward recycle pass (§5): conversion × 7 lost to 0.89 because the finish curve undervalued the
+    /// close-range chance by both the mouth-angle discount and this baseline. The curve still bottoms out at
+    /// <see cref="ShotConversionFar"/>, so a covered twenty-metre shot remains cheap.
+    /// </remarks>
+    public const float ShotConversionNear = 0.46f;
 
     /// <summary>Conversion at the edge of the shooting range, as a probability.</summary>
     public const float ShotConversionFar = 0.10f;
@@ -215,8 +241,17 @@ public static class ActionValueScale
     // one thing the execution layer cannot infer: how much of the goal the shooter can actually see.
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>Goal-mouth angle at which the whole goal is visible and the angle costs nothing, in degrees.</summary>
-    public const float ShotMouthAngleFullDegrees = 30f;
+    /// <summary>
+    /// Goal-mouth angle, in degrees, at which the whole goal is visible and the angle costs nothing.
+    /// </summary>
+    /// <remarks>
+    /// AIB-05: lowered from 30° to 19°. The full 7.32 m goal subtends only ~25° from dead centre at the edge
+    /// of the penalty box, so the 30° threshold discounted every central shot from inside the box (0.83× at
+    /// 16.5 m, 0.72× from (39, 9)) for not seeing more goal than the pitch geometrically allows. At 19° a
+    /// central edge-of-box finish pays no angle tax, while a true byline sliver (&lt;12°) is still penalised
+    /// and the <see cref="ShotMouthAngleFloor"/> keeps it from being worth nothing.
+    /// </remarks>
+    public const float ShotMouthAngleFullDegrees = 19f;
 
     /// <summary>Floor on the goal-mouth angle factor, so a sliver of a goal is not worth literally nothing.</summary>
     public const float ShotMouthAngleFloor = 0.25f;
@@ -275,6 +310,18 @@ public static class ActionValueScale
     /// </summary>
     public const float ProgressBonus = 0.35f;
 
+    /// <summary>
+    /// Bounded territory-loss preference charged to a backward recycle pass when the same decision already
+    /// offered a forward pass (AIB-06a).
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ProgressBonus"/> alone left a 96 %-complete backward ball at ~0.89 and a realistic 75 %
+    /// progressive ball at ~0.74 in midfield (report §6.3), so sterile circulation still won. This is paid
+    /// once, only when a forward option actually exists in the candidate set, and only on a ball whose aim
+    /// point is behind the carrier — a safe outlet under pressure with nothing ahead pays nothing.
+    /// </remarks>
+    public const float BackwardTerritoryCost = 0.12f;
+
     // ---------------------------------------------------------------------------------------------
     // A7.2 — team-call preferences.
     //
@@ -294,6 +341,17 @@ public static class ActionValueScale
 
     /// <summary>Preference added to a pass after a man-on call: the bounce / first-time return.</summary>
     public const float CallBouncePassBonus = 0.12f;
+
+    /// <summary>
+    /// Longest backward ball, in metres, that can still collect <see cref="CallBouncePassBonus"/> (AIB-06a).
+    /// </summary>
+    /// <remarks>
+    /// The man-on bonus is for the short first-time return out of pressure, not for a long backward launch.
+    /// Report §6.4 measured 14,347 man-on calls a match and noted that the ball with the highest completion —
+    /// the deepest, clearest backward one — collected the bonus most reliably. A pass that loses ground and
+    /// travels further than this is not the bounce the call is about, so it does not collect it.
+    /// </remarks>
+    public const float CallBouncePassMaxMeters = 14f;
 
     /// <summary>Preference removed from a carry after a man-on call: turning into the pressure.</summary>
     public const float CallCarryPenalty = 0.22f;

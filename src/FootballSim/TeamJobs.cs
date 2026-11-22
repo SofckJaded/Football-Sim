@@ -122,6 +122,21 @@ public sealed class TeamJobCoordinator : IAiStateResettable
     private const float MaxProtectorTravelMeters = 20f;
 
     /// <summary>
+    /// AIB-3: attack-relative projection of the ball/carrier from which the final-third box duties are in
+    /// play, in metres. The same threshold places the box-run target (the A9.6c/AUD-02 rule) and expands the
+    /// depth-run cap from one runner to the near-post/far-post pair, so "two box runners" cannot quietly mean
+    /// "two runners anywhere in the opposition half".
+    /// </summary>
+    public const float BoxRunReferenceProjX = 30f;
+
+    /// <summary>
+    /// AIB-3: lateral lane of the second box runner's target, in metres. The first runner keeps his own lane
+    /// (or the far half-space from the ball when he is central); the second attacks the opposite post, so the
+    /// pair is a near-post/far-post split rather than two players attacking the same region.
+    /// </summary>
+    public const float BoxRunPostLaneMeters = 8f;
+
+    /// <summary>
     /// How much better a refined job region has to score before the duty's nominal target is moved
     /// (A3.4). Without a margin the probe would follow the score's noise and the anchor would jitter.
     /// </summary>
@@ -142,6 +157,15 @@ public sealed class TeamJobCoordinator : IAiStateResettable
 
     /// <summary>Handovers allowed per assignment pass. One, so the line can absorb it without cascading.</summary>
     private const int MaxHandoversPerPass = 1;
+
+    /// <summary>
+    /// AIB-3: how far behind the believed line a <see cref="TacticalJob.DepthRun"/>'s refined region may sit,
+    /// in metres. A depth run's nominal target is already "the box, never behind the ball being delivered"
+    /// (AUD-02); the local region search could still retreat it twelve metres into the space in front of the
+    /// box when the box itself was crowded — the exact moment the box presence is needed — so the refinement
+    /// gets this floor instead of leaving the duty as a midfield station.
+    /// </summary>
+    private const float DepthRunRefineLineMarginMeters = 6f;
 
     /// <summary>How many handover events the log keeps, so a match cannot grow it without limit.</summary>
     public const int MaxHandoverLogEntries = 128;
@@ -209,6 +233,15 @@ public sealed class TeamJobCoordinator : IAiStateResettable
     /// decision path reads it.
     /// </summary>
     private float _attackingWidthTargetMeters;
+
+    /// <summary>
+    /// AIB-3: the attacking context of the team pass currently being assigned — whether that team has the
+    /// ball and where the reference point (carrier, or the ball) is in attack-relative projection. The duty
+    /// caps are a function of these, so a final-third box-attacking mix is allowed without raising a global
+    /// constant that would also spend the second runner during the build-up.
+    /// </summary>
+    private bool _assigningInPossession;
+    private float _assigningReferenceProjX;
 
     /// <summary>The rest-defence picture from each team's last in-possession pass (A3.6).</summary>
     private readonly Dictionary<TeamId, RestDefence> _security = new();
@@ -472,6 +505,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
                       (0.55f + 0.45f * Math.Clamp(profile.AttackingWidth01, 0f, 1f));
         _attackingWidthTargetMeters = wideZ;
         bool inPossession = possessingTeam == team;
+        _assigningInPossession = inPossession;
 
         // A6.4: the team's answer to the turnover is decided before anything is placed from it, because the
         // line band and the marking mix are both consequences of that one answer.
@@ -501,6 +535,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         Vector2 referenceXZ = carrier is null
             ? ballXZ
             : new Vector2(carrier.Position.X, carrier.Position.Z);
+        _assigningReferenceProjX = referenceXZ.X * attackDirX;
 
         // Drop assignments for players who left the pitch.
         List<int>? stale = null;
@@ -644,58 +679,74 @@ public sealed class TeamJobCoordinator : IAiStateResettable
             // when the ball reaches the byline — the ball IS the deepest point — so the one duty that may run a
             // box arrival was withdrawn at the moment a delivery target was needed. A final-third ball now also
             // asks for the box run; the rest-defence allowance still decides whether the side can afford it.
-            bool boxRunPossible = referenceProj >= 30f;
+            bool boxRunPossible = referenceProj >= BoxRunReferenceProjX;
             bool depthRunPossible = forwardCommitted < forwardAllowance &&
                                     (boxRunPossible ||
                                      (offsideLineProj - referenceProj > 4f && offsideLineProj > 10f));
 
-            bool TryDepthRun() => AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents,
-                referenceXZ, attackDirX, offsideLineProj, tick, player =>
-                {
-                    if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
-                        return null;
-
-                    if (boxRunPossible)
+            // AIB-3: one depth duty used to be the whole answer, so an attack had a single box presence and the
+            // carrier had at most one announced arrival to deliver to. A final-third ball may now send two
+            // runners — the pair attacks opposite posts (the second runner's lane is forced by the caller once
+            // the first one's is known) — while the rest-defence allowance still pays for each of them.
+            bool TryDepthRun(float postLaneZ, out Vector2 assignedAnchor) =>
+                AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents,
+                    referenceXZ, attackDirX, offsideLineProj, tick, player =>
                     {
-                        // A9.6c: a box arrival, not a generic depth run — 11 m from the goal line (the
-                        // penalty-spot area), in the player's own lane but pulled to the far half-space from
-                        // the ball so a wide carrier has somebody to cross to.
-                        //
-                        // AUD-02: the nominal 11 m from the goal line is 41.5 m on a 105 m pitch, and the
-                        // attack-target guard in AssignUniqueJob rejects a target more than 2 m beyond the
-                        // believed line. A defensive line normally holds below 39.5 m once the ball is in the
-                        // final third, so the box arrival was hard-rejected for every candidate and no
-                        // DepthRun was assigned at all. Clamp the projection to the onside budget, and never
-                        // deepen it behind the ball that is being delivered.
-                        float boxLaneZ = player.TacticalAnchor == Vector3.Zero
+                        if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
+                            return null;
+
+                        if (boxRunPossible)
+                        {
+                            // A9.6c: a box arrival, not a generic depth run — 11 m from the goal line (the
+                            // penalty-spot area), in the player's own lane but pulled to the far half-space from
+                            // the ball so a wide carrier has somebody to cross to.
+                            //
+                            // AUD-02: the nominal 11 m from the goal line is 41.5 m on a 105 m pitch, and the
+                            // attack-target guard in AssignUniqueJob rejects a target more than 2 m beyond the
+                            // believed line. A defensive line normally holds below 39.5 m once the ball is in the
+                            // final third, so the box arrival was hard-rejected for every candidate and no
+                            // DepthRun was assigned at all. Clamp the projection to the onside budget, and never
+                            // deepen it behind the ball that is being delivered.
+                            float boxLaneZ = player.TacticalAnchor == Vector3.Zero
+                                ? player.Position.Z
+                                : player.TacticalAnchor.Z;
+                            float farSideSign = referenceXZ.Y >= 0f ? -1f : 1f;
+                            float boxZ = float.IsNaN(postLaneZ)
+                                ? MathF.Abs(boxLaneZ) > 4f ? boxLaneZ : farSideSign * 7f
+                                : postLaneZ;
+                            boxZ = Math.Clamp(boxZ, -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
+                            float boxProj = MathF.Max(referenceProj,
+                                MathF.Min(_pitch.HalfLength - 11f, offsideLineProj - 1.5f));
+                            return new Vector2(attackDirX * boxProj, boxZ);
+                        }
+
+                        float runProj = MathF.Max(2f, MathF.Min(offsideLineProj - 1.5f,
+                            MathF.Max(referenceProj + 8f, offsideLineProj - 6f)));
+
+                        // Run in the player's own lane (their formation anchor), not wherever they
+                        // happen to have drifted: a winger must stay wide while running in behind.
+                        float laneZ = player.TacticalAnchor == Vector3.Zero
                             ? player.Position.Z
                             : player.TacticalAnchor.Z;
-                        float farSideSign = referenceXZ.Y >= 0f ? -1f : 1f;
-                        float boxZ = Math.Clamp(
-                            MathF.Abs(boxLaneZ) > 4f ? boxLaneZ : farSideSign * 7f,
-                            -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
-                        float boxProj = MathF.Max(referenceProj,
-                            MathF.Min(_pitch.HalfLength - 11f, offsideLineProj - 1.5f));
-                        return new Vector2(attackDirX * boxProj, boxZ);
-                    }
-
-                    float runProj = MathF.Max(2f, MathF.Min(offsideLineProj - 1.5f,
-                        MathF.Max(referenceProj + 8f, offsideLineProj - 6f)));
-
-                    // Run in the player's own lane (their formation anchor), not wherever they
-                    // happen to have drifted: a winger must stay wide while running in behind.
-                    float laneZ = player.TacticalAnchor == Vector3.Zero
-                        ? player.Position.Z
-                        : player.TacticalAnchor.Z;
-                    float z = Math.Clamp(laneZ, -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
-                    return new Vector2(attackDirX * runProj, z);
-                }, baseScore: 0.05f);
+                        float z = Math.Clamp(laneZ, -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
+                        return new Vector2(attackDirX * runProj, z);
+                    }, baseScore: 0.05f, out assignedAnchor);
 
             // AUD-02 (recommendation): with the ball in the final third the box arrival is offered before
             // the support duties. An outlet or far-side width job is held for MinimumHoldTicks once
             // assigned, so handing those out first is what kept a forward locked away from the box.
-            if (depthRunPossible && boxRunPossible && TryDepthRun())
+            if (depthRunPossible && boxRunPossible && TryDepthRun(float.NaN, out Vector2 firstBoxAnchor))
+            {
                 forwardCommitted++;
+
+                // AIB-3: the second runner is the near/far-post split, and the rest-defence allowance is
+                // what buys him: with the side secure two runners go, with only marginal cover one does.
+                if (forwardCommitted < forwardAllowance &&
+                    TryDepthRun(OppositeBoxPostLaneMeters(firstBoxAnchor.Y), out _))
+                {
+                    forwardCommitted++;
+                }
+            }
 
             AssignUniqueJob(available, counts, taken, TacticalJob.NearOutlet, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 player =>
@@ -723,7 +774,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
 
             // Behind the line, a depth run is the answer only when the box arrival above did not apply:
             // the final third's first refusal is a box arrival (AUD-02).
-            if (depthRunPossible && !boxRunPossible && TryDepthRun())
+            if (depthRunPossible && !boxRunPossible && TryDepthRun(float.NaN, out _))
                 forwardCommitted++;
 
             if (forwardCommitted < forwardAllowance &&
@@ -1349,8 +1400,30 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         float offsideLineProj,
         int tick,
         Func<FootballerState, Vector2?> anchorFactory,
-        float baseScore = 0f)
+        float baseScore = 0f) =>
+        AssignUniqueJob(available, counts, taken, job, opponents, referenceXZ, attackDirX, offsideLineProj,
+            tick, anchorFactory, baseScore, out _);
+
+    /// <summary>
+    /// The same duty assignment, also reporting the refined anchor it was given. AIB-3 needs it for the
+    /// near/far-post split: the second box runner's target is derived from the first runner's lane, so the
+    /// allocator has to know where the first one was actually placed rather than where it asked him to go.
+    /// </summary>
+    private bool AssignUniqueJob(
+        List<FootballerState> available,
+        Dictionary<TacticalJob, int> counts,
+        HashSet<int> taken,
+        TacticalJob job,
+        TeamBelief opponents,
+        Vector2 referenceXZ,
+        float attackDirX,
+        float offsideLineProj,
+        int tick,
+        Func<FootballerState, Vector2?> anchorFactory,
+        float baseScore,
+        out Vector2 assignedAnchor)
     {
+        assignedAnchor = default;
         if (counts.GetValueOrDefault(job) >= MaxPerJob(job)) return false;
 
         bool attackingJob = IsAttackingJob(job);
@@ -1401,6 +1474,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         taken.Add(best.Id);
         available.Remove(best);
         counts[job] = counts.GetValueOrDefault(job) + 1;
+        assignedAnchor = anchor;
         return true;
     }
 
@@ -1463,6 +1537,17 @@ public sealed class TeamJobCoordinator : IAiStateResettable
             candidate = ClampToPitch(candidate);
             if (attackingJob) candidate = Onside(candidate, offsideLineProj - 1.5f, attackDirX);
 
+            // AIB-3: a depth run's region is the attack's box presence. The probes may widen it or take it
+            // closer to the line, but they may not retreat it behind the ball and away from the last line: with
+            // a crowded box the space term alone moved the runner twelve metres back out of it, which is the
+            // fear of the box this task removes.
+            if (job == TacticalJob.DepthRun)
+            {
+                float floorProj = MathF.Max(referenceXZ.X * attackDirX,
+                    offsideLineProj - DepthRunRefineLineMarginMeters);
+                candidate.X = attackDirX * MathF.Max(candidate.X * attackDirX, floorProj);
+            }
+
             // A probe may move the target, but it may not slide it onto a teammate's target: below this
             // floor the staggering term alone can lose to connection and lane openness, and the duty is
             // then no longer a position of its own.
@@ -1520,13 +1605,32 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         _assignedRegions.Add(new AssignedRegion(playerId, region));
     }
 
-    private static int MaxPerJob(TacticalJob job) => job switch
+    /// <summary>
+    /// How many players may hold a job in this pass, before the per-pass marker cap is applied. Every duty is
+    /// one player except the line (a back four) and the context-aware depth-run cap: <see cref="TacticalJob.DepthRun"/>
+    /// doubles in the final third (AIB-3) so the attack can split the posts, and it goes back to one the moment
+    /// the ball leaves the final third or the team loses it. The cap is still spent against the rest-defence
+    /// forward allowance where the duties are handed out, so a raise here cannot strip the cover behind the ball.
+    /// </summary>
+    private int MaxPerJob(TacticalJob job) => job switch
     {
         TacticalJob.Shape => 64,
         TacticalJob.DefensiveLine => 4,
         TacticalJob.Marker => 3,
+        TacticalJob.DepthRun => _assigningInPossession && _assigningReferenceProjX >= BoxRunReferenceProjX
+            ? 2
+            : 1,
         _ => 1
     };
+
+    /// <summary>
+    /// AIB-3: the lateral lane of the second box runner's target, given the first runner's lane, in metres.
+    /// The pair attacks opposite posts, so the two announced arrivals are complementary rather than a crowd:
+    /// a first runner on the far post or down the middle sends the second to the near post and vice versa.
+    /// Pure, so the split rule is checkable without running the allocator.
+    /// </summary>
+    public static float OppositeBoxPostLaneMeters(float firstPostZ) =>
+        (firstPostZ >= 0f ? -1f : 1f) * BoxRunPostLaneMeters;
 
     /// <summary>
     /// How many players may hold a job in this pass. Markers are the one duty whose number is a style

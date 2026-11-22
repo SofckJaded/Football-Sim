@@ -46,6 +46,20 @@ public readonly record struct PassSuccessTerms(
 
     /// <summary>The runner's own confidence in the advertised meeting (0 when nothing was promised).</summary>
     public float PromisedConfidence01 { get; init; }
+
+    /// <summary>
+    /// AIB-02b: additional defenders beyond the first whose arrival window overlapped the ball's, clamped
+    /// to <see cref="PassSuccessModel.MaxCongestionExtraDefenders"/>. Zero when the reception is a
+    /// one-on-one. Published so a decision trace can say how much of the completion the crowd cost.
+    /// </summary>
+    public int CongestionExtraDefenders { get; init; }
+
+    /// <summary>
+    /// AIB-02b: the bounded multiplier those extra defenders applied to the completion,
+    /// <c>1 − DefenderCongestionStep01 × CongestionExtraDefenders</c> (1 when none). Set by every feasible
+    /// estimate; a default-constructed term reports 0, not 1.
+    /// </summary>
+    public float CongestionFactor01 { get; init; }
 }
 
 /// <summary>
@@ -127,10 +141,17 @@ public sealed class PassSuccessModel
     public const float OpponentReactionSeconds = 0.25f;
 
     /// <summary>
-    /// Pace at which an opponent can start closing a lane even when their current run is elsewhere
-    /// (a turn plus the first steps), on top of any closing speed they already carry.
+    /// AIB-02a (audit 2026-11-22): the step-in test is a <see cref="TimeToReachModel"/> query against the
+    /// nearest point of the lane, not a flat turn speed. The removed constant was
+    /// <c>LaneTurnSpeed = 1.5 m/s</c>: it modelled a defender who has noticed the pass as able to close
+    /// the lane at only 1.5 m/s on top of their own run, so over a 1.0 s flight a *stationary* defender
+    /// covered <c>0.90 + 1.5 × 0.75 = 2.02 m</c> when the locomotion model gives him
+    /// <c>0.5 × (6.8 × 1.15) × 0.75² ≈ 2.20 m</c> of acceleration before turn cost plus the real ~1.24 m
+    /// receive reach. The reach
+    /// model already owns acceleration, turn cost, current velocity and contact reach (its own doc: "one
+    /// reach model"), so the second estimate is gone rather than re-tuned.
     /// </summary>
-    public const float LaneTurnSpeed = 1.5f;
+    public const float LaneStepInReachMeters = 1.22f;
 
     /// <summary>
     /// Largest gap the ball may travel between two lane samples, in metres. The lane test asks "does the
@@ -148,6 +169,28 @@ public sealed class PassSuccessModel
 
     /// <summary>Seconds of defender margin at which the arrival term is neutral (0.5).</summary>
     public const float DefenderMarginScaleSeconds = 0.50f;
+
+    /// <summary>
+    /// AIB-02b (audit 2026-11-22): share of the completion charged for one <b>additional</b> defender who
+    /// can also be at the arrival point around the time the ball is.
+    ///
+    /// The estimate used to take only the single worst defender (<c>effective &lt; defenderArrival</c>), so
+    /// three defenders clustered around the reception scored exactly like one — the audit's "passes
+    /// through 2–3 defenders". A defender counts as congestion when his arrival is at most one arrival
+    /// scale after the ball (half a second for a ground pass; a full second for the raised alternative,
+    /// whose arrival scale is widened by <see cref="AirborneContestScale"/>). The term is deliberately small
+    /// and bounded: crowding is a real cost (a second man can take the loose ball, block the receive, or
+    /// press the first touch), but it is not a second completion model, and the corridor itself is already
+    /// charged by the caller's lane metric.
+    /// </summary>
+    public const float DefenderCongestionStep01 = 0.12f;
+
+    /// <summary>
+    /// AIB-02b: most additional defenders charged as congestion. Two is enough to separate one man from a
+    /// crowd (one extra ⇒ ×0.88, two or more ⇒ ×0.76) without letting a crowded lane drive a pass that the
+    /// lane and arrival terms already price as ordinary to zero.
+    /// </summary>
+    public const int MaxCongestionExtraDefenders = 2;
 
     /// <summary>Seconds of receiver margin at which the receiver term is neutral (0.5).</summary>
     public const float ReceiverMarginScaleSeconds = 0.60f;
@@ -357,6 +400,10 @@ public sealed class PassSuccessModel
         float defenderArrival = float.PositiveInfinity;
         float defenderUncertainty = 0f;
         float horizon = Math.Clamp(flight + DefenderHorizonSlackSeconds, 1f, 3.5f);
+        // AIB-02b: the arrival window a defender has to overlap to be crowding the reception, not just
+        // losing the race for it: one arrival scale after the ball.
+        float congestionWindow = flight + DefenderMarginScaleSeconds;
+        int contestingDefenders = 0;
 
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
         {
@@ -377,6 +424,8 @@ public sealed class PassSuccessModel
                 defenderMargin = effective - flight;
                 defenderUncertainty = uncertainty;
             }
+
+            if (effective <= congestionWindow) contestingDefenders++;
         }
 
         if (!float.IsFinite(defenderArrival))
@@ -389,6 +438,12 @@ public sealed class PassSuccessModel
         // decided in step 1: either from the reach model, or from the promise that replaced it (A5.3).
         float defenderTerm = Math.Clamp(0.5f + defenderMargin / DefenderMarginScaleSeconds, 0f, 1f);
 
+        // AIB-02b: everybody beyond the worst defender who can also be there is charged a bounded crowd
+        // factor. Before this, the loop above kept only the minimum arrival, so a reception with three men
+        // around it was priced exactly like the same reception with one.
+        int congestionExtra = CongestionExtraDefenders(contestingDefenders);
+        float congestion = CongestionFactor(congestionExtra);
+
         Vector2 receiverXZ = new(receiver.EstimatedPosition.X, receiver.EstimatedPosition.Z);
         Vector2 receiverVelocityXZ = new(receiver.EstimatedVelocity.X, receiver.EstimatedVelocity.Z);
         float approachDot = ApproachAlignment(receiverXZ, target, receiverVelocityXZ);
@@ -397,7 +452,10 @@ public sealed class PassSuccessModel
             receiverReach.SpeedAtArrival, approachDot, receiver.PositionUncertaintyMeters);
         float control = 1f - controlPenalty;
 
-        float completion = receiverTerm * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane) * control;
+        float completion = receiverTerm
+                           * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane)
+                           * control
+                           * congestion;
 
         // A4.10/A5.3: the lead is charged once, by whichever owner knows about it.
         //
@@ -437,7 +495,9 @@ public sealed class PassSuccessModel
         {
             LeadCharge01 = leadCharge,
             PromisedArrival = promised,
-            PromisedConfidence01 = promised ? Math.Clamp(promise.Confidence01, 0f, 1f) : 0f
+            PromisedConfidence01 = promised ? Math.Clamp(promise.Confidence01, 0f, 1f) : 0f,
+            CongestionExtraDefenders = congestionExtra,
+            CongestionFactor01 = congestion
         };
     }
 
@@ -546,6 +606,10 @@ public sealed class PassSuccessModel
         float defenderScale = profile == RaisedPassProfile.Driven
             ? DefenderMarginScaleSeconds
             : DefenderMarginScaleSeconds * AirborneContestScale;
+        // AIB-02b: the same crowd window the arrival scale uses — a landing scale for a lofted ball, the
+        // ground scale for a driven one.
+        float congestionWindow = flight + defenderScale;
+        int contestingDefenders = 0;
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
         {
             if (entity.Team == obs.SelfTeam) continue;
@@ -567,7 +631,27 @@ public sealed class PassSuccessModel
                 defenderTerm = term;
                 defenderUncertaintySeconds = uncertainty;
             }
+
+            if (effective <= congestionWindow) contestingDefenders++;
         }
+
+        // AIB-02b: a raised ball into a landing that several defenders can reach late is a contested ball,
+        // not the open one the single-worst defender term implied — the audit's "lofted punt into contested
+        // space". Bounded exactly like the ground crowd factor, so one marking defender is unchanged and a
+        // genuinely open landing (the lob over a compact block) is not touched.
+        //
+        // Only the *raised alternative* (the unpromised loft that replaces a blocked ground lane) takes the
+        // charge. A cross is a different delivery: A5.5 deliberately prices its aerial contest through the
+        // widened arrival scale and the reception side (the runner's aerial capability, where the ball is
+        // aimed at the runner rather than at the space), so charging the same late-arriving contestors
+        // again here is the duplicate penalty the standing brief forbids. Measured (DeliveryChoiceTests'
+        // boxed-in-winger fixture): the 12 % crowd charge took a real box cross from 1.15 to 0.93 and made it
+        // lose to a 0.99 carry — the duplicate charge, not the cross, was the defect. A driven ball is timed
+        // to an announced meeting and priced through the promise for the same reason.
+        int congestionExtra = profile == RaisedPassProfile.Lofted
+            ? CongestionExtraDefenders(contestingDefenders)
+            : 0;
+        float congestion = CongestionFactor(congestionExtra);
 
         // AUD-06: the clamped caller metric is no longer dead. A5.5 is right that the ground lane clearance is
         // the wrong question for a ball two to four metres up — so the height-aware test above still decides
@@ -577,7 +661,7 @@ public sealed class PassSuccessModel
         // says so, and the corridor can only trim its lane term by the model's own lane weight.
         float laneClearance = Math.Clamp(float.IsFinite(laneClearance01) ? laneClearance01 : 0f, 0f, 1f);
         bool laneBlocked = IsAirborneLaneBlocked(
-            selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam);
+            selfXZ, targetXZ, profile, power, obs.VisiblePlayers, obs.SelfTeam, flight, landing);
         float lane = laneBlocked
             ? 0f
             : profile == RaisedPassProfile.Driven
@@ -587,7 +671,8 @@ public sealed class PassSuccessModel
         float control = profile == RaisedPassProfile.Driven ? DrivenControl01 : AirborneControl01;
         float completion = receiverTerm
                            * ((1f - LaneWeight) * defenderTerm + LaneWeight * lane)
-                           * control;
+                           * control
+                           * congestion;
 
         // AUD-06: a body the height-aware test found where the ball is low enough to be played is a real
         // interception, so a blocked raised ball is near-zero rather than losing only its 30 % lane term. A
@@ -615,7 +700,9 @@ public sealed class PassSuccessModel
             Profile = profile,
             LaneBlocked = laneBlocked,
             LaneClearance01 = laneClearance,
-            DefenderUncertaintySeconds = defenderUncertaintySeconds
+            DefenderUncertaintySeconds = defenderUncertaintySeconds,
+            CongestionExtraDefenders = congestionExtra,
+            CongestionFactor01 = congestion
         };
     }
 
@@ -627,6 +714,19 @@ public sealed class PassSuccessModel
     /// counts him when that height is below <see cref="AirborneBlockHeightMeters"/> — so a centre-back
     /// standing on the cross's line 4 m short of the landing, where the ball is still 2.5 m up, is not a
     /// block, while the same man at the near post, where it is coming down, is.
+    ///
+    /// <b>AIB-02c (audit 2026-11-22): the landing contest is exempt, not a blanket skip.</b> The last
+    /// <see cref="AirborneLandingContestMeters"/> of the flight used to be skipped unconditionally, on the
+    /// correct rule that a defender at the landing is already priced by the arrival term and must not be
+    /// charged twice. But the skip also excused a body the arrival term does <i>not</i> price — a defender
+    /// who cannot be at the landing when the ball is (too slow into the contest, or charging in late) still
+    /// stands on the low part of the line and can play the ball. The exemption is now conditional on the
+    /// arrival term actually pricing him, which leaves the legitimate lob over a compact block alone while
+    /// no longer excusing a free body under the falling ball.
+    ///
+    /// <paramref name="flightTimeSeconds"/> and <paramref name="landingXZ"/> are the delivery's real
+    /// trajectory and are what makes the conditional exemption checkable; a caller that omits them keeps the
+    /// old blanket exemption exactly, so this stays a source-compatible, additive widening.
     /// </summary>
     public bool IsAirborneLaneBlocked(
         Vector2 fromXZ,
@@ -634,7 +734,9 @@ public sealed class PassSuccessModel
         RaisedPassProfile profile,
         float power01,
         IReadOnlyList<PerceivedEntity> visiblePlayers,
-        TeamId selfTeam)
+        TeamId selfTeam,
+        float flightTimeSeconds = 0f,
+        Vector2 landingXZ = default)
     {
         Vector2 segment = toXZ - fromXZ;
         float length = segment.Length();
@@ -643,6 +745,9 @@ public sealed class PassSuccessModel
         Vector2 direction = segment / length;
         Vector2 normal = new(-direction.Y, direction.X);
         RaisedPassModel flights = RaisedPassModel.Default;
+        bool traceLandingContest = flightTimeSeconds > 0f &&
+                                   float.IsFinite(flightTimeSeconds) &&
+                                   SimMath.IsFinite(landingXZ);
 
         for (int i = 0; i < visiblePlayers.Count; i++)
         {
@@ -652,8 +757,17 @@ public sealed class PassSuccessModel
             Vector2 relative = new Vector2(
                 opponent.EstimatedPosition.X, opponent.EstimatedPosition.Z) - fromXZ;
             float along = Vector2.Dot(relative, direction);
-            if (along <= 0.5f || along >= length - AirborneLandingContestMeters) continue;
+            if (along <= 0.5f || along >= length) continue;
             if (MathF.Abs(Vector2.Dot(relative, normal)) > LaneContactReachMeters + 0.35f) continue;
+
+            // Inside the landing contest, a defender is excused from the block only when the arrival term
+            // is already charging him for that contest. A body the contest does not price is a plain block
+            // when the ball is low enough at his place on the line.
+            if (along >= length - AirborneLandingContestMeters &&
+                (!traceLandingContest || LandingContestPricesDefender(opponent, landingXZ, flightTimeSeconds)))
+            {
+                continue;
+            }
 
             float height = flights.HeightAtDistance(profile, power01, along);
             if (height > AirborneBlockHeightMeters) continue;
@@ -661,6 +775,27 @@ public sealed class PassSuccessModel
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// AIB-02c: true when <see cref="EstimateRaised"/>'s arrival term already charges this defender for the
+    /// landing contest — he can be at the landing within one widened arrival scale of the ball, which is the
+    /// same window the defender term prices. Those defenders are exempt from the height-aware block so the
+    /// contest is not charged twice; everybody else is not.
+    /// </summary>
+    private static bool LandingContestPricesDefender(
+        PerceivedEntity defender,
+        Vector2 landingXZ,
+        float flightSeconds)
+    {
+        float contestWindow = DefenderMarginScaleSeconds * AirborneContestScale;
+        float horizon = MathF.Max(flightSeconds + contestWindow, 1f);
+        ReachEstimate reach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(defender), landingXZ, horizon);
+        float arrival = (reach.Reachable ? reach.Seconds : horizon) + OpponentReactionSeconds;
+        float uncertainty = Math.Clamp(
+            defender.PositionUncertaintyMeters * UncertaintyArrivalSecondsPerMeter, 0f, MaxUncertaintySeconds);
+        return arrival - uncertainty <= flightSeconds + contestWindow;
     }
 
     /// <summary>
@@ -746,12 +881,22 @@ public sealed class PassSuccessModel
                 continue;
             }
 
-            // Cheap reachability bound *before* the dense sampling: an opponent further from the ball's
-            // line than the fastest close he can produce — a full sprint plus the turn allowance the
-            // step-in rule below grants — cannot be on the ball within the flight, so sampling him is
-            // wasted work. The bound uses the *largest* closing speed the rules below allow, which makes
-            // it conservative: it skips a defender only when neither test could have found him.
-            float reachable = LaneContactReachMeters + (OpponentSprintSpeed + LaneTurnSpeed) * flight;
+            // AIB-02a (audit 2026-11-22): the one reach model, not a second distance/speed estimate. An
+            // opponent who can be within the real receive/tackle reach (~1.24 m) of the ball's line before
+            // the ball goes past that point can intercept it: acceleration ramp, turn cost, current closing
+            // velocity and contact reach all come from TimeToReachModel, exactly as they do for the arrival
+            // term above (and for every other arrival in this class). The old code replaced all of that
+            // with `gap <= (closingSpeed + 1.5 m/s) × available`, so a stationary defender covered only
+            // 0.90 + 1.5 × 0.75 = 2.02 m in a 1.0 s pass where the locomotion model gives him
+            // 0.5 × 6.8 × 0.75² = 1.91 m of acceleration plus the same reach.
+            ReachKinematics opponentKinematics = ReachKinematics.FromEntity(opponent);
+
+            // Cheap reachability bound before the dense sampling and before the reach query: nobody covers
+            // more ground than a full sprint (plus whatever closing speed he already carries) plus his own
+            // contact reach, so a defender beyond that cannot be on the ball in time. The bound is
+            // deliberately generous — it never skips a defender either test below could have found.
+            float interceptReach = MathF.Max(LaneStepInReachMeters, opponentKinematics.ReachRadius);
+            float reachable = interceptReach + OpponentSprintSpeed * flight;
             if (perpendicular > reachable) continue;
 
             // 1. Their current run, sampled against the ball's own flight: if the two ever come
@@ -767,22 +912,25 @@ public sealed class PassSuccessModel
                     return true;
             }
 
-            // 2. They can also see the pass and step into the lane. Compare what the step actually
-            //    needs with what they can produce before the ball has gone by. The gap is measured to the
-            //    nearest point of the *segment*, not to the infinite line, so a defender who could only
+            // 2. They can also see the pass and step into the lane. Compare what the step actually needs with
+            //    how long the ball takes to the nearest point of the *segment*, so a defender who could only
             //    reach the line behind the passer or beyond the receiver is not counted.
             float projection = Math.Clamp(projectionRaw, 0f, length);
             Vector2 pointOnLane = fromXZ + direction * projection;
-            float gap = Vector2.Distance(opponentXZ, pointOnLane) - LaneContactReachMeters;
-            if (gap <= 0f) return true;
+            float distanceToLanePoint = Vector2.Distance(opponentXZ, pointOnLane);
+            if (distanceToLanePoint <= LaneContactReachMeters) return true;
 
             float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
             float available = timeToPoint - OpponentReactionSeconds;
             if (available <= 0f) continue;
 
-            float closingTowardsLine = -MathF.Sign(signedPerpendicular) * Vector2.Dot(opponentVelocity, normal);
-            float closingSpeed = Math.Clamp(closingTowardsLine, 0f, OpponentSprintSpeed) + LaneTurnSpeed;
-            if (gap <= closingSpeed * available) return true;
+            // Another cheap floor: even at a dead sprint from his current momentum nobody covers the gap
+            // faster than (current speed + sprint cap) × available, so skip the reach query when he cannot.
+            float mustRun = distanceToLanePoint - interceptReach;
+            if (mustRun > (speed + OpponentSprintSpeed) * available) continue;
+
+            ReachEstimate stepIn = TimeToReachModel.ToPoint(opponentKinematics, pointOnLane, available);
+            if (stepIn.Reachable && stepIn.Seconds <= available) return true;
         }
 
         return false;
@@ -798,6 +946,18 @@ public sealed class PassSuccessModel
             return time;
         return flightTimeSeconds * Math.Clamp(distanceMeters / MathF.Max(length, 0.01f), 0f, 1f);
     }
+
+    /// <summary>
+    /// AIB-02b: additional defenders charged as crowding the arrival, i.e. everybody beyond the first who
+    /// can also be at the arrival point around the time the ball is. Bounded so that a crowded reception is
+    /// distinguished from a one-on-one without a second probability model deciding the pass.
+    /// </summary>
+    private static int CongestionExtraDefenders(int contestingDefenders) =>
+        Math.Clamp(contestingDefenders - 1, 0, MaxCongestionExtraDefenders);
+
+    /// <summary>AIB-02b: the bounded completion multiplier for that crowding.</summary>
+    private static float CongestionFactor(int extraDefenders) =>
+        1f - DefenderCongestionStep01 * extraDefenders;
 
     /// <summary>
     /// How aligned the receiver's current run is with the arrival point, 1 = running straight at it.
@@ -880,6 +1040,18 @@ public readonly record struct LoftedPassTerms(
     /// seconds (AUD-06). Zero when every visible opponent was freshly seen.
     /// </summary>
     public float DefenderUncertaintySeconds { get; init; }
+
+    /// <summary>
+    /// AIB-02b: additional defenders beyond the first whose arrival window overlapped the landing, clamped to
+    /// <see cref="PassSuccessModel.MaxCongestionExtraDefenders"/>. Zero when the landing is a one-on-one.
+    /// </summary>
+    public int CongestionExtraDefenders { get; init; }
+
+    /// <summary>
+    /// AIB-02b: the bounded multiplier those extra defenders applied to the completion, 1 when none. Set by
+    /// every feasible estimate; a default-constructed term reports 0, not 1.
+    /// </summary>
+    public float CongestionFactor01 { get; init; }
 
     /// <summary>No raised route to this receiver: out of the model's band, or landing too far away.</summary>
     public static LoftedPassTerms None => new(false, 0f, 0f, 0f, 0f, 0f, 1f);

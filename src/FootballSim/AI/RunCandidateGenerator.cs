@@ -167,6 +167,34 @@ public sealed class RunCandidateGenerator
     /// <summary>Below this the team is not in a state to run into space at all.</summary>
     private const float MinLaneMeters = 4f;
 
+    /// <summary>
+    /// AIB-3: effective travel weight for a <see cref="RunKind.BlindSideArrival"/> in the final third, where
+    /// <see cref="RunScoring.TravelWeight"/> would otherwise price the run out of the duty.
+    ///
+    /// A blind-side arrival is by definition the long diagonal from the far touchline into the box: 25 m of
+    /// ground, -0.22 at the full weight, against a <see cref="RunKind.HoldWidth"/> that stands still and pays
+    /// nothing. Measured, that is why a far-side winger almost never advertised a far-post arrival — the duty
+    /// always re-chose "hold width", and the carrier had no box target to deliver to. The approach is still
+    /// paid; it is charged at this weight once the ball is in the final third, where the run is the duty's
+    /// purpose rather than a speculative extra.
+    /// </summary>
+    public const float BlindSideFinalThirdTravelWeight = 0.05f;
+
+    /// <summary>
+    /// AIB-3: how far goalward an in-box player's live box-presence target reaches, in metres. A player on
+    /// the penalty spot cannot gain <see cref="MinRunGainMeters"/> going forward without leaving the box, so
+    /// his live target is a presence (or a peel-off) around his own depth, not a run into space.
+    /// </summary>
+    public const float BoxPresenceReachMeters = 2f;
+
+    /// <summary>
+    /// AIB-3: shortest lead between the decision and an in-box presence target's meeting tick, in ticks
+    /// (2.0 s). A promise is only audible after <see cref="RunAdvertisementBoard.CommunicationDelayTicks"/>,
+    /// and a delivery into the box takes about this long to arrive, so a presence advert that met sooner
+    /// could never be played to: it would be stale before any carrier could hear it.
+    /// </summary>
+    public const int BoxPresenceMinLeadTicks = 120;
+
     private readonly PitchDimensions _pitch;
     private readonly RunAdvertisementBoard? _board;
     private readonly RunPath[] _paths = new RunPath[PathCapacity];
@@ -249,8 +277,7 @@ public sealed class RunCandidateGenerator
         bool receivingBall = IsClaimLive(obsRef, tick) || OffsideTactics.IsReleased(obsRef);
         if (_intent is RunIntent receiving && receivingBall)
         {
-            RunScoreTerms receivingTerms = RunScoring.Score(
-                receiving.Path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
+            RunScoreTerms receivingTerms = ScorePath(receiving.Path, obsRef, carrierXZ, teamBoxArrivals);
             EmitAndRefreshConfidence(receiving, receivingTerms);
             return _count;
         }
@@ -264,8 +291,7 @@ public sealed class RunCandidateGenerator
             {
                 // Re-offer the frozen geometry: the meeting region, its window and the adoption tick do not
                 // move, but the score — and with it the confidence the team hears — is measured again.
-                RunScoreTerms adoptedTerms = RunScoring.Score(
-                    adopted.Path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
+                RunScoreTerms adoptedTerms = ScorePath(adopted.Path, obsRef, carrierXZ, teamBoxArrivals);
                 EmitAndRefreshConfidence(adopted, adoptedTerms);
                 continue;
             }
@@ -276,8 +302,7 @@ public sealed class RunCandidateGenerator
                 continue;
             }
 
-            RunScoreTerms terms = RunScoring.Score(
-                path, obsRef, carrierXZ, obsRef.TeamSecurity, teamBoxArrivals);
+            RunScoreTerms terms = ScorePath(path, obsRef, carrierXZ, teamBoxArrivals);
             path = path with { Confidence01 = ConfidenceFrom(terms) };
             Emit(path, terms);
         }
@@ -390,9 +415,14 @@ public sealed class RunCandidateGenerator
                 return 4;
 
             case TacticalJob.ThirdPlayerOption:
+                // AIB-3: the #8/#10 is the late box arrival. The duty used to offer only support and depth
+                // (check short, underlap, in behind, decoy), so the one attacker whose run is *designed* to
+                // arrive behind the striker could never be the target of a cross. Underlap is dropped from
+                // this duty's list rather than added beside: the overlap duty still owns it, and the
+                // third-player option's own target is diagonal, not a lane inside a wide carrier.
                 buffer[0] = RunKind.CheckShort;
-                buffer[1] = RunKind.Underlap;
-                buffer[2] = RunKind.InBehind;
+                buffer[1] = RunKind.InBehind;
+                buffer[2] = RunKind.LateBoxArrival;
                 buffer[3] = RunKind.Decoy;
                 return 4;
 
@@ -439,6 +469,7 @@ public sealed class RunCandidateGenerator
         float meetRadius;
         int holdUntilTick = tick;
         Vector2 holdXZ = selfXZ;
+        bool presenceMeetTick = false;
 
         switch (kind)
         {
@@ -556,7 +587,23 @@ public sealed class RunCandidateGenerator
 
                 float boxProj = halfLength - BoxMeetFromGoalMeters;
                 float runProj = MathF.Min(boxProj, maxAttackingProj);
-                if (runProj <= selfProj + MinRunGainMeters) return false;
+                bool inBoxPresence = false;
+
+                if (runProj <= selfProj + MinRunGainMeters)
+                {
+                    // AIB-3: this guard is a rule about runs into space, and a striker standing in the box is
+                    // not running into space — he *is* the space. Rejecting him made him invisible to the
+                    // delivery model: AddCrossCandidate/AddCutbackCandidate only target announced box
+                    // arrivals, so an open man on the penalty spot could never be crossed or cut back to.
+                    // From the edge of the penalty area a player may instead offer a live box presence: a
+                    // target at his own depth (peel-off) or just ahead of it, clamped to the offside line, so
+                    // the region is still a legal place to meet a delivery. Below the box the old rule stands:
+                    // a short shuffle is not a run.
+                    if (selfProj < halfLength - _pitch.PenaltyAreaLength) return false;
+
+                    inBoxPresence = true;
+                    runProj = MathF.Min(maxAttackingProj, selfProj + BoxPresenceReachMeters);
+                }
 
                 float side = kind == RunKind.LateBoxArrival
                     ? (MathF.Abs(laneZ) > 1f ? MathF.Sign(laneZ) : MathF.Sign(selfXZ.Y >= 0f ? 1f : -1f))
@@ -573,6 +620,7 @@ public sealed class RunCandidateGenerator
                     holdUntilTick = tick + LateArrivalHoldTicks;
                 }
 
+                presenceMeetTick = inBoxPresence;
                 break;
             }
 
@@ -590,6 +638,12 @@ public sealed class RunCandidateGenerator
         int travelTicks = (int)MathF.Ceiling(reach.Seconds / SimConstants.FixedDeltaTime);
         int holdTicks = holdUntilTick > tick ? holdUntilTick - tick : 0;
         int meetTick = tick + holdTicks + travelTicks;
+
+        // AIB-3: a presence target can be level with the player, so the reach time alone would put the meeting
+        // in the next tick or two. The advert is only audible after the communication delay and a delivery
+        // needs a real flight, so the promise has to name a moment that is still ahead when it is heard.
+        if (presenceMeetTick && meetTick < tick + BoxPresenceMinLeadTicks)
+            meetTick = tick + BoxPresenceMinLeadTicks;
 
         path = new RunPath(
             kind,
@@ -831,6 +885,35 @@ public sealed class RunCandidateGenerator
     /// <summary>Kinds whose meeting region must stay legally receivable before the ball is released.</summary>
     public static bool IsForwardRun(RunKind kind) => kind is RunKind.InBehind or RunKind.Overlap
         or RunKind.Underlap or RunKind.LateBoxArrival or RunKind.BlindSideArrival or RunKind.Pin;
+
+    /// <summary>
+    /// One path's score as this generator prices it: <see cref="RunScoring.Score"/> plus the AIB-3 final-third
+    /// travel adjustment for a blind-side box arrival.
+    ///
+    /// The adjustment exists because the shared scorer charges one travel weight for every kind, and that is
+    /// right for a hold or a short check but wrong for the one run whose whole geometry is a long diagonal
+    /// across the box. It is applied here, on the terms, rather than in the scorer because only the run
+    /// generator knows which duty is buying the run: the carrier's own value model must not change.
+    /// </summary>
+    private static RunScoreTerms ScorePath(
+        in RunPath path,
+        in FootballerObservation obs,
+        Vector2 carrierXZ,
+        in TeamBoxArrivals teamBoxArrivals)
+    {
+        RunScoreTerms terms = RunScoring.Score(path, obs, carrierXZ, obs.TeamSecurity, teamBoxArrivals);
+        if (!float.IsFinite(terms.Score)) return terms;
+        if (path.Kind != RunKind.BlindSideArrival) return terms;
+
+        // Only once the ball is in the final third: before that the far-side run is a speculative extra, and
+        // the full travel cost is what keeps a winger holding his width for the switch.
+        float ballProj = obs.PerceivedBallPosition.X * obs.AttackingDirectionX;
+        if (ballProj < FinalThirdProjX) return terms;
+
+        float travelFraction = MathF.Min(terms.TravelMeters, 40f) / 40f;
+        float rebate = (RunScoring.TravelWeight - BlindSideFinalThirdTravelWeight) * travelFraction;
+        return terms with { Score = terms.Score + rebate };
+    }
 
     /// <summary>How sure of the run the arrival race and the pass into it make the runner (A5.3 advertises it).</summary>
     private static float ConfidenceFrom(in RunScoreTerms terms)

@@ -613,12 +613,39 @@ public enum TeamId
 /// wiring (AUD-12) is behaviour-neutral at its defaults. Trajectories differ from version 53 wherever a
 /// receiver, width duty, depth run, phase reset, belief, raised pass, coverage assignment or restart taker
 /// decided.</item>
+/// <item><c>AiBehaviour 55</c> — the 2026-11-22 AI behaviour review (<c>docs/Bug_Fixes_2026-11-22_AI.md</c>),
+/// AIB-01 to AIB-06. (1) <b>Leaving pressure is time-based</b>: the emergency pass trigger and the carry's
+/// contact risk read the local pressure field's opponent arrival at the carrier's feet (risk starts at 0.50 s,
+/// full at 0.22 s) instead of a static 2.2 m ring, and the early-carry bonus is withdrawn only when an
+/// opponent actually closes at &gt;= 0.75 m/s. (2) <b>A lane is priced by physics</b>: the lane-block test uses
+/// the shared reach model's acceleration and real intercept reach instead of a 1.5 m/s sidestep, a crowded
+/// reception pays a bounded multi-defender congestion factor, an airborne contest under the falling ball is
+/// priced instead of skipped, the pass planner's retry keeps the crisp power floor and hedges an uncommitted
+/// receiver's lead, the candidate-level corridor charge accumulates across defenders, risk tolerance only
+/// reduces a tight lane's penalty (it never pays for traffic), ToFeet/ToRun leads are bounded and only a
+/// promised runner keeps the long run lead (an uncommitted receiver gets a short 1.5 m nudge), a driven ball
+/// is aimed from the ball rather than the body, and the
+/// completion floor rises to 0.45 for crowded corridors while deliveries keep 0.30. (3) <b>The box is
+/// attacked with numbers</b>: attacking formation anchors push to 28-42 m in the final third with a 5.4 m
+/// structural separation pass, two depth runners can split the posts when rest defence permits, the
+/// third-player option and far-side width can arrive late / blind-side, and a player already in the box can
+/// advertise a live presence target that a cross or cutback can find. (4) <b>The pitch is used centrally</b>:
+/// a carry direction values goalward penetration and a final-third inward cut, reception value replaces raw
+/// width credit with a between-the-lines central-threat credit in the attacking third, a backward reception
+/// loses territory value, a bounded line-breaking pass preference matches the wide-switch bonus, and a
+/// backward recycle pass pays the same backward preference (plus a territory cost only when a forward option
+/// exists) instead of hardcoding zero. (5) <b>A clear shot is worth taking</b>: a shot picks the clearest of
+/// three goal targets with the goalkeeper excluded from the outfield lane ray, the full-credit goal-mouth
+/// angle moves 30° -&gt; 19°, and close-range conversion is 0.46, so a clear in-box chance beats a 96 %
+/// backward recycle. (6) The man-on bounce bonus is scoped to short support passes instead of rewarding a
+/// long backward launch. Trajectories differ from version 54 wherever a carrier, passer, receiver, runner,
+/// shooter or off-ball anchor decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 54;
+    public const int AiBehaviour = 55;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

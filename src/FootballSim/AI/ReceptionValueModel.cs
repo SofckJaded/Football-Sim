@@ -13,7 +13,9 @@ namespace FootballSim.AI;
 ///
 /// The terms are exposed because A4.6 has to explain a decision term by term and because the A4 exit gate
 /// is stated as comparisons ("a pressured backward-facing receiver &lt; the open equivalent"), which are
-/// only checkable if the parts are visible rather than folded into one number.
+/// only checkable if the parts are visible rather than folded into one number. <see cref="Progression01"/>
+/// is the forward component only; since AIB-6b the value term is signed, so lost ground is charged inside
+/// <see cref="Value"/> rather than shown as a negative 0..1 term.
 /// </summary>
 public readonly record struct ReceptionValueTerms(
     float Progression01,
@@ -31,8 +33,9 @@ public readonly record struct ReceptionValueTerms(
 /// What it values, and why each part exists:
 /// <list type="bullet">
 /// <item><b>Progression</b> — how far up the pitch the reception is, relative to where the ball was. A
-///   backward reception is worth less than a forward one at the same pressure; that is what stops
-///   circulation without a blanket ban.</item>
+///   backward reception is worth less than a forward one at the same pressure, and since AIB-6b a
+///   reception <i>behind</i> the ball pays a territory loss instead of being scored like a lateral one;
+///   that is what stops circulation without a blanket ban.</item>
 /// <item><b>Turnability</b> — can he do anything with it? A receiver arriving with momentum toward his
 ///   own goal, or with an opponent goal-side of him, has to turn first. This is the term that makes a
 ///   pressured backward-facing receiver worth less than the open equivalent.</item>
@@ -44,17 +47,22 @@ public readonly record struct ReceptionValueTerms(
 /// <item><b>Pressure at reception</b> — supplied by the caller from the <i>one</i> pressure estimate it
 ///   already has (<see cref="PassSuccessTerms.DefenderPressure01"/> for a pass, the local pressure window
 ///   for a carry). This model never computes a second one.</item>
-/// <item><b>Structure</b> — does the reception keep the shape the profile asked for? A wide side values a
-///   wide reception. It uses the one shared width convention (<see cref="AttackingWidthPreference"/>) that
+/// <item><b>Structure</b> — does the reception keep the shape the profile asked for? In build-up it uses
+///   the one shared width convention (<see cref="AttackingWidthPreference"/>) that
 ///   <see cref="Tactics.JobRegionScoring"/> also uses, so the two cannot drift apart: a reception at the
 ///   profile's own target width scores full credit, a narrow side is not rewarded for hugging the touchline,
-///   and a wider side is never scored below a narrower one at the same lateral coordinate (AUD-01).</item>
+///   and a wider side is never scored below a narrower one at the same lateral coordinate (AUD-01).
+///   In the final third the width credit is replaced by a central-threat credit (AIB-4b), because raw
+///   width credit gave the centre line 0 and the wings 1 for <i>every</i> profile and structurally
+///   outscored central and half-space receptions.</item>
 /// </list>
 ///
 /// <b>Transition risk is not here.</b> The pass score owns it through its loss term, which rises in the
-/// passer's own third (<see cref="ActionValueScale.LossCost"/>). This model only adds value; a second
-/// subtraction under the name "turnover exposure" is exactly the duplicate penalty the plan forbids, and
-/// the reason the loss term is documented as the single owner.
+/// passer's own third (<see cref="ActionValueScale.LossCost"/>). This model prices the state once the ball
+/// is kept; a second subtraction under the name "turnover exposure" is exactly the duplicate penalty the
+/// plan forbids, and the reason the loss term is documented as the single owner. The progression term can
+/// be negative (AIB-6b) because a reception behind the ball leaves the side in a worse position — that is
+/// a valuation of the kept-ball state, not a second charge for the risk of losing it.
 /// </summary>
 public sealed class ReceptionValueModel
 {
@@ -99,6 +107,54 @@ public sealed class ReceptionValueModel
     /// <summary>Weight of the reception holding the profile's width.</summary>
     public const float StructureWeight = 0.08f;
 
+    // ---------------------------------------------------------------------------------------------
+    // AIB-4b — the final-third structure credit is central threat, not raw width.
+    //
+    // AttackingWidthPreference.Score gives the centre line 0 and the wings 1 for every profile
+    // (reachedWidth = (|z| / HalfWidth) / 0.55), so a completed flank pass collected a width credit a
+    // completed central or half-space pass could never collect. Together with the extra pressure freedom
+    // on the flanks that is the "always attacking down the wing" finding. The convention itself is right
+    // for build-up and for width jobs (AUD-01), so it is kept there; only the attacking reception's
+    // final-third position is valued as central threat instead.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// AIB-4b: distance past the final-third line over which the width credit is exchanged for the
+    /// central-threat credit, in metres. The final third begins at <c>HalfLength / 3</c> (17.5 m on the
+    /// default pitch); blending over this span keeps the value continuous at the boundary instead of
+    /// stepping at it.
+    /// </summary>
+    public const float FinalThirdBlendMeters = 8f;
+
+    /// <summary>
+    /// AIB-4b: lateral distance from the centre line that still earns the full central-corridor share of
+    /// the final-third threat credit, in metres. 12 m keeps both the central corridor and the half-space
+    /// (roughly 12–20 m) valuable; only the touchline channel decays toward zero.
+    /// </summary>
+    public const float CentralCorridorMeters = 12f;
+
+    /// <summary>Weight of the central-corridor share of the final-third threat credit (AIB-4b).</summary>
+    public const float CentralCorridorWeight = 0.60f;
+
+    /// <summary>
+    /// Weight of the between-the-lines share of the final-third threat credit (AIB-4b): how close the
+    /// reception is to the opponent's last defensive line, with the space in behind it the most valuable.
+    /// </summary>
+    public const float BetweenLinesWeight = 0.40f;
+
+    /// <summary>
+    /// AIB-4b: how far in front of the opponent's last defensive line a final-third reception stops
+    /// counting as a between-the-lines ball, in metres. At or behind the line earns full credit (that is
+    /// the space in behind); a reception this far in front of it earns none.
+    /// </summary>
+    public const float BetweenLinesSpanMeters = 18f;
+
+    /// <summary>
+    /// AIB-4b: back-line proximity assumed when no opponent is visible at all — a neutral read, not full
+    /// credit, so an ignorant receiver is not treated as having beaten the line.
+    /// </summary>
+    public const float UnknownBackLineProximity01 = 0.5f;
+
     /// <summary>
     /// Weight of the ball being somewhere it can be kept. A reception right in front of your own goal is
     /// worth less than the same reception higher up, because a first touch that goes wrong there is a
@@ -115,7 +171,11 @@ public sealed class ReceptionValueModel
     /// </summary>
     public const float ProgressionWeight = 0.25f;
 
-    /// <summary>Forward advance that earns full progression credit, in metres.</summary>
+    /// <summary>
+    /// Forward advance that earns full progression credit, in metres. AIB-6b: the same span is the
+    /// denominator of the territory <i>loss</i>, so one span of lost ground is charged the full
+    /// <see cref="ProgressionWeight"/> below the lateral baseline.
+    /// </summary>
     public const float ProgressionSpanMeters = 30f;
 
     /// <summary>Room goal-side of the reception at which turning is considered free, in metres.</summary>
@@ -157,7 +217,15 @@ public sealed class ReceptionValueModel
         // is valuable whether the ball came forty metres or four. How *forward* the pass was is a separate,
         // stated preference (ActionValueScale.ProgressBonus) that keeps the greedy comparison leaning up
         // the pitch. The measured span is reported alongside so a decision can be explained (A4.6).
-        float progression = Clamp01((arrivalProjX - BallProjX(obs)) / ProgressionSpanMeters);
+        //
+        // AIB-6b: losing ground costs territory — it is not a lateral pass. The exposed Progression01 stays
+        // the forward 0..1 component (its meaning and bounds are unchanged), but the value term is signed:
+        // a reception behind the ball pays up to -ProgressionWeight for one span of lost ground. The old
+        // expression clamped the raw advance at zero, so a 25 m backward reception scored exactly like a
+        // pass to the side and still collected the full pressure and turnability credit on top.
+        float advanceMeters = arrivalProjX - BallProjX(obs);
+        float progression = Clamp01(advanceMeters / ProgressionSpanMeters);
+        float progressionValue01 = Math.Clamp(advanceMeters / ProgressionSpanMeters, -1f, 1f);
 
         // The receiver's own motion: arriving with momentum toward his own goal costs him a turn, and so
         // does an opponent standing goal-side of the reception.
@@ -203,14 +271,15 @@ public sealed class ReceptionValueModel
         // AUD-01: the profile's width preference, shared with job-region scoring. The old expression
         // divided |z| by a widthScale that grew with AttackingWidth01, so a wide side scored HALF of a
         // narrow side's width term at the same coordinate and its target lay past the touchline.
-        float structure = AttackingWidthPreference.Score(
-            obs.TeamProfile.AttackingWidth01, arrivalPointXZ.Y, _pitch);
+        // AIB-4b: build-up keeps that credit unchanged; in the final third it is exchanged for the
+        // central-threat credit (the old raw width credit gave the centre line 0 for every profile).
+        float structure = Structure01(obs, arrivalPointXZ, arrivalProjX);
 
         float ownGoalDistance = MathF.Abs(arrivalProjX + _pitch.HalfLength);
         float ballSafety = Clamp01(ownGoalDistance / BallSafetyDistanceMeters);
 
         float value = BaseValue
-                      + ProgressionWeight * progression
+                      + ProgressionWeight * progressionValue01
                       + TurnabilityWeight * turnability
                       + NextOptionsWeight * nextOptions
                       + ChanceShare * ActionValueScale.GoalValue * shootingChance
@@ -227,6 +296,98 @@ public sealed class ReceptionValueModel
             Structure01: structure,
             BallSafety01: ballSafety,
             Value: Math.Clamp(value, 0f, MaxValue));
+    }
+
+    /// <summary>
+    /// The positional-structure credit (AUD-01, AIB-4b). Behind the final-third line it is the shared
+    /// width convention, unchanged. In the attacking third it is blended into a <b>central-threat</b>
+    /// credit: the raw width credit gave the centre line 0 and the wings 1 for every profile, which made
+    /// flank receptions systematically outscore central and half-space ones — the "always attacking down
+    /// the wing" finding. The replacement (not an extra bonus) keeps the same <see cref="StructureWeight"/>
+    /// the only weight on positional structure and the term in 0..1, so <see cref="MaxValue"/> stays an
+    /// upper bound.
+    /// </summary>
+    private float Structure01(in FootballerObservation obs, Vector2 arrivalPointXZ, float arrivalProjX)
+    {
+        float widthCredit = AttackingWidthPreference.Score(
+            obs.TeamProfile.AttackingWidth01, arrivalPointXZ.Y, _pitch);
+        float finalThird01 = FinalThirdBlend01(arrivalProjX);
+        if (finalThird01 <= 0f) return widthCredit;
+
+        float centralThreat = CentralThreat01(obs, arrivalPointXZ, arrivalProjX);
+        return Clamp01(widthCredit + finalThird01 * (centralThreat - widthCredit));
+    }
+
+    /// <summary>
+    /// AIB-4b: 0 while the reception is behind the final-third line, ramping to 1 over
+    /// <see cref="FinalThirdBlendMeters"/> past it, so the credit changes continuously and a reception
+    /// just inside the final third is not abruptly repriced.
+    /// </summary>
+    private float FinalThirdBlend01(float arrivalProjX)
+    {
+        float boundary = _pitch.HalfLength / 3f;
+        return Clamp01((arrivalProjX - boundary) / FinalThirdBlendMeters);
+    }
+
+    /// <summary>
+    /// AIB-4b: how threatening a final-third reception point is, independent of the profile's width — the
+    /// central corridor (<see cref="CentralCorridorWeight"/>) plus how close the reception is to the
+    /// opponent's last defensive line (<see cref="BetweenLinesWeight"/>). The corridor part keeps the
+    /// centre and the half-space valuable and lets only the touchline channel decay; the line part is what
+    /// makes the between-the-lines ball worth more than a safe ball in front of the block. The same fixed
+    /// weight split is used for every profile, so this term cannot reintroduce the AUD-01
+    /// inversion: it simply does not read <c>AttackingWidth01</c> at all. Believed opponents only, like
+    /// every other spatial term in this model.
+    /// </summary>
+    private float CentralThreat01(in FootballerObservation obs, Vector2 arrivalPointXZ, float arrivalProjX)
+    {
+        float halfWidth = _pitch.HalfWidth;
+        float lateralAbs = MathF.Abs(arrivalPointXZ.Y);
+        float corridorSpan = halfWidth - CentralCorridorMeters;
+        float centrality01 = corridorSpan > 0f
+            ? Clamp01(1f - MathF.Max(0f, lateralAbs - CentralCorridorMeters) / corridorSpan)
+            // A pitch narrower than the nominal corridor is all corridor: fall back to the plain ramp.
+            : Clamp01(1f - lateralAbs / MathF.Max(halfWidth, 1e-3f));
+
+        float lineProximity01 = BackLineProximity01(obs, arrivalProjX);
+        return Clamp01(CentralCorridorWeight * centrality01 + BetweenLinesWeight * lineProximity01);
+    }
+
+    /// <summary>
+    /// AIB-4b: 1 when the reception is at or goal-side of the opponent's last defensive line (the space in
+    /// behind it), decaying linearly to 0 <see cref="BetweenLinesSpanMeters"/> in front of it — the "in
+    /// front of the block" safe ball.
+    ///
+    /// The last line is the <b>deepest outfield defender</b>: the one nearest his own goal, i.e. the
+    /// <b>largest</b> attack-relative projection, with the goalkeeper excluded — the repo's last-line
+    /// convention (<see cref="DefenderResponseModel"/>). Taking the smallest projection instead would pick
+    /// the opponents' most advanced attacker, leave the gap negative for every attacking-third reception
+    /// and pin the credit at 1; including the keeper would make the keeper the line. No outfield opponent
+    /// visible means the neutral <see cref="UnknownBackLineProximity01"/>, never full credit.
+    /// </summary>
+    private float BackLineProximity01(in FootballerObservation obs, float arrivalProjX)
+    {
+        float attackDir = obs.AttackingDirectionX;
+        float backLineProjX = float.NegativeInfinity;
+        bool seen = false;
+
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[index];
+            if (entity.Team == obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
+
+            float opponentProjX = entity.EstimatedPosition.X * attackDir;
+            if (opponentProjX <= backLineProjX) continue;
+
+            backLineProjX = opponentProjX;
+            seen = true;
+        }
+
+        if (!seen) return UnknownBackLineProximity01;
+
+        // Positive gap = the reception is still in front of the line; negative = it has beaten it.
+        float gapMeters = backLineProjX - arrivalProjX;
+        return Clamp01(1f - gapMeters / BetweenLinesSpanMeters);
     }
 
     /// <summary>
@@ -298,8 +459,8 @@ public sealed class ReceptionValueModel
 
 /// <summary>
 /// AUD-01: the one width-preference convention shared by reception valuation
-/// (<see cref="ReceptionValueModel.Evaluate"/>) and job-region scoring
-/// (<see cref="Tactics.JobRegionScoring.Score"/>), so the two cannot drift apart again.
+/// (<see cref="ReceptionValueModel.Evaluate"/>, build-up positions only since AIB-4b) and job-region
+/// scoring (<see cref="Tactics.JobRegionScoring.Score"/>), so the two cannot drift apart again.
 ///
 /// It replaces the old expression <c>|z| / (HalfWidth * widthScale)</c> with <c>widthScale</c> growing
 /// with <see cref="TeamTacticalProfile.AttackingWidth01"/>. Because that scale sat in the denominator,
@@ -322,6 +483,12 @@ public sealed class ReceptionValueModel
 /// a profile penalty once the position is past the profile's target. The ramp is deliberately
 /// profile-independent: a profile-dependent ramp would again lower a wide side's score at the same
 /// |z| — the inversion this convention exists to remove.
+///
+/// <b>Scope (AIB-4b).</b> This class keeps its AUD-01 meaning unchanged and remains the width credit for
+/// build-up receptions and for wide jobs (<see cref="Tactics.JobRegionScoring"/>). Only the final-third
+/// value of an attacking reception is different: <see cref="ReceptionValueModel"/> exchanges this credit
+/// for its central-threat credit there, because raw width credit gives the centre line 0 for every
+/// profile — a structural central-reception penalty of its own, not an AUD-01 inversion.
 /// </summary>
 public static class AttackingWidthPreference
 {

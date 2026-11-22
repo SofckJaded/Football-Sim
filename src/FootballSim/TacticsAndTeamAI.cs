@@ -50,6 +50,27 @@ public sealed class TeamTacticalCoordinator
     /// <summary>Below this pressing intensity a team drops into its block instead of counter-pressing.</summary>
     private const float CounterPressPressingThreshold = 0.60f;
 
+    /// <summary>
+    /// AIB-3: where the attacking progression begins, as a fraction of the pitch half-length from the halfway
+    /// line. 0.4 is the last ~31 m of a 105 m pitch: a delivery is a real option there, and the geometric third
+    /// line (1/3, 35 m from goal) is close enough that starting at it moved the block for every ball that had
+    /// only just crossed halfway. The progression is full on the opponent's goal line.
+    /// </summary>
+    private const float FinalThirdNormX = 0.4f;
+
+    /// <summary>
+    /// AIB-3: the shortest planar gap two outfield formation anchors may hold, in metres. The shape is a set of
+    /// <i>places</i> (A3.3); two players given the same place is not a shape, and the measured invariant
+    /// (`JobTargetStructureTests`: no two off-ball targets closer than 5 m) has to survive the final-third
+    /// progression. A compact small-sided shape can put a midfielder and a striker slot 4.9 m apart once the
+    /// defending width compression applies; the progression exposed it by changing which players hold Shape in
+    /// the `box-cross` fixture. The margin over the 5 m floor absorbs the allocator's own refinement.
+    /// </summary>
+    private const float MinAnchorSeparationMeters = 5.4f;
+
+    /// <summary>Passes of the bounded separation resolution, so a three-player cluster cannot stay stacked.</summary>
+    private const int AnchorSeparationPasses = 3;
+
     private readonly PitchDimensions _pitch;
     private readonly TeamTacticalProfile _homeProfile;
     private readonly TeamTacticalProfile _awayProfile;
@@ -260,7 +281,68 @@ public sealed class TeamTacticalCoordinator
             NominalSlot slot = SlotFor(p, formation, attackDirX);
             p.TacticalAnchor = ComputePlayerAnchor(p, slot, ball, profile, context, attackDirX);
         }
+
+        // AIB-3: the anchors above are computed per player; this is the one step that looks at them together,
+        // because "two players, one place" is a property of the set. A bounded, deterministic nudge — a couple
+        // of tenths of a metre for the compact central pairs — keeps the shape a set of distinct places.
+        SeparateOutfieldAnchors(players);
     }
+
+    /// <summary>
+    /// AIB-3: resolves formation anchors that are closer than <see cref="MinAnchorSeparationMeters"/> by pushing
+    /// the pair apart along the line between them. Bounded on purpose: this is a separation guarantee for the
+    /// structural fallback, not a second shape model — the contextual job targets are placed by the allocator
+    /// and are never touched here, and the nudge is clamped to the pitch. Fixed iteration order and a fixed
+    /// degenerate-case direction keep the result a pure function of the picture (so writing the same picture
+    /// twice writes the same anchors, which A5.6's purity test checks).
+    /// </summary>
+    private void SeparateOutfieldAnchors(IReadOnlyList<FootballerState> players)
+    {
+        for (int pass = 0; pass < AnchorSeparationPasses; pass++)
+        {
+            bool moved = false;
+
+            for (int i = 0; i < players.Count; i++)
+            {
+                FootballerState a = players[i];
+                if (!a.IsActiveOnPitch || a.Role == TacticalRole.Goalkeeper) continue;
+
+                for (int j = i + 1; j < players.Count; j++)
+                {
+                    FootballerState b = players[j];
+                    if (!b.IsActiveOnPitch || b.Team != a.Team || b.Role == TacticalRole.Goalkeeper) continue;
+
+                    float dx = b.TacticalAnchor.X - a.TacticalAnchor.X;
+                    float dz = b.TacticalAnchor.Z - a.TacticalAnchor.Z;
+                    float distanceSquared = dx * dx + dz * dz;
+                    if (distanceSquared >= MinAnchorSeparationMeters * MinAnchorSeparationMeters) continue;
+
+                    float distance = MathF.Sqrt(distanceSquared);
+                    float push = (MinAnchorSeparationMeters - distance) * 0.5f;
+                    float dirX = 0f;
+                    float dirZ = a.TacticalAnchor.Z >= 0f ? 1f : -1f;
+                    if (distance > 1e-3f)
+                    {
+                        dirX = dx / distance;
+                        dirZ = dz / distance;
+                    }
+
+                    a.TacticalAnchor = ClampAnchor(new Vector3(
+                        a.TacticalAnchor.X - dirX * push, 0f, a.TacticalAnchor.Z - dirZ * push));
+                    b.TacticalAnchor = ClampAnchor(new Vector3(
+                        b.TacticalAnchor.X + dirX * push, 0f, b.TacticalAnchor.Z + dirZ * push));
+                    moved = true;
+                }
+            }
+
+            if (!moved) return;
+        }
+    }
+
+    private Vector3 ClampAnchor(Vector3 anchor) => new(
+        Math.Clamp(anchor.X, -_pitch.HalfLength + 4.0f, _pitch.HalfLength - 4.0f),
+        0f,
+        Math.Clamp(anchor.Z, -_pitch.HalfWidth + 2.5f, _pitch.HalfWidth - 2.5f));
 
     /// <summary>
     /// The slot this player owns, or a first assignment derived from where he stands. A coordinator
@@ -458,11 +540,31 @@ public sealed class TeamTacticalCoordinator
             };
         }
 
+        // AIB-3: the attacking block travels with the ball into the last thirty metres.
+        //
+        // The old `ballNormX * 11.5` shifted the whole side forward by at most 11.5 m, so with the ball on the
+        // byline a central midfielder's station was still ~34 m from goal, a far-side winger stopped at the
+        // edge of the box, and the striker stood on its line. The box was therefore never occupied by the
+        // shape: it was only ever reached by the one depth runner the allocator allows, and even he left
+        // nobody to cross to. The progression is a function of how far into the final third the ball is, and
+        // it is strongest for the deepest attacking slot: a #8/#10 has the most ground to make up, and that
+        // is precisely the runner a cross needs arriving late. The term is zero outside that band, so
+        // build-up and defensive anchors are the pre-fix formula exactly.
+        float finalThirdProgress01 = 0f;
+        if (attacking)
+        {
+            finalThirdProgress01 = Math.Clamp(
+                (ballNormX - FinalThirdNormX) / (1f - FinalThirdNormX), 0f, 1f);
+        }
+
+        float finalThirdPush = finalThirdProgress01 * FinalThirdProgressionFor(slot.Role);
+
         float worldX = attackDirX * (
             baseNormX * (_pitch.HalfLength * TeamFormation.NormXToWorldScale) * longitudinalCompression +
             ballNormX * 11.5f +
             lineShift +
-            (attacking ? roleAttackPush * 0.65f : -4.0f));
+            (attacking ? roleAttackPush * 0.65f : -4.0f) +
+            finalThirdPush);
 
         float widthScale = attacking
             ? (0.72f + 0.25f * profile.AttackingWidth01)
@@ -480,6 +582,24 @@ public sealed class TeamTacticalCoordinator
 
         return new Vector3(worldX, 0f, worldZ);
     }
+
+    /// <summary>
+    /// AIB-3: how far a role's structural station advances with a final-third ball, in metres at full
+    /// progress (the ball on the opponent's goal line). Deliberately largest for the deepest attacking role:
+    /// a central midfielder's slot is 40 m from goal, so a cross into the box needs him to have closed that
+    /// ground before the delivery, while a striker only has to hold the penalty area. Defenders keep a small
+    /// share so the block stays connected rather than splitting into a front group and a stranded back line.
+    /// </summary>
+    private static float FinalThirdProgressionFor(TacticalRole role) => role switch
+    {
+        TacticalRole.Striker => 5.0f,
+        TacticalRole.Winger => 8.0f,
+        TacticalRole.CentralMidfielder => 13.0f,
+        TacticalRole.FullBack => 8.0f,
+        TacticalRole.DefensiveMidfielder => 7.0f,
+        TacticalRole.CenterBack => 2.0f,
+        _ => 3.0f
+    };
 
     /// <summary>
     /// The keeper's own line. He steps up with the side he plays behind, but never during a

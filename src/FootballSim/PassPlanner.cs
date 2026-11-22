@@ -84,8 +84,30 @@ public sealed class PassPlanner
     public const float DefaultMaxLeadMeters = 12f;
 
     /// <summary>
+    /// Longest lead a pass may give a receiver who has <b>not</b> committed to a run, in metres
+    /// (AIB-02d, audit 2026-11-22).
+    ///
+    /// The lead is the bet that the receiver keeps running on his current velocity for the whole flight.
+    /// Without a promise (no advertised run, no human call) nothing in the simulation makes that happen: a
+    /// team-mate jogging sideways or back toward his shape anchor at 5 m/s during a 1.1 s flight gets the
+    /// ball aimed 5.5 m away, and when he stops or turns back the pass rolls into empty grass — the audit's
+    /// "pass to absolutely nowhere". This cap is the planner's side of the hedge: aim no further ahead than
+    /// this, even though the receiver would run past it. It is applied only when the caller says the
+    /// receiver is uncommitted (<c>receiverCommittedToRun: false</c>); a committed runner keeps his own
+    /// <c>maxLeadMeters</c> (six metres to feet, twenty-five into an announced run), because for him the
+    /// lead is the point of the pass, not a guess.
+    /// </summary>
+    public const float UncommittedLeadMaxMeters = 2.5f;
+
+    /// <summary>
     /// Plans a pass to a moving receiver. <paramref name="extraLeadMeters"/> pushes the target
     /// further into space along <paramref name="extraLeadDirection"/> (through balls / runs).
+    ///
+    /// <paramref name="receiverCommittedToRun"/> (AIB-02d) says whether the receiver has actually committed
+    /// to the run the lead assumes — an advertised meeting region, a called-for ball, or a caller that knows
+    /// he will keep going. The default is <c>true</c> so every existing caller keeps its current plan
+    /// exactly; a caller that cannot promise the run passes <c>false</c> and gets the
+    /// <see cref="UncommittedLeadMaxMeters"/> hedge instead of a ball aimed metres away.
     /// </summary>
     public PassPlan PlanGroundPass(
         Vector2 originXZ,
@@ -97,40 +119,42 @@ public sealed class PassPlanner
         Vector2 extraLeadDirection = default,
         float maxLeadMeters = DefaultMaxLeadMeters,
         float minPower01 = 0f,
-        bool freezeReceiverAtLeadBound = false)
+        bool freezeReceiverAtLeadBound = false,
+        bool receiverCommittedToRun = true)
     {
         _ = receiverId; // kept so callers can tag plans with their receiver
 
         Vector2 velocity = ClampSpeed(receiverVelocityXZ, receiverMaxSpeed);
         Vector2 extraLead = extraLeadMeters > 0f ? extraLeadDirection * extraLeadMeters : Vector2.Zero;
 
+        // AIB-02d: an uncommitted receiver is hedged exactly like a human one — the solve freezes the
+        // receiver at the (smaller) lead bound instead of refusing the plan, because refusing would make
+        // every pass to a jogging team-mate infeasible rather than merely less ambitious.
+        float leadCap = receiverCommittedToRun
+            ? maxLeadMeters
+            : MathF.Min(maxLeadMeters, UncommittedLeadMaxMeters);
+        bool freezeLead = freezeReceiverAtLeadBound || !receiverCommittedToRun;
+
         float straightLineDistance = Vector2.Distance(originXZ, receiverPositionXZ);
         // Anchor the power to the *crisper* of the two tables: the lowest power that reaches the
         // distance at a trapable pace and the lowest power that reaches it at a firm, normal pass
         // pace. Using only the trapable table made almost every AI pass a slow roller.
-        int powerIndex = Math.Max(
-            PowerIndexForDistance(straightLineDistance),
-            PowerIndexForCrispDistance(straightLineDistance));
+        int anchorIndex = AnchoredPowerIndex(straightLineDistance, minPower01);
+        int powerIndex = anchorIndex;
 
-        // A crisper pass shortens the flight, and a shorter flight means a shorter (safer) lead.
-        // Used for human callers, whose movement cannot be forecast reliably.
-        if (minPower01 > 0f)
+        if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, leadCap, freezeLead, out float flightTime))
         {
-            int minPowerIndex = Math.Clamp((int)MathF.Round((minPower01 - MinPower) / PowerStep), 0, PowerSamples - 1);
-            powerIndex = Math.Max(powerIndex, minPowerIndex);
-        }
-
-        if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out float flightTime))
-        {
-            // A slow pass can be a metre short of a moving receiver, so the power steps up until one
-            // connects. It steps one notch at a time rather than jumping to full power: the old code
-            // retried at maximum, which for a runner produced a five-second ball the receiver had to chase
-            // (measured: a 43 m punt to a team-mate 12 m away). A firmer pass meets him sooner, and a
-            // shorter flight is what makes the ball controllable when it arrives.
+            // AIB-02d (audit 2026-11-22): retry *firmer*, above the anchored power. A gentler ball lengthens
+            // the flight, and a longer flight is exactly what makes the lead too long and the meeting miss
+            // too big — the two reasons the anchor failed — so stepping down can never rescue the solve; it
+            // can only turn the pass into a slow roller. The old loop started at
+            // PowerIndexForDistance(straightLineDistance) + 1, which is often *below* the crisp and
+            // min-power anchor, so a failed crisp pass was retried as a 0.35-power dribble and a human
+            // caller's requested power was discarded.
             powerIndex = -1;
-            for (int candidate = PowerIndexForDistance(straightLineDistance) + 1; candidate < PowerSamples; candidate++)
+            for (int candidate = anchorIndex + 1; candidate < PowerSamples; candidate++)
             {
-                if (!TrySolveArrivalTime(candidate, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out flightTime))
+                if (!TrySolveArrivalTime(candidate, originXZ, receiverPositionXZ, velocity, extraLead, leadCap, freezeLead, out flightTime))
                     continue;
 
                 powerIndex = candidate;
@@ -141,20 +165,21 @@ public sealed class PassPlanner
         }
 
         Vector2 target = ClampToPitch(receiverPositionXZ
-            + ClampVectorLength(velocity * flightTime, maxLeadMeters)
+            + ClampVectorLength(velocity * flightTime, leadCap)
             + extraLead);
         float distance = Vector2.Distance(originXZ, target);
 
         // Clamping to the pitch can move the target beyond what this power reaches. Re-anchor both
-        // tables together so the re-planned pass keeps its pace as well as its reach.
+        // tables together so the re-planned pass keeps its pace as well as its reach (and keeps any
+        // caller-requested power floor, AIB-02d).
         if (distance > _calibration.RangeAtArrivalSpeed[powerIndex] + 0.5f)
         {
-            powerIndex = Math.Max(PowerIndexForDistance(distance), PowerIndexForCrispDistance(distance));
-            if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, maxLeadMeters, freezeReceiverAtLeadBound, out flightTime))
+            powerIndex = AnchoredPowerIndex(distance, minPower01);
+            if (!TrySolveArrivalTime(powerIndex, originXZ, receiverPositionXZ, velocity, extraLead, leadCap, freezeLead, out flightTime))
                 return Infeasible(distance);
 
             target = ClampToPitch(receiverPositionXZ
-                + ClampVectorLength(velocity * flightTime, maxLeadMeters)
+                + ClampVectorLength(velocity * flightTime, leadCap)
                 + extraLead);
             distance = Vector2.Distance(originXZ, target);
         }
@@ -412,6 +437,28 @@ public sealed class PassPlanner
         float speed = velocity.Length();
         if (speed <= maxSpeed || speed <= 1e-4f) return velocity;
         return velocity * (maxSpeed / speed);
+    }
+
+    /// <summary>
+    /// AIB-02d: the power a pass to a receiver at this straight-line distance is anchored to — whichever is
+    /// crisper of the lowest power that reaches the distance at a trapable pace and the lowest power that
+    /// reaches it at a firm pass pace, raised to the caller's requested floor. The first solve, the firmer
+    /// retry and the pitch-clamp re-anchor all read it, so a caller's floor is never silently dropped.
+    /// </summary>
+    private int AnchoredPowerIndex(float distanceMeters, float minPower01)
+    {
+        int index = Math.Max(
+            PowerIndexForDistance(distanceMeters),
+            PowerIndexForCrispDistance(distanceMeters));
+
+        if (minPower01 > 0f)
+        {
+            int minPowerIndex = Math.Clamp(
+                (int)MathF.Round((minPower01 - MinPower) / PowerStep), 0, PowerSamples - 1);
+            index = Math.Max(index, minPowerIndex);
+        }
+
+        return index;
     }
 
     /// <summary>Lowest power whose trapable range still reaches the target distance.</summary>

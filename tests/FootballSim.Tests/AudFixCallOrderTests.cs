@@ -121,6 +121,12 @@ public sealed class AudFixCallOrderTests
     ///
     /// Pre-fix failure: none — this is the "did not change" guard, deliberately capturing the state the fix
     /// must preserve. It fails if the shipped-delay path ever starts behaving differently.
+    ///
+    /// <para><b>ai55 re-capture:</b> the AIB-01..AIB-06 behaviour fixes (carrier pressure, pass lanes and
+    /// leads, box support, central penetration, shot valuation, backward passes) legitimately move the shipped
+    /// default match, so the fingerprint was re-captured at <c>ai55-rs1</c>. The AUD-13c property is still
+    /// guarded by the zero-delay tests above; this test remains a drift guard for the shipped path, not a claim
+    /// that AI changes never move a match.</para>
     /// </summary>
     [Fact]
     public void ShippedDefaultDelayKeepsTheFixedScenarioUnchanged()
@@ -292,17 +298,19 @@ public sealed class AudFixCallOrderTests
     private static string Float(float value) => value.ToString("R", CultureInfo.InvariantCulture);
 
     /// <summary>
-    /// Captured on the pre-fix engine (commit 4ed6aab, before the AUD-13c publication move). The shipped
-    /// 18-tick delay means no same-tick call was ever usable, so the fix must reproduce this exactly.
+    /// Captured on the pre-fix engine (commit 4ed6aab, before the AUD-13c publication move) at <c>ai53</c>,
+    /// then re-captured at <c>ai55-rs1</c> after the AIB-01..AIB-06 behaviour fixes. The shipped 18-tick delay
+    /// means no same-tick call was ever usable, so the fix must reproduce the same path *for the same AI*; the
+    /// fingerprint is a drift guard over positions, analytics and the call/combination counters.
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=-6.528854,18.905054|players=" +
-        "1:-40.677685,2.8556504;2:-6.7964716,18.530794;3:-10.593042,-21.32037;4:-17.36071,12.137987;" +
-        "5:-15.061522,-6.868115;6:4.8505764,12.602575;7:30.933279,24.444065;8:24.318388,0.3045671;" +
-        "9:32.725597,0.9934963;10:6.43235,-3.6504788;11:21.92765,-31.02959;12:48.457844,1.1354797;" +
-        "13:20.269787,16.58142;14:20.63562,-18.081911;15:18.73442,5.6135035;16:36.513283,-3.817364;" +
-        "17:14.002986,1.0611258;18:0.4551865,12.9185095;19:11.927992,7.880449;20:-4.9717455,16.591509;" +
-        "21:6.8191004,5.0727997;22:-2.8825235,-12.574576;" +
-        "|analytics=1206,278,920,136,6,0,6,0,0,0,0,0|calls=182,5271,170,0|" +
-        "combinations=2,0,0,0,1,0,0";
+        "tick=1500|ball=48.329254,11.4716|players=" +
+        "1:-41.662224,1.4412389;2:3.908893,23.54375;3:3.9737408,-21.663395;4:-1.4592378,8.904141;" +
+        "5:-1.4711467,-7.432362;6:19.104939,2.8336546;7:51.55946,8.102137;8:41.32918,5.2931323;" +
+        "9:30.227127,-2.4485707;10:45.614845,-5.21825;11:31.792274,-0.77393395;12:51.39415,2.922631;" +
+        "13:49.670685,11.933961;14:47.072254,-4.6664925;15:48.54426,10.926725;16:45.461956,-6.2554455;" +
+        "17:45.00784,-4.7951064;18:5.1955776,18.493708;19:22.890034,7.756842;20:1.6690971,0.79193914;" +
+        "21:13.17601,-7.486145;22:5.3065643,-16.566927;" +
+        "|analytics=1179,305,563,122,4,3,3,2,4,0,0,0|calls=142,3922,139,0|" +
+        "combinations=4,0,0,0,1,0,2";
 }
