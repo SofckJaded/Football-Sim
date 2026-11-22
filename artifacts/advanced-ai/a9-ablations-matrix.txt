@@ -1,0 +1,116 @@
+﻿=== A9.2 feature ablations: same-seed A/B, 3 seeds x 1200 s -- reference build (all switches on) vs one switch off per feature ===
+Simulation version : ai52-rs1
+Ablation model     : an ablation is the off build of one mechanism at the same seed, the same
+                     squads and the same ends: both builds run the same engine, profiles, rules
+                     and cadence, and the only difference between them is one AiRuntimeConfig
+                     switch. Whatever differs between the two matches is therefore what that
+                     mechanism is worth, not a retuning of it. The reference build is
+                     new AiRuntimeConfig() (every switch on).
+Divergence         : a sampled tick diverges when the two builds' ball positions differ by more
+                     than 0.05 m or the score differs; the first divergence
+                     tick is the first such sampled tick, and mean/max ball separation is over the
+                     common tick range of the two matches.
+Classification     : mechanical, from the measured numbers: inert when the mechanism's reference
+                     counter is zero or no paired seed diverged at all; overwhelming when on at
+                     least seeds-1 paired seeds |possession delta| >= 10.0 pp OR
+                     |goals delta| >= 2 OR |ticks delta| >= 15 % of the
+                     reference ticks, AND the mean ball separation is >= 3.0 m;
+                     otherwise measured. The CLASS column is that rule's output, not an opinion.
+Reference (ON)     : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(on) runs(on) sweep(on)
+Off builds (OFF)   : one switch false each, everything else as the reference:
+  local cover        EnableLocalCover         commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(off) restdef(on) percept(on) orient(on) commit(on) runs(on) sweep(on)
+  rest defence       EnableRestDefence        commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(off) percept(on) orient(on) commit(on) runs(on) sweep(on)
+  perception limits  EnablePerceptionLimits   commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(off) orient(on) commit(on) runs(on) sweep(on)
+  orientation        EnableOrientation        commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(off) commit(on) runs(on) sweep(on)
+  commitment         EnableCommitment         commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(off) runs(on) sweep(on)
+  run coordination   EnableRunCoordination    commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(on) runs(off) sweep(on)
+  goalkeeper sweep   EnableGoalkeeperSweep    commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(on) runs(on) sweep(off)
+  lookahead          EnableShallowSearch      commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(off) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(on) runs(on) sweep(on)
+
+Seed 20260818:
+  reference build: 0-1, 72293 ticks, passes 553/437, shots 22, poss 56.7 % | cover opened 336/closed 335/handovers 206 | runs 4027/1857/107 published/withdrawn/claimed | combos 326/65 published/continued | scan starts 2663, revealed 184798, occluded 1132981
+  local cover         FT/FT  72293/72231  t | score 0-1 vs 0-0 | div 70486 t, first 1724   | ball 37.96/102.05 m mean/max | coverage opened 336/0
+  rest defence        FT/FT  72293/72501  t | score 0-1 vs 0-1 | div 71967 t, first 327    | ball 40.39/105.50 m mean/max | mean security 0.633/1.000
+  perception limits   FT/FT  72293/72263  t | score 0-1 vs 0-0 | div 72180 t, first 84     | ball 41.92/111.41 m mean/max | occluded sightings 1132981/0
+  orientation         FT/FT  72293/72247  t | score 0-1 vs 0-0 | div 72153 t, first 95     | ball 39.25/100.21 m mean/max | gaze-revealed sightings 184798/0
+  commitment          FT/FT  72293/72277  t | score 0-1 vs 1-0 | div 72183 t, first 95     | ball 38.84/96.14 m mean/max | committed player-ticks 317695/0
+  run coordination    FT/FT  72293/72245  t | score 0-1 vs 0-1 | div 72015 t, first 231    | ball 40.02/107.13 m mean/max | runs published 4027/0
+  goalkeeper sweep    FT/FT  72293/72247  t | score 0-1 vs 0-0 | div 71440 t, first 808    | ball 40.99/110.65 m mean/max | sweep-evaluated ticks 19927/0
+  lookahead           FT/FT  72293/72279  t | score 0-1 vs 0-0 | div 72185 t, first 95     | ball 38.72/107.81 m mean/max | continuations 65/36
+
+Seed 20268737:
+  reference build: 0-0, 72247 ticks, passes 522/408, shots 26, poss 54.4 % | cover opened 277/closed 277/handovers 199 | runs 3754/1714/94 published/withdrawn/claimed | combos 300/55 published/continued | scan starts 2496, revealed 186197, occluded 1096317
+  local cover         FT/FT  72247/72389  t | score 0-0 vs 1-0 | div 71804 t, first 365    | ball 40.94/104.36 m mean/max | coverage opened 277/0
+  rest defence        FT/FT  72247/72485  t | score 0-0 vs 0-1 | div 72086 t, first 162    | ball 36.01/102.31 m mean/max | mean security 0.611/1.000
+  perception limits   FT/FT  72247/72231  t | score 0-0 vs 0-0 | div 72127 t, first 104    | ball 37.36/101.36 m mean/max | occluded sightings 1096317/0
+  orientation         FT/FT  72247/72279  t | score 0-0 vs 0-0 | div 72080 t, first 165    | ball 40.36/104.69 m mean/max | gaze-revealed sightings 186197/0
+  commitment          FT/FT  72247/72215  t | score 0-0 vs 0-0 | div 72112 t, first 104    | ball 43.35/105.04 m mean/max | committed player-ticks 304141/0
+  run coordination    FT/FT  72247/72133  t | score 0-0 vs 1-0 | div 71682 t, first 452    | ball 42.87/105.65 m mean/max | runs published 3754/0
+  goalkeeper sweep    FT/FT  72247/72277  t | score 0-0 vs 0-1 | div 67299 t, first 4907   | ball 34.88/101.09 m mean/max | sweep-evaluated ticks 23680/0
+  lookahead           FT/FT  72247/72325  t | score 0-0 vs 0-1 | div 71603 t, first 645    | ball 39.94/109.25 m mean/max | continuations 55/40
+
+Seed 20276656:
+  reference build: 0-0, 72231 ticks, passes 543/443, shots 17, poss 53.2 % | cover opened 319/closed 318/handovers 179 | runs 3813/1776/100 published/withdrawn/claimed | combos 332/61 published/continued | scan starts 2540, revealed 175890, occluded 1112818
+  local cover         FT/FT  72231/72231  t | score 0-0 vs 0-0 | div 71712 t, first 519    | ball 37.67/108.06 m mean/max | coverage opened 319/0
+  rest defence        FT/FT  72231/72277  t | score 0-0 vs 0-1 | div 71963 t, first 269    | ball 40.02/102.65 m mean/max | mean security 0.629/1.000
+  perception limits   FT/FT  72231/72263  t | score 0-0 vs 0-0 | div 72148 t, first 84     | ball 39.82/113.10 m mean/max | occluded sightings 1112818/0
+  orientation         FT/FT  72231/72341  t | score 0-0 vs 0-1 | div 72136 t, first 96     | ball 44.98/106.62 m mean/max | gaze-revealed sightings 175890/0
+  commitment          FT/FT  72231/72263  t | score 0-0 vs 0-0 | div 72136 t, first 96     | ball 39.81/95.99 m mean/max | committed player-ticks 309452/0
+  run coordination    FT/FT  72231/72199  t | score 0-0 vs 0-0 | div 71082 t, first 1103   | ball 37.14/108.06 m mean/max | runs published 3813/0
+  goalkeeper sweep    FT/FT  72231/72247  t | score 0-0 vs 0-0 | div 60486 t, first 11746  | ball 34.60/99.45 m mean/max | sweep-evaluated ticks 20376/0
+  lookahead           FT/FT  72231/72437  t | score 0-0 vs 0-1 | div 71989 t, first 242    | ball 37.56/111.47 m mean/max | continuations 61/41
+
+=== Aggregate over 3 seeds (means per seed; deltas are OFF - reference) ===
+feature              mech ON mech OFF   div med 1st  ball m ticks d poss pp goals d passes d  shots d CLASS       
+local cover            310.7      0.0  3/3      519   38.86     +27    -0.3     0.0    -31.0     -2.3 measured    
+rest defence           0.624    1.000  3/3      269   38.81    +164    -2.4    +0.7    -13.3     -5.0 measured    
+perception limits  1114038.7      0.0  3/3       84   39.70      -5    -2.2    -0.3    -25.0     -3.3 measured    
+orientation         182295.0      0.0  3/3       96   41.53     +32    -5.6     0.0    -60.7     -3.0 measured    
+commitment          310429.3      0.0  3/3       96   40.67      -5    -0.6     0.0    -18.7     -7.0 measured    
+run coordination      3864.7      0.0  3/3      452   40.01     -65    -4.3    +0.3    -22.3     -2.3 measured    
+goalkeeper sweep     21327.7      0.0  3/3     4907   36.82       0    -0.3     0.0    -16.7     +3.7 measured    
+lookahead               60.3     39.0  3/3      242   38.74     +90    -2.2    +0.3    -25.3     +5.3 measured    
+mech = the feature's mechanism counter (counts as per-seed means, rest-defence security
+as a 0-1 mean); div = seeds on which at least one sampled tick diverged; med 1st = median
+first-divergence tick over the diverged seeds; d = OFF minus reference.
+=== Mechanism neutralised when off ===
+feature            probe counter                 ON mean OFF mean  verdict
+local cover        coverage opened                 310.7      0.0  NEUTRAL -- gate holds on every seed
+rest defence       mean security                   0.624    1.000  NEUTRAL -- gate holds on every seed
+perception limits  occluded sightings          1114038.7      0.0  NEUTRAL -- gate holds on every seed
+orientation        gaze-revealed sightings      182295.0      0.0  REPORTED ONLY (not gated; classified by divergence)
+commitment         committed player-ticks       310429.3      0.0  NEUTRAL -- gate holds on every seed
+run coordination   runs published                 3864.7      0.0  NEUTRAL -- gate holds on every seed
+goalkeeper sweep   sweep-evaluated ticks         21327.7      0.0  NEUTRAL -- gate holds on every seed
+lookahead          continuations                    60.3     39.0  REPORTED ONLY (not gated; classified by divergence)
+Gates: local cover coverage opened = 0; run coordination runs published = 0; keeper sweep
+       sweep-evaluated ticks = 0; commitment committed player-ticks = 0; perception limits
+       occluded sightings = 0; rest defence off mean security > on mean security, every seed.
+Orientation and lookahead are reported, not gated; lookahead's strict claim belongs to --search.
+=== Findings (the measured numbers, not an assertion) ===
+inert        : none
+overwhelming : none
+measured     : local cover: 3/3 seeds diverged, median first divergence 519 t, mean ball separation 38.86 m; coverage opened 310.7 -> 0.0
+               rest defence: 3/3 seeds diverged, median first divergence 269 t, mean ball separation 38.81 m; mean security 0.624 -> 1.000
+               perception limits: 3/3 seeds diverged, median first divergence 84 t, mean ball separation 39.70 m; occluded sightings 1114038.7 -> 0.0
+               orientation: 3/3 seeds diverged, median first divergence 96 t, mean ball separation 41.53 m; gaze-revealed sightings 182295.0 -> 0.0
+               commitment: 3/3 seeds diverged, median first divergence 96 t, mean ball separation 40.67 m; committed player-ticks 310429.3 -> 0.0
+               run coordination: 3/3 seeds diverged, median first divergence 452 t, mean ball separation 40.01 m; runs published 3864.7 -> 0.0
+               goalkeeper sweep: 3/3 seeds diverged, median first divergence 4907 t, mean ball separation 36.82 m; sweep-evaluated ticks 21327.7 -> 0.0
+               lookahead: 3/3 seeds diverged, median first divergence 242 t, mean ball separation 38.74 m; continuations 60.3 -> 39.0
+An inert feature is one whose ablation changed nothing measurable, or whose reference counter
+never moved - the build does not actually use the mechanism. An overwhelming feature is one
+the same ablation moves far past the stated bounds - the match is not robust to its removal.
+The probe reports both; neither is corrected here.
+=== Verdict ===
+  (a) full time, both builds, every feature x seed: OK (24/24 pairs)
+  (b) local cover         coverage requests opened = 0                 OK on 3/3 seeds
+  (b) rest defence        off mean security > on mean security         OK on 3/3 seeds
+  (b) perception limits   occluded sightings = 0                       OK on 3/3 seeds
+  (b) orientation         reported only, not gated                     reported only
+  (b) commitment          committed player-ticks = 0                   OK on 3/3 seeds
+  (b) run coordination    runs published = 0                           OK on 3/3 seeds
+  (b) goalkeeper sweep    sweep-evaluated ticks = 0                    OK on 3/3 seeds
+  (b) lookahead           reported only, not gated                     reported only
+
+RESULT: PASS -- every feature's two builds reached full time on every seed, and every gated ablation neutralised its own mechanism in the off build
