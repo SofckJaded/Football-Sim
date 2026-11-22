@@ -80,6 +80,13 @@ public sealed class MatchSimulationEngine
 {
     private readonly PreMatchConfig _config;
     private readonly PitchDimensions _pitch;
+
+    /// <summary>
+    /// AUD-12: live ticks between formation-anchor refreshes, from the validated AI configuration. The
+    /// field <see cref="AiRuntimeConfig.PerceptionRefreshTicks"/> was documented as this cadence but no code
+    /// read it; the default (4) is exactly the literal this loop used to hard-code.
+    /// </summary>
+    private readonly int _anchorRefreshTicks;
     private readonly SeededRandom _executionRng;
     private readonly SeededRandom _perceptionRng;
     private readonly BallPhysicsSolver _ballSolver;
@@ -156,6 +163,7 @@ public sealed class MatchSimulationEngine
     {
         _config = config;
         _pitch = pitch;
+        _anchorRefreshTicks = config.Ai.PerceptionRefreshTicks;
 
         if (scenario is null)
         {
@@ -300,6 +308,13 @@ public sealed class MatchSimulationEngine
 
     /// <summary>Tick at which <see cref="LastAiResetReason"/> was raised.</summary>
     public int LastAiResetTick { get; private set; }
+
+    /// <summary>
+    /// AUD-12 diagnostics: how many times the tactical coordinator has refreshed the formation anchors.
+    /// The cadence is <see cref="AiRuntimeConfig.PerceptionRefreshTicks"/>, so a test can prove a
+    /// non-default configuration changes it. No decision path reads this.
+    /// </summary>
+    public int AnchorRefreshCount { get; private set; }
 
     /// <summary>Statistics tracker fed by the execution contacts (audit F17).</summary>
     public MatchStatisticsTracker Statistics => _statistics;
@@ -642,9 +657,14 @@ public sealed class MatchSimulationEngine
             _ballResponderElection.Update(_players, Ball, _possessionTracker.Current, humanPlayerId);
             BallPossessionSnapshot possession = _possessionTracker.Current;
 
-            if (CurrentTick % 4 == 1)
+            // AUD-12: the anchor refresh cadence is the configured perception refresh cadence. The
+            // `== 1` phase offset is kept, so the default configuration still refreshes on ticks
+            // 1, 5, 9, ... exactly as the old literal `CurrentTick % 4 == 1` did. `1 % period` is the
+            // offset expressed for any legal cadence (period 1 refreshes every tick).
+            if (CurrentTick % _anchorRefreshTicks == 1 % _anchorRefreshTicks)
             {
                 _tacticalCoordinator.UpdateTeamAnchors(_players, Ball, homeDirX);
+                AnchorRefreshCount++;
             }
 
             // Audit F04: persistent team-level jobs relative to the actual carrier/loose ball.
@@ -838,6 +858,10 @@ public sealed class MatchSimulationEngine
 
         if (!_homeBelief.HasBeenBuilt)
         {
+            // AUD-03: the first look after kickoff *or* after a phase reset that dropped the observations
+            // (see ResetAiState). Seeding here is what makes the first tick after the reset safe: rebuilding
+            // from observations at this point would publish an empty or previous-passage belief, so the
+            // observation rebuild resumes on the first rebuild that has second-half sightings.
             _homeBelief = TeamBelief.FromTruth(TeamId.Home, _players);
             _awayBelief = TeamBelief.FromTruth(TeamId.Away, _players);
             return;
@@ -1016,7 +1040,21 @@ public sealed class MatchSimulationEngine
         // where it left, and `ObservedBallState` already ignores a teleport, so wiping the history for a
         // throw-in would make the first look after every stoppage blind for no reason.
         if (reason is AiResetReason.HalfTime or AiResetReason.FullTime)
+        {
             _perceptionSystem.Clear();
+
+            // AUD-03: the observations and the team beliefs built from them describe the first half's world
+            // — opposite attacking directions, pre-kickoff positions. Live play is off across the interval,
+            // so nothing would refill the observations before the second half's first live tick, where
+            // UpdateTeamBeliefs() runs before the perception loop: the first-half beliefs would be rebuilt
+            // from the stale snapshots and fed to the jobs, the support-presser election, the traps and the
+            // restart routine. Dropping both makes the first live tick take the same first-look seed the
+            // kickoff takes (see UpdateTeamBeliefs), and the rebuild from observations resumes once the
+            // perception loop has published second-half observations.
+            _latestObservations.Clear();
+            _homeBelief = new TeamBelief(TeamId.Home);
+            _awayBelief = new TeamBelief(TeamId.Away);
+        }
 
         // A7.2: a shout belongs to the passage it was made in, and every call lifetime is under two
         // seconds anyway — but a restart also moves the ball and re-places the teams, so a call about the
@@ -1038,6 +1076,18 @@ public sealed class MatchSimulationEngine
         // a different restart already armed under it, the honest ending is "replaced"; otherwise the world was
         // simply reset.
         _communication.Restarts.ClearAll(_rulesEngine.ActiveRestart);
+
+        // AUD-03: the allocator's assignments, coverage requests, line bands and turnover commitments are
+        // passage-of-play state too. Without this reset a quick restart kept the pre-stoppage anchors for
+        // up to MinimumHoldTicks, and an open coverage request (720-tick bound) could outlive the passage
+        // it protected. The coordinator forces its next live pass, so nobody starts the new passage idle.
+        _teamJobs.ResetForPhase(reason);
+
+        // AUD-03: a run advertisement is a promise about the passage it was published in. The board relied
+        // on each runner withdrawing his own shout; a discontinuity must not depend on that, so both teams'
+        // promises are dropped here (the same rule A7.2's calls and A8.1's contracts follow).
+        _communication.Runs.Clear(TeamId.Home);
+        _communication.Runs.Clear(TeamId.Away);
     }
 
     private void AppendContactLog(IReadOnlyList<BallContactEvent> events)

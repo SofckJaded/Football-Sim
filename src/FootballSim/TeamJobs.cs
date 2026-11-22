@@ -66,7 +66,7 @@ public readonly record struct TeamJobAssignment(
 
 /// <summary>
 /// A6.3: one explicit transfer of marking responsibility. The threat crossed into another defender's zone,
-/// so the job moved from one player to another on a stated tick, with both slots' distances recorded â€” a
+/// so the job moved from one player to another on a stated tick, with both slots' distances recorded — a
 /// handover that can be explained, rather than a silent re-selection when the hold happened to expire.
 /// </summary>
 public readonly record struct MarkingHandover(
@@ -89,9 +89,15 @@ public readonly record struct MarkingHandover(
 /// for a bounded period (audit F04). Jobs are recomputed every few ticks; a possession change
 /// interrupts immediately. Formation anchors stay the constraint/fallback.
 /// </summary>
-public sealed class TeamJobCoordinator
+public sealed class TeamJobCoordinator : IAiStateResettable
 {
-    private const int RecomputeIntervalTicks = 6;
+    /// <summary>
+    /// AUD-12: live ticks between assignment passes for a coordinator built without a configuration. A
+    /// configured match reads <see cref="AiRuntimeConfig.LocalCoordinationTicks"/> instead — the field the
+    /// AI cadence documentation always said owned this interval but nothing read (AUD-12).
+    /// </summary>
+    private const int DefaultRecomputeIntervalTicks = 6;
+
     private const int MinimumHoldTicks = 42;
 
     /// <summary>A coverage request never outlives this window, whatever else happens (A3.5).</summary>
@@ -196,6 +202,14 @@ public sealed class TeamJobCoordinator
     /// </summary>
     private float _attackingWidth01 = 0.55f;
 
+    /// <summary>
+    /// AUD-01c diagnostics: the half-width target, in metres, the most recent assignment pass placed its
+    /// width duties at. It is a pure function of the pitch and the profile's
+    /// <see cref="TeamTacticalProfile.AttackingWidth01"/>, exposed so a test can pin the formula; no
+    /// decision path reads it.
+    /// </summary>
+    private float _attackingWidthTargetMeters;
+
     /// <summary>The rest-defence picture from each team's last in-possession pass (A3.6).</summary>
     private readonly Dictionary<TeamId, RestDefence> _security = new();
 
@@ -203,7 +217,23 @@ public sealed class TeamJobCoordinator
     private readonly Dictionary<TeamId, TurnoverCommitment> _turnovers = new();
 
     private TeamId? _lastPossessionTeam;
-    private int _lastRecomputeTick = -RecomputeIntervalTicks;
+    private int _lastRecomputeTick;
+
+    /// <summary>AUD-12: live ticks between assignment passes, from the match's AI configuration.</summary>
+    private readonly int _recomputeIntervalTicks;
+
+    /// <summary>
+    /// AUD-03: a phase reset drops every assignment, so the next live tick must recompute even when the
+    /// turnover/cadence test would otherwise skip it. Set by <see cref="ResetForPhase"/>, consumed by the
+    /// next <see cref="Update"/>.
+    /// </summary>
+    private bool _recomputePending = true;
+
+    /// <summary>
+    /// The last tick this coordinator was asked about, used as the closing tick when a phase reset closes
+    /// an open coverage request (<see cref="ResetForPhase"/> has no tick of its own).
+    /// </summary>
+    private int _observedTick;
 
     /// <summary>
     /// A9.2: whether the defending side maintains A3.5's local coverage request. On unless a configuration
@@ -227,6 +257,10 @@ public sealed class TeamJobCoordinator
         _pitch = pitch;
         _localCoverEnabled = ai?.EnableLocalCover != false;
         _restDefenceEnabled = ai?.EnableRestDefence != false;
+        // AUD-12: the allocator's recompute cadence is the configured local-coordination cadence. With no
+        // configuration the shipped literal (6) is used, so an unconfigured fixture is unchanged.
+        _recomputeIntervalTicks = ai?.LocalCoordinationTicks ?? DefaultRecomputeIntervalTicks;
+        _lastRecomputeTick = -_recomputeIntervalTicks;
         _coverage[TeamId.Home] = new CoverageRequest(TeamId.Home);
         _coverage[TeamId.Away] = new CoverageRequest(TeamId.Away);
     }
@@ -290,6 +324,63 @@ public sealed class TeamJobCoordinator
     /// <summary>Lifetime count of coverage requests closed, by any reason. Diagnostics and tests.</summary>
     public int CoverageRequestsClosed { get; private set; }
 
+    /// <summary>
+    /// AUD-03: number of authoritative phase resets this allocator has cleared its passage state for.
+    /// Diagnostics and tests.
+    /// </summary>
+    public int PhaseResetCount { get; private set; }
+
+    /// <summary>
+    /// AUD-12: assignment passes actually run since construction. <see cref="WillRecompute"/> is the
+    /// predicate the engine reads and <see cref="Update"/> is the pass itself, so a test can prove a
+    /// configured cadence changes both. Diagnostics only — no decision path reads it.
+    /// </summary>
+    public int AssignmentPassCount { get; private set; }
+
+    /// <summary>
+    /// AUD-07 diagnostics: how many duties of <paramref name="job"/> the allocator counted in its most
+    /// recent assignment pass. The counts are shared by both teams' passes and cleared at the start of
+    /// each, so after an <see cref="Update"/> this is the second (away) team's tally — the one that
+    /// survives. Tests read it to prove the counts describe the duties actually handed out; no decision
+    /// path may read it.
+    /// </summary>
+    public int DutyCountOf(TacticalJob job) => _jobCounts.GetValueOrDefault(job);
+
+    /// <summary>
+    /// AUD-01c diagnostics: the half-width target the most recent assignment pass used for its width
+    /// duties, in metres. Pure function of the pitch and the assigned team's
+    /// <see cref="TeamTacticalProfile.AttackingWidth01"/>; a test pins the formula with it and no decision
+    /// path reads it.
+    /// </summary>
+    public float AttackingWidthTargetMeters => _attackingWidthTargetMeters;
+
+    /// <summary>
+    /// AUD-03: drops the allocator's passage-of-play state at an authoritative discontinuity.
+    ///
+    /// The audit found the job coordinator was not on the engine's reset list, so an active coverage
+    /// request (up to a 720-tick hold), its owner's temporary duty, every assignment, the line bands and
+    /// the turnover commitments survived a restart into the next passage — and a quick restart where the
+    /// same team kept the ball kept pre-stoppage anchors for up to <see cref="MinimumHoldTicks"/>. The
+    /// next live tick is forced to recompute so no player starts the new passage with no duty.
+    /// </summary>
+    public void ResetForPhase(AiResetReason reason)
+    {
+        // Close through the one closing path, so the lifetime counters and the open request's stated
+        // reason stay truthful (CloseCoverage also strips the owner's ProtectGap duty).
+        CloseCoverage(TeamId.Home, CoverageRequestState.PassageEnded, _observedTick,
+            $"phase reset ({reason})");
+        CloseCoverage(TeamId.Away, CoverageRequestState.PassageEnded, _observedTick,
+            $"phase reset ({reason})");
+
+        _assignments.Clear();
+        _assignedAtTick.Clear();
+        _lineBands.Clear();
+        _turnovers.Clear();
+        _lastPossessionTeam = null;
+        _recomputePending = true;
+        PhaseResetCount++;
+    }
+
     public TeamJobAssignment? Get(int playerId) =>
         _assignments.TryGetValue(playerId, out TeamJobAssignment assignment) ? assignment : null;
 
@@ -298,7 +389,9 @@ public sealed class TeamJobCoordinator
     /// the teams' belief views on the cadence they are read (A2.6) instead of every tick.
     /// </summary>
     public bool WillRecompute(TeamId? possessingTeam, int tick) =>
-        possessingTeam != _lastPossessionTeam || tick - _lastRecomputeTick >= RecomputeIntervalTicks;
+        _recomputePending ||
+        possessingTeam != _lastPossessionTeam ||
+        tick - _lastRecomputeTick >= _recomputeIntervalTicks;
 
     public void Update(
         IReadOnlyList<FootballerState> players,
@@ -320,12 +413,17 @@ public sealed class TeamJobCoordinator
         float homeLineCallShiftMeters = 0f,
         float awayLineCallShiftMeters = 0f)
     {
+        _observedTick = tick;
+
+        bool pending = _recomputePending;
         bool urgent = possessingTeam != _lastPossessionTeam;
-        if (!urgent && tick - _lastRecomputeTick < RecomputeIntervalTicks)
+        if (!pending && !urgent && tick - _lastRecomputeTick < _recomputeIntervalTicks)
             return;
 
+        _recomputePending = false;
         _lastRecomputeTick = tick;
         _lastPossessionTeam = possessingTeam;
+        AssignmentPassCount++;
 
         if (urgent)
         {
@@ -367,7 +465,12 @@ public sealed class TeamJobCoordinator
 
         // Width jobs must respect the team profile: a possession side stretches the pitch, a direct
         // side stays compact (the old constant touchline target erased the profile difference).
-        float wideZ = (_pitch.HalfWidth - 3f) * (0.55f + 0.55f * profile.AttackingWidth01);
+        // AUD-01c: the old multiplier reached 1.10 at AttackingWidth01 = 1, so the target (34.1 m) sat
+        // outside the 34 m half-width and saturated against ClampToPitch from about 0.82 upwards. Capping
+        // the profile term at 1.0 keeps the width strictly inside the pitch and monotonic in the profile.
+        float wideZ = (_pitch.HalfWidth - 3f) *
+                      (0.55f + 0.45f * Math.Clamp(profile.AttackingWidth01, 0f, 1f));
+        _attackingWidthTargetMeters = wideZ;
         bool inPossession = possessingTeam == team;
 
         // A6.4: the team's answer to the turnover is decided before anything is placed from it, because the
@@ -511,7 +614,7 @@ public sealed class TeamJobCoordinator
         // normal jobs so the responsibility can claim a player the incumbent pass kept on the line: the
         // line has to slide, and that is the point of the mechanism.
         MaintainCoverage(team, players, formation, ballXZ, attackDirX, tick, inPossession,
-            responderId, taken, available);
+            responderId, counts, taken, available);
 
         float offsideLineProj = ComputeOffsideLineProj(opponents, ball, attackDirX);
         float referenceProj = referenceXZ.X * attackDirX;
@@ -532,6 +635,67 @@ public sealed class TeamJobCoordinator
 
             AssignUniqueJob(available, counts, taken, TacticalJob.DefensiveCover, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 _ => ClampToPitch(referenceXZ + SimMath.SafeNormalize(ownGoalXZ - referenceXZ, new Vector2(-attackDirX, 0f)) * 11f));
+
+            // A depth run (a box run) only makes sense when there is space behind the line to attack,
+            // *and* the side can afford to send somebody: the transition picture decides that, not a
+            // fixed count behind the ball (A3.6).
+            //
+            // A9.6c (rendered-review finding 3): the old gate was "space behind the line", which is false exactly
+            // when the ball reaches the byline — the ball IS the deepest point — so the one duty that may run a
+            // box arrival was withdrawn at the moment a delivery target was needed. A final-third ball now also
+            // asks for the box run; the rest-defence allowance still decides whether the side can afford it.
+            bool boxRunPossible = referenceProj >= 30f;
+            bool depthRunPossible = forwardCommitted < forwardAllowance &&
+                                    (boxRunPossible ||
+                                     (offsideLineProj - referenceProj > 4f && offsideLineProj > 10f));
+
+            bool TryDepthRun() => AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents,
+                referenceXZ, attackDirX, offsideLineProj, tick, player =>
+                {
+                    if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
+                        return null;
+
+                    if (boxRunPossible)
+                    {
+                        // A9.6c: a box arrival, not a generic depth run — 11 m from the goal line (the
+                        // penalty-spot area), in the player's own lane but pulled to the far half-space from
+                        // the ball so a wide carrier has somebody to cross to.
+                        //
+                        // AUD-02: the nominal 11 m from the goal line is 41.5 m on a 105 m pitch, and the
+                        // attack-target guard in AssignUniqueJob rejects a target more than 2 m beyond the
+                        // believed line. A defensive line normally holds below 39.5 m once the ball is in the
+                        // final third, so the box arrival was hard-rejected for every candidate and no
+                        // DepthRun was assigned at all. Clamp the projection to the onside budget, and never
+                        // deepen it behind the ball that is being delivered.
+                        float boxLaneZ = player.TacticalAnchor == Vector3.Zero
+                            ? player.Position.Z
+                            : player.TacticalAnchor.Z;
+                        float farSideSign = referenceXZ.Y >= 0f ? -1f : 1f;
+                        float boxZ = Math.Clamp(
+                            MathF.Abs(boxLaneZ) > 4f ? boxLaneZ : farSideSign * 7f,
+                            -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
+                        float boxProj = MathF.Max(referenceProj,
+                            MathF.Min(_pitch.HalfLength - 11f, offsideLineProj - 1.5f));
+                        return new Vector2(attackDirX * boxProj, boxZ);
+                    }
+
+                    float runProj = MathF.Max(2f, MathF.Min(offsideLineProj - 1.5f,
+                        MathF.Max(referenceProj + 8f, offsideLineProj - 6f)));
+
+                    // Run in the player's own lane (their formation anchor), not wherever they
+                    // happen to have drifted: a winger must stay wide while running in behind.
+                    float laneZ = player.TacticalAnchor == Vector3.Zero
+                        ? player.Position.Z
+                        : player.TacticalAnchor.Z;
+                    float z = Math.Clamp(laneZ, -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
+                    return new Vector2(attackDirX * runProj, z);
+                }, baseScore: 0.05f);
+
+            // AUD-02 (recommendation): with the ball in the final third the box arrival is offered before
+            // the support duties. An outlet or far-side width job is held for MinimumHoldTicks once
+            // assigned, so handing those out first is what kept a forward locked away from the box.
+            if (depthRunPossible && boxRunPossible && TryDepthRun())
+                forwardCommitted++;
 
             AssignUniqueJob(available, counts, taken, TacticalJob.NearOutlet, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
                 player =>
@@ -557,57 +721,10 @@ public sealed class TeamJobCoordinator
                     return ClampToPitch(Onside(target, offsideLineProj - 1.5f, attackDirX));
                 });
 
-            // A depth run (a box run) only makes sense when there is space behind the line to attack,
-            // *and* the side can afford to send somebody: the transition picture decides that, not a
-            // fixed count behind the ball (A3.6).
-            //
-            // A9.6c (rendered-review finding 3): the old gate was "space behind the line", which is false exactly
-            // when the ball reaches the byline — the ball IS the deepest point — so the one duty that may run a
-            // box arrival was withdrawn at the moment a delivery target was needed. A final-third ball now also
-            // asks for the box run; the rest-defence allowance still decides whether the side can afford it.
-            bool boxRunPossible = referenceProj >= 30f;
-            bool depthRunPossible = forwardCommitted < forwardAllowance &&
-                                    (boxRunPossible ||
-                                     (offsideLineProj - referenceProj > 4f && offsideLineProj > 10f));
-            if (depthRunPossible)
-            {
-                if (AssignUniqueJob(available, counts, taken, TacticalJob.DepthRun, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
-                    player =>
-                    {
-                        if (player.Role is not (TacticalRole.Striker or TacticalRole.Winger or TacticalRole.CentralMidfielder))
-                            return null;
-
-                        if (boxRunPossible)
-                        {
-                            // A9.6c: a box arrival, not a generic depth run — 11 m from the goal line (the
-                            // penalty-spot area), in the player's own lane but pulled to the far half-space from
-                            // the ball so a wide carrier has somebody to cross to. The run kinds' own box path
-                            // still clamps to the believed offside line.
-                            float boxLaneZ = player.TacticalAnchor == Vector3.Zero
-                                ? player.Position.Z
-                                : player.TacticalAnchor.Z;
-                            float farSideSign = referenceXZ.Y >= 0f ? -1f : 1f;
-                            float boxZ = Math.Clamp(
-                                MathF.Abs(boxLaneZ) > 4f ? boxLaneZ : farSideSign * 7f,
-                                -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
-                            return new Vector2(attackDirX * (_pitch.HalfLength - 11f), boxZ);
-                        }
-
-                        float runProj = MathF.Max(2f, MathF.Min(offsideLineProj - 1.5f,
-                            MathF.Max(referenceProj + 8f, offsideLineProj - 6f)));
-
-                        // Run in the player's own lane (their formation anchor), not wherever they
-                        // happen to have drifted: a winger must stay wide while running in behind.
-                        float laneZ = player.TacticalAnchor == Vector3.Zero
-                            ? player.Position.Z
-                            : player.TacticalAnchor.Z;
-                        float z = Math.Clamp(laneZ, -_pitch.HalfWidth + 6f, _pitch.HalfWidth - 6f);
-                        return new Vector2(attackDirX * runProj, z);
-                    }, baseScore: 0.05f))
-                {
-                    forwardCommitted++;
-                }
-            }
+            // Behind the line, a depth run is the answer only when the box arrival above did not apply:
+            // the final third's first refusal is a box arrival (AUD-02).
+            if (depthRunPossible && !boxRunPossible && TryDepthRun())
+                forwardCommitted++;
 
             if (forwardCommitted < forwardAllowance &&
                 AssignUniqueJob(available, counts, taken, TacticalJob.Overlap, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
@@ -639,7 +756,7 @@ public sealed class TeamJobCoordinator
             // A6.3: how many opponents this profile marks man-for-man is a style decision, not a constant.
             AssignMarkers(players, available, counts, taken, opponents, ownGoalXZ, attackDirX, tick, formation, profile);
 
-            // A6.3: the remaining defenders hold one shared depth band â€” the whole line steps together,
+            // A6.3: the remaining defenders hold one shared depth band — the whole line steps together,
             // each man in his own lane, with the ball-side and far-side exceptions the band allows.
             // A9.3 part 2: the copy is taken before the loop, exactly where ToArray took it, because the
             // loop removes from the live list; a reused snapshot replaces the array allocation only.
@@ -747,7 +864,7 @@ public sealed class TeamJobCoordinator
     /// A line player pulled more than <see cref="VacateDistanceMeters"/> out of the shape he was given,
     /// by the press job, leaves a gap behind him: the slot he owns, provided that slot is goal-side of
     /// the ball and inside play range. Nearby line players bid for it, the deterministic winner accepts,
-    /// and the request stays live until it ends with a stated reason â€” the source is back in his line
+    /// and the request stays live until it ends with a stated reason — the source is back in his line
     /// (handback), the press ended, the ball left the area, the hold expired, the owner left the pitch,
     /// or the passage turned over. One request per team is the cascade bound.
     /// </summary>
@@ -760,6 +877,7 @@ public sealed class TeamJobCoordinator
         int tick,
         bool inPossession,
         int? responderId,
+        Dictionary<TacticalJob, int> counts,
         HashSet<int> taken,
         List<FootballerState> available)
     {
@@ -855,6 +973,19 @@ public sealed class TeamJobCoordinator
         }
 
         request.Accept(winner, tick, request.Reason);
+
+        // AUD-07: a bidder already held on DefensiveLine or Shape was counted in this pass's keep loop,
+        // and the temporary responsibility overwrites that duty. Move the count with the duty; a stale
+        // assignment from an earlier pass was never counted this pass and must not be decremented, so the
+        // decrement is conditional on the player being in `taken`. Only the two duties the bid list
+        // admits on purpose are moved: a contextual duty is not the mechanism's to rearrange.
+        if (taken.Contains(protector.Id) &&
+            _assignments.TryGetValue(protector.Id, out TeamJobAssignment prior) &&
+            prior.Job is TacticalJob.DefensiveLine or TacticalJob.Shape)
+        {
+            counts[prior.Job] = Math.Max(0, counts.GetValueOrDefault(prior.Job) - 1);
+        }
+
         Assign(protector, TacticalJob.ProtectGap, gap.Region, null, request.Reason, tick,
             sourcePlayerId: gap.SourcePlayerId, temporary: true);
         taken.Add(protector.Id);
@@ -888,7 +1019,7 @@ public sealed class TeamJobCoordinator
     ///
     /// The two references are deliberately different. *Is he out of the line* is measured against the
     /// shape anchor he was given, because that anchor already carries the line height and the ball
-    /// terms the side is playing with â€” a high line is not a vacancy. *What must be protected* is the
+    /// terms the side is playing with — a high line is not a vacancy. *What must be protected* is the
     /// slot he owns, because that is the region of the formation that is now empty and it does not move
     /// while the ball does.
     /// </summary>
@@ -928,7 +1059,7 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
-    /// A3.5: collects the bids for a vacated region â€” every eligible line player who could slide across,
+    /// A3.5: collects the bids for a vacated region — every eligible line player who could slide across,
     /// with the score, the travel, the role fit and how near his own slot is. The request keeps them, so
     /// the accepted owner can be explained after the fact.
     /// </summary>
@@ -1088,10 +1219,10 @@ public sealed class TeamJobCoordinator
     /// A6.3: hands a threat over from his held marker to the defender whose *zone* now owns him.
     ///
     /// A held marker runs with the man he picked up, so the two stay close and a distance test would never
-    /// move the job â€” but responsibility for a threat belongs to the defender whose place in the formation is
+    /// move the job — but responsibility for a threat belongs to the defender whose place in the formation is
     /// nearest to him, not to whoever happened to pick him up first. When the threat crosses far enough into
-    /// another slot â€” by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
-    /// â€” the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
+    /// another slot — by <see cref="HandoverZoneMarginMeters"/> and within <see cref="MaxZoneHandoverMeters"/>
+    /// — the responsibility is transferred explicitly: the new owner is assigned the marking job, the old
     /// marker is released back into the shape on the same pass, and the event is recorded with both slots'
     /// distances so the handover can be explained after the fact. At most
     /// <see cref="MaxHandoversPerPass"/> per pass, so the line absorbs one change at a time.
@@ -1120,8 +1251,12 @@ public sealed class TeamJobCoordinator
         // contextual duty of his own is not a candidate. L17: the released marker does *not* always take his
         // place — a defensive midfielder cannot join the line (the line loop admits CB/FB only), so when he
         // is the one released the side is a man short there until the next pass re-forms it.
+        //
+        // AUD-07: a held candidate may be on DefensiveLine *or* on Shape — a shape duty is not a line slot,
+        // so the duty he actually held is recorded and the release moves that count, not the line's.
         FootballerState? owner = null;
-        bool ownerOnTheLine = false;
+        bool ownerWasHeld = false;
+        TacticalJob ownerPriorJob = TacticalJob.Shape;
         float ownerSlotDistance = float.MaxValue;
         for (int i = 0; i < players.Count; i++)
         {
@@ -1130,14 +1265,16 @@ public sealed class TeamJobCoordinator
             if (candidate.Role is not (TacticalRole.CenterBack or TacticalRole.FullBack or TacticalRole.DefensiveMidfielder))
                 continue;
 
+            bool held = false;
+            TacticalJob priorJob = TacticalJob.Shape;
             bool free = available.Contains(candidate);
-            bool onTheLine = false;
             if (!free)
             {
                 if (!taken.Contains(candidate.Id)) continue;
                 if (!_assignments.TryGetValue(candidate.Id, out TeamJobAssignment duty)) continue;
                 if (duty.Job is not (TacticalJob.DefensiveLine or TacticalJob.Shape)) continue;
-                onTheLine = true;
+                priorJob = duty.Job;
+                held = true;
             }
 
             if (!formation.TryGetWorldAnchor(candidate.Id, attackDirX, out Vector3 slot)) continue;
@@ -1148,25 +1285,25 @@ public sealed class TeamJobCoordinator
 
             ownerSlotDistance = distance;
             owner = candidate;
-            ownerOnTheLine = onTheLine;
+            ownerWasHeld = held;
+            ownerPriorJob = priorJob;
         }
 
         if (owner is null) return false;
         if (ownerSlotDistance + HandoverZoneMarginMeters >= incumbentSlotDistance) return false;
 
         // The old marker goes back into the shape this pass; the new owner takes the man. Move the
-        // duty counts with the jobs: the old marker's slot is released and the line's owner leaves
-        // the line, so neither may keep a count that was already spent this pass.
+        // duty counts with the jobs: the old marker's slot is released and the owner leaves the duty
+        // he was counted on, so neither may keep a count that was already spent this pass.
         counts[TacticalJob.Marker] = Math.Max(0, counts.GetValueOrDefault(TacticalJob.Marker) - 1);
         _assignments.Remove(incumbent.Id);
         _assignedAtTick.Remove(incumbent.Id);
         taken.Remove(incumbent.Id);
         available.Add(incumbent);
 
-        if (ownerOnTheLine)
+        if (ownerWasHeld)
         {
-            counts[TacticalJob.DefensiveLine] =
-                Math.Max(0, counts.GetValueOrDefault(TacticalJob.DefensiveLine) - 1);
+            counts[ownerPriorJob] = Math.Max(0, counts.GetValueOrDefault(ownerPriorJob) - 1);
             _assignments.Remove(owner.Id);
             _assignedAtTick.Remove(owner.Id);
             taken.Remove(owner.Id);
@@ -1287,7 +1424,7 @@ public sealed class TeamJobCoordinator
     }
 
     /// <summary>
-    /// A3.4: bounded local search for a better region around the duty's nominal target â€” two rings of
+    /// A3.4: bounded local search for a better region around the duty's nominal target — two rings of
     /// lateral and depth probes, clamped to the pitch (and to the offside line when the duty is an
     /// attacking one). Two rings are deliberate: the scoring penalises stacking on a teammate, and a
     /// single ring cannot always pay the separation back, so the search has to be able to reach the
@@ -1481,15 +1618,16 @@ public sealed class TeamJobCoordinator
     /// <summary>
     /// Offside line from what the team believes (A2.6). Fewer than two known opponents is not enough to
     /// draw a line, so the conservative fallback is the halfway line rather than an invented defender.
+    ///
+    /// AUD-05: this used to return the opponent goal line (<c>_pitch.HalfLength</c>) on the fallback, which
+    /// told every attacking duty the whole opponent half was onside. It also duplicated the line formula.
+    /// It now delegates to the one team-belief implementation in <see cref="OffsideTactics"/>, and the
+    /// documented halfway line is the fallback projection of 0 m.
     /// </summary>
     private float ComputeOffsideLineProj(TeamBelief opponents, BallState ball, float attackDirX)
     {
-        float secondLast = opponents.TryGetSecondLastProjX(attackDirX, out float believed)
-            ? believed
-            : _pitch.HalfLength;
-
         float ballProj = ball.Position.X * attackDirX;
-        return MathF.Max(0f, MathF.Max(secondLast, ballProj));
+        return OffsideTactics.BelievedLineProjX(opponents, attackDirX, ballProj, fallbackProjX: 0f);
     }
 
     private static Vector3 AnchorOf(FootballerState player) =>
@@ -1500,7 +1638,7 @@ public sealed class TeamJobCoordinator
 
     /// <summary>
     /// One team's turnover commitment (A6.4): the answer in force, when it was chosen, which opponent's
-    /// possession it was chosen against, and how often each answer has been chosen over the match â€” the
+    /// possession it was chosen against, and how often each answer has been chosen over the match — the
     /// choice counts are how a probe distinguishes "the side never counter-pressed" from "it counter-pressed
     /// and gave it up".
     /// </summary>
