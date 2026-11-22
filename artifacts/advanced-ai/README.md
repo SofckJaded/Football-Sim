@@ -1234,6 +1234,55 @@ unchanged within the sample spread.
 
 ---
 
+## 2026-11-22 — Release work budget and tracing cost (A9.3 part 1, `ai52-rs1`)
+
+Reference machine as above (AMD Ryzen 7 7700, 8C / 16T, 31.4 GB, Windows 11 Pro 10.0.26200, .NET 8.0.426,
+Release). The probe reports machine `MICHAEL-PC`, 16 logical cores. No behaviour change, so the tag stays
+**`ai52-rs1`** and the reference match is bit-identical to the `a9-style-*` capture.
+
+Commands:
+
+```
+dotnet run --project src\FootballSim.Headless -c Release -- --match-11v11
+dotnet run --project src\FootballSim.Headless -c Release -- --perf 20000
+dotnet run --project src\FootballSim.Headless -c Release -- --tracing 20000
+```
+
+Files: `a9-profile-match-11v11.txt`, `a9-profile-perf.txt`, `a9-profile-perf-repeat.txt`,
+`a9-profile-tracing.txt`.
+
+| Metric | Run 1 | Run 2 | Pre-A9.3 sample |
+| :--- | :--- | :--- | :--- |
+| Per-tick mean | 255.4 µs | 273.4 µs | 273.8 µs |
+| p50 / p95 | 202.7 / 613.1 µs | 222.9 / 630.2 µs | 215.3 / 682.4 µs |
+| p99 / max | 913.9 / 1726.9 µs | 940.1 / 2269.3 µs | 1066.1 / 2001.9 µs |
+| Allocated per tick | 66 961 B | 68 916 B | 66 952 B |
+| GC (0/1/2) | 80/0/0 | 82/0/0 | 80/0/0 |
+
+The machine's own spread is ~10 % (see the `a9-style` samples); the counters and the off-ball cap application
+therefore cost nothing measurable, which is the point of a diagnostics-only work counter.
+
+Measured AI work in the 20 000-tick window (`a9-profile-perf.txt`):
+
+| Work | Measured |
+| :--- | :--- |
+| Decisions per tick | 19.90 (carrier 0.55, off-ball 19.36) |
+| Carrier candidates | 4.2 / decision, max generated 14, cap 20, trims 0 |
+| Off-ball candidates | 1.9 / decision, max generated 6, cap 12, trims 0 |
+| Shallow search | 2.06 first actions / 0.61 continuations per carrier decision, max 8 (budget 9) |
+| Trajectory estimates | 0.754 / tick, 30.0 samples each, max 30 (bound 32) |
+| Belief map rebuilds | 0.17 / tick (6-tick job cadence) |
+
+Decision-trace cost (`a9-profile-tracing.txt`): tracing off **261.4 µs** mean, 66 958 B/tick, 0 entries;
+tracing on **358.5 µs** mean, 67 113 B/tick, 4 096 entries (buffer full); **world identical: yes**. The
+enabled trace costs +97.1 µs/tick and +155 B/tick on this sample; the shipped off path is one `IsEnabled`
+test per player per tick. **PASS** (empty buffer, identical world, inside the 60 Hz budget).
+
+Reference match identity (`a9-profile-match-11v11.txt`): tick 325 628, 0–1, passes 1367/1089, 2530/2583 kicks,
+17 828 run adverts, 63/63 restart routines, 65 events — the same numbers as `a9-style-match-11v11.txt`.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a

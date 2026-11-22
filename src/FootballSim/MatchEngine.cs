@@ -117,6 +117,9 @@ public sealed class MatchSimulationEngine
     private int _homeAttackingWidthSamples;
     private int _awayAttackingWidthSamples;
 
+    /// <summary>A9.3: team-belief map rebuilds, for the perf probe. Diagnostics only.</summary>
+    private int _beliefRebuildCount;
+
     public MatchSimulationEngine(PreMatchConfig? config = null, PitchDimensions? pitch = null)
         : this(config ?? new PreMatchConfig(), pitch ?? new PitchDimensions(), scenario: null)
     {
@@ -528,6 +531,32 @@ public sealed class MatchSimulationEngine
         _latestObservations.TryGetValue(playerId, out var obs) ? obs : null;
 
     /// <summary>
+    /// A9.3: cumulative AI work for the whole match, merged from the controllers that generated it plus
+    /// the team-level refreshes this engine drives. A probe calls this once at the end: the per-tick
+    /// decision path never aggregates anything, so the counters cannot become a hot path.
+    /// </summary>
+    public AiWorkStats GetAiWorkStats()
+    {
+        var total = new AiWorkStats();
+        foreach (IFootballerController controller in _controllers.Values)
+        {
+            switch (controller)
+            {
+                case TacticalUtilityAiController utility:
+                    total.Add(utility.CandidateWork);
+                    total.Add(utility.ReceptionWork);
+                    break;
+                case GoalkeeperController keeper:
+                    total.Add(keeper.Work);
+                    break;
+            }
+        }
+
+        total.RecordBeliefRebuilds(_beliefRebuildCount);
+        return total;
+    }
+
+    /// <summary>
     /// Returns the execution layer's accepted/refused contact outcomes to the controllers that
     /// buffer input, so a refused human kick is retried instead of silently lost (audit F17).
     /// </summary>
@@ -778,6 +807,8 @@ public sealed class MatchSimulationEngine
     /// </summary>
     private void UpdateTeamBeliefs()
     {
+        _beliefRebuildCount++;
+
         if (!_homeBelief.HasBeenBuilt)
         {
             _homeBelief = TeamBelief.FromTruth(TeamId.Home, _players);

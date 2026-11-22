@@ -132,6 +132,12 @@ public sealed class ReceptionPlanner
     // Bounds.
     // ---------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// A9.3: cumulative trajectory work this planner has done, so a probe can show the sample count is
+    /// bounded rather than assert it in a comment. Diagnostics only; nothing reads it in a decision.
+    /// </summary>
+    public AiWorkStats Work { get; } = new();
+
     /// <summary>Pairs the planner evaluates per decision: one per <see cref="ReceptionTouchKind"/>.</summary>
     public const int MaxOptions = 5;
 
@@ -362,6 +368,9 @@ public sealed class ReceptionPlanner
         _trajectory.Invalidate();
         if (!_trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity, PlanHorizonSeconds))
             return false;
+        // A9.3: one estimate and its sample count, recorded where the work is done. The bound is the
+        // estimate's own MaxSamples ceiling, so this counter is the evidence that the ceiling holds.
+        Work.RecordTrajectory(_trajectory.Count);
 
         ReachKinematics reach = ReachKinematics.FromObservation(obs);
 

@@ -1,0 +1,12 @@
+﻿=== Decision-trace cost sample (A9.3) ===
+Simulation version     : ai52-rs1
+Runtime                : 8.0.32 | Microsoft Windows NT 10.0.26200.0
+Machine                : MICHAEL-PC | 16 logical cores
+CPU                    : AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD
+Ticks                  : 2000 warm-up + 20000 measured, both runs
+Trace off              : mean 261.4 us, p50 222.9, p99 911.2, 66958.2 B/tick, entries 0
+Trace on               : mean 358.5 us, p50 337.2, p99 622.7, 67113.4 B/tick, entries 4096 (buffer 4096)
+Trace cost             : +97.1 us/tick mean, +155.2 B/tick allocated by recording
+World identical        : yes
+Tracing-off path        : one IsEnabled test per player per tick, no entry, no string, no allocation
+TRACING: PASS — tracing off records nothing and leaves the world unchanged, inside the 60 Hz budget

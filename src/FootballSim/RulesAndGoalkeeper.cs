@@ -118,6 +118,12 @@ public sealed class GoalkeeperController : IFootballerController
         _trajectory = new BallTrajectoryEstimate(pitch: pitch);
     }
 
+    /// <summary>
+    /// A9.3: cumulative trajectory work this keeper has done (one estimate per gated race/shot/claim
+    /// decision). Diagnostics only — the decision model reads the estimate, never the counter.
+    /// </summary>
+    public AiWorkStats Work { get; } = new();
+
     /// <summary>Last sweep race the keeper evaluated (A6.5), for tests and probes.</summary>
     public GoalkeeperRace LastSweep { get; private set; }
 
@@ -204,6 +210,7 @@ public sealed class GoalkeeperController : IFootballerController
             trajectoryReady = _trajectory.TryBuild(
                 obs.PerceivedBallPosition, obs.PerceivedBallVelocity,
                 GoalkeeperDecisionModel.TrajectoryHorizonSeconds);
+            if (trajectoryReady) Work.RecordTrajectory(_trajectory.Count);
         }
 
         // 1. A shot on target, decided on the ball's real trajectory (A6.5). The old gate extrapolated the

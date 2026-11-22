@@ -91,7 +91,12 @@ public sealed class AiRuntimeConfig
     public int StructuralReassessmentTicks { get; init; } = 60;
 
     /// <summary>
-    /// Upper bound on generated off-ball candidates per player per decision (A9.3). Not consumed yet.
+    /// Upper bound on generated off-ball candidates per player per decision (A9.3). The off-ball set is
+    /// bounded after generation exactly like the carrier's: the best-scoring candidates are kept, ties
+    /// keeping the earlier one. At this default the structural set is smaller (at most four run paths, a
+    /// combination return, a defensive act and the shape candidate), so the cap only binds when a
+    /// configuration lowers it or a future generator widens the set — both worth measuring rather than
+    /// assuming. The A9.3 probe prints the generated maximum and the trim count.
     /// </summary>
     public int MaxOffBallCandidates { get; init; } = 12;
 

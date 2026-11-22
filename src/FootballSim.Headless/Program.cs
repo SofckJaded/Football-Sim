@@ -41,6 +41,9 @@ public static class Program
             case "--perf":
                 return RunPerformanceSample(args) ? 0 : 1;
 
+            case "--tracing":
+                return RunTracingCostSample(args) ? 0 : 1;
+
             case "--deliveries":
                 return RunDeliveryEvidence(args) ? 0 : 1;
 
@@ -100,6 +103,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario list");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario build-up-3v2 [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --perf [ticks]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --tracing [ticks]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --deliveries [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --lines [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --turnovers [seeds] [halfSeconds]");
@@ -210,6 +214,9 @@ public static class Program
         var engine = new MatchSimulationEngine(config);
         for (int i = 0; i < warmupTicks; i++) engine.StepTick();
 
+        // A9.3: the work counters are cumulative, so the measured window is the delta after warm-up.
+        AiWorkStats workBefore = engine.GetAiWorkStats();
+
         long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
         int gen0Before = GC.CollectionCount(0);
         int gen1Before = GC.CollectionCount(1);
@@ -243,9 +250,31 @@ public static class Program
 
         double allocatedPerTick = (double)(allocatedAfter - allocatedBefore) / measureTicks;
 
+        AiWorkStats work = engine.GetAiWorkStats().Minus(workBefore);
+        double measuredTicks = measureTicks;
+        double carrierPerTick = work.CarrierDecisions / measuredTicks;
+        double offBallPerTick = work.OffBallDecisions / measuredTicks;
+        double decisionsPerTick = work.Decisions / measuredTicks;
+        double carrierMean = work.CarrierDecisions > 0
+            ? (double)work.CarrierCandidatesKept / work.CarrierDecisions
+            : 0d;
+        double offBallMean = work.OffBallDecisions > 0
+            ? (double)work.OffBallCandidatesKept / work.OffBallDecisions
+            : 0d;
+        double searchFirstMean = work.CarrierDecisions > 0
+            ? (double)work.SearchFirstActions / work.CarrierDecisions
+            : 0d;
+        double searchContinuationMean = work.CarrierDecisions > 0
+            ? (double)work.SearchContinuations / work.CarrierDecisions
+            : 0d;
+        double trajectoryMean = work.TrajectoryBuilds > 0
+            ? (double)work.TrajectorySamples / work.TrajectoryBuilds
+            : 0d;
+
         Console.WriteLine("=== Advanced-AI performance sample (11v11, 22 active players) ===");
         Console.WriteLine($"Simulation version     : {SimulationVersion.Tag}");
         Console.WriteLine($"Runtime                : {Environment.Version} | {Environment.OSVersion}");
+        Console.WriteLine($"Machine                : {Environment.MachineName} | {Environment.ProcessorCount} logical cores");
         Console.WriteLine($"CPU                    : {Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER")}");
         Console.WriteLine($"Ticks                  : {warmupTicks} warm-up + {measureTicks} measured");
         Console.WriteLine($"Per-tick mean          : {mean * 1000d:F1} us");
@@ -256,9 +285,133 @@ public static class Program
         Console.WriteLine($"Allocated per tick     : {allocatedPerTick:F1} bytes");
         Console.WriteLine($"GC collections (0/1/2) : {gen0After - gen0Before}/{gen1After - gen1Before}/{gen2After - gen2Before}");
 
+        // A9.3: the measured work, beside the measured time. A bound the artifact cannot show is a comment:
+        // these lines say how many candidates, search branches and trajectory samples the reference sample
+        // actually generated, and what the configured caps are.
+        Console.WriteLine();
+        Console.WriteLine("=== AI work budget (A9.3) ===");
+        Console.WriteLine($"Decisions per tick      : {decisionsPerTick:F2} " +
+                          $"(carrier {carrierPerTick:F2}, off-ball {offBallPerTick:F2})");
+        Console.WriteLine($"Carrier candidates      : {carrierMean:F1}/decision, max generated {work.MaxCarrierCandidatesGenerated}, " +
+                          $"cap {config.Ai.MaxCarrierCandidates}, trims {work.CarrierCapTrims}");
+        Console.WriteLine($"Off-ball candidates     : {offBallMean:F1}/decision, max generated {work.MaxOffBallCandidatesGenerated}, " +
+                          $"cap {config.Ai.MaxOffBallCandidates}, trims {work.OffBallCapTrims}");
+        Console.WriteLine($"Shallow search          : {searchFirstMean:F2} first actions / {searchContinuationMean:F2} continuations " +
+                          $"per carrier decision, max {work.MaxSearchContinuationsPerDecision} " +
+                          $"(budget {ShallowActionSearch.MaxContinuationsEvaluated})");
+        Console.WriteLine($"Trajectory estimates    : {work.TrajectoryBuilds / measuredTicks:F3}/tick, " +
+                          $"{trajectoryMean:F1} samples each, max {work.MaxTrajectorySamples} " +
+                          $"(bound {BallTrajectoryEstimate.MaxSamples})");
+        Console.WriteLine($"Belief map rebuilds     : {work.BeliefRebuilds / measuredTicks:F2}/tick " +
+                          "(job-recompute cadence, every 6 live ticks)");
+
         bool withinBudget = Percentile(samples, 0.99) * 1000d <= 16666.7d;
         Console.WriteLine(withinBudget ? "BUDGET: 60 Hz step holds at p99" : "BUDGET: p99 exceeds the 60 Hz step");
         return withinBudget;
+    }
+
+    /// <summary>
+    /// A9.3: what decision tracing costs, and why tracing off is negligible.
+    ///
+    /// Two engines with the same configuration and seed are stepped: the shipped path (trace buffer
+    /// disabled) and a build with recording on. Recording is a read of the decision, never an input to it,
+    /// so the two worlds must be identical — that identity is checked, not asserted. The disabled path
+    /// costs one boolean test per player per tick (<see cref="DecisionTraceBuffer.IsEnabled"/> is read by
+    /// the engine before an entry is built); the measured delta between the two runs is the trace's own
+    /// cost, and the allocation delta is what an enabled trace adds per tick.
+    ///
+    /// The gate is mechanical: the tracing-off run must be within the 60 Hz budget, record nothing, and
+    /// leave the world identical to the recording run. The delta is printed, never gated — a noisy
+    /// comparison is a measurement, not a claim.
+    /// </summary>
+    private static bool RunTracingCostSample(string[] args)
+    {
+        int measureTicks = args.Length > 1 && int.TryParse(args[1], out int requested) && requested > 0
+            ? requested
+            : 20_000;
+        const int warmupTicks = 2_000;
+
+        var config = new PreMatchConfig
+        {
+            Seed = 20260818UL,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = 3600f,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack
+        };
+
+        var offEngine = new MatchSimulationEngine(config);
+        (double offMean, double offP50, double offP99, double offAlloc) =
+            MeasureEngineTicks(offEngine, warmupTicks, measureTicks);
+
+        var onEngine = new MatchSimulationEngine(config);
+        onEngine.DecisionTrace.IsEnabled = true;
+        (double onMean, double onP50, double onP99, double onAlloc) =
+            MeasureEngineTicks(onEngine, warmupTicks, measureTicks);
+
+        bool identical =
+            offEngine.Ball.Position == onEngine.Ball.Position &&
+            offEngine.CurrentTick == onEngine.CurrentTick &&
+            offEngine.Analytics.HomePassesAttempted == onEngine.Analytics.HomePassesAttempted &&
+            offEngine.Analytics.AwayPassesAttempted == onEngine.Analytics.AwayPassesAttempted;
+
+        Console.WriteLine("=== Decision-trace cost sample (A9.3) ===");
+        Console.WriteLine($"Simulation version     : {SimulationVersion.Tag}");
+        Console.WriteLine($"Runtime                : {Environment.Version} | {Environment.OSVersion}");
+        Console.WriteLine($"Machine                : {Environment.MachineName} | {Environment.ProcessorCount} logical cores");
+        Console.WriteLine($"CPU                    : {Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER")}");
+        Console.WriteLine($"Ticks                  : {warmupTicks} warm-up + {measureTicks} measured, both runs");
+        Console.WriteLine($"Trace off              : mean {offMean:F1} us, p50 {offP50:F1}, p99 {offP99:F1}, " +
+                          $"{offAlloc:F1} B/tick, entries {offEngine.DecisionTrace.Count}");
+        Console.WriteLine($"Trace on               : mean {onMean:F1} us, p50 {onP50:F1}, p99 {onP99:F1}, " +
+                          $"{onAlloc:F1} B/tick, entries {onEngine.DecisionTrace.Count} " +
+                          $"(buffer {onEngine.DecisionTrace.Capacity})");
+        Console.WriteLine($"Trace cost             : {onMean - offMean:+0.0;-0.0} us/tick mean, " +
+                          $"{onAlloc - offAlloc:+0.0;-0.0} B/tick allocated by recording");
+        Console.WriteLine($"World identical        : {(identical ? "yes" : "NO")}");
+        Console.WriteLine("Tracing-off path        : one IsEnabled test per player per tick, no entry, no string, no allocation");
+
+        bool withinBudget = offP99 <= 16666.7d;
+        bool pass = withinBudget && identical &&
+                    offEngine.DecisionTrace.Count == 0 &&
+                    onEngine.DecisionTrace.Count > 0;
+        Console.WriteLine(pass
+            ? "TRACING: PASS — tracing off records nothing and leaves the world unchanged, inside the 60 Hz budget"
+            : "TRACING: FAIL — see the identity, entry-count or budget line above");
+        return pass;
+    }
+
+    /// <summary>
+    /// A9.3: one measured run over an already-built engine. Warm-up is not measured, so JIT and first-pass
+    /// lazy initialisation stay out of the sample.
+    /// </summary>
+    private static (double Mean, double P50, double P99, double AllocatedPerTick) MeasureEngineTicks(
+        MatchSimulationEngine engine, int warmupTicks, int measureTicks)
+    {
+        for (int i = 0; i < warmupTicks; i++) engine.StepTick();
+
+        long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var samples = new double[measureTicks];
+        var stopwatch = new System.Diagnostics.Stopwatch();
+        for (int i = 0; i < measureTicks; i++)
+        {
+            stopwatch.Restart();
+            engine.StepTick();
+            stopwatch.Stop();
+            samples[i] = stopwatch.Elapsed.TotalMilliseconds;
+        }
+        long allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+
+        Array.Sort(samples);
+        double mean = 0d;
+        for (int i = 0; i < samples.Length; i++) mean += samples[i];
+        mean /= samples.Length;
+
+        static double Percentile(double[] sorted, double fraction) =>
+            sorted[Math.Clamp((int)(fraction * (sorted.Length - 1)), 0, sorted.Length - 1)];
+
+        double allocatedPerTick = (double)(allocatedAfter - allocatedBefore) / measureTicks;
+        return (mean * 1000d, Percentile(samples, 0.50) * 1000d, Percentile(samples, 0.99) * 1000d, allocatedPerTick);
     }
 
     private static void RunPhysicsLab()

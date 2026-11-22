@@ -159,6 +159,17 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     public string GetDebugSummary() => _debugSummary;
 
     /// <summary>
+    /// A9.3: cumulative candidate-generation work this controller has done (carrier and off-ball
+    /// decisions, the generated/kept counts, shallow-search branches). Diagnostics only.
+    /// </summary>
+    public AiWorkStats CandidateWork => _generator.Work;
+
+    /// <summary>
+    /// A9.3: cumulative trajectory work this controller's reception planner has done. Diagnostics only.
+    /// </summary>
+    public AiWorkStats ReceptionWork => _generator.ReceptionWork;
+
+    /// <summary>
     /// Drops the commitment and the time-on-ball accumulation (A1.5).
     ///
     /// A committed action is a guess that the situation will last; a restart is the authoritative

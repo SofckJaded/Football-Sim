@@ -423,6 +423,24 @@ public sealed class CandidateGenerator : IAiStateResettable
     public int CandidateCount => _lastCandidates.Count;
 
     /// <summary>
+    /// A9.3: cumulative generation work this player's decisions have done. Diagnostics and the perf
+    /// evidence probe read it; nothing in the decision path does.
+    /// </summary>
+    public AiWorkStats Work { get; } = new();
+
+    /// <summary>
+    /// A9.3: cumulative trajectory work done by this player's reception planner (one estimate per planned
+    /// first touch). Merged with <see cref="Work"/> by the engine for the match-level picture.
+    /// </summary>
+    public AiWorkStats ReceptionWork => _receptionPlanner.Work;
+
+    /// <summary>
+    /// A9.3: how many off-ball candidates the last decision's cap removed (0 when the configured
+    /// <see cref="AiRuntimeConfig.MaxOffBallCandidates"/> did not bind). Diagnostics only.
+    /// </summary>
+    public int OffBallCandidatesTrimmed { get; private set; }
+
+    /// <summary>
     /// How many candidates the most recent decision refused, with a reason (A4.6). Bounded by
     /// <see cref="MaxRejections"/>; a decision that refused nothing reports zero.
     /// </summary>
@@ -1387,6 +1405,9 @@ public sealed class CandidateGenerator : IAiStateResettable
             ballXZ,
             offsideLineProjX,
             _communication?.Runs);
+        // A9.3: the A8.2 node budget (3 first actions × 3 continuations) measured at the one place the
+        // search is called. The counters come from the search itself; this file only aggregates them.
+        Work.RecordSearch(_search.FirstActionsEvaluated, _search.ContinuationsEvaluated);
 
         for (int index = 0; index < _search.ProposalCount; index++)
         {
@@ -2643,6 +2664,38 @@ public sealed class CandidateGenerator : IAiStateResettable
     private void TrimToCarrierCap()
     {
         int cap = Math.Max(1, _ai.MaxCarrierCandidates);
+        int generated = _lastCandidates.Count;
+        TrimCandidatesTo(cap);
+        Work.RecordCarrierDecision(generated, _lastCandidates.Count, cap);
+    }
+
+    /// <summary>
+    /// A9.3: applies <see cref="AiRuntimeConfig.MaxOffBallCandidates"/> to the off-ball set, the way
+    /// <see cref="TrimToCarrierCap"/> already bounds the carrier set — best score first, ties keeping the
+    /// earlier candidate. Called at the end of every off-ball generation path (the early returns emit a
+    /// press, a reception plan, an interception or a defensive act and then leave), so the bound holds for
+    /// the whole decision and not only for the shape-following tail.
+    ///
+    /// At the shipped default (12) the off-ball set is structurally smaller — at most four run paths, a
+    /// combination return, a defensive act and the shape candidate — so this trims nothing unless a
+    /// configuration lowers the cap; the counter is what lets the evidence say that rather than assume it.
+    /// </summary>
+    private void TrimToOffBallCap()
+    {
+        int cap = Math.Max(1, _ai.MaxOffBallCandidates);
+        int generated = _lastCandidates.Count;
+        TrimCandidatesTo(cap);
+        OffBallCandidatesTrimmed = generated - _lastCandidates.Count;
+        Work.RecordOffBallDecision(generated, _lastCandidates.Count, cap);
+    }
+
+    /// <summary>
+    /// Keeps the best-scoring <paramref name="cap"/> candidates, in score order, by selection sort on
+    /// scores so equal scores keep the earlier candidate. Shared by both caps (A9.3) so the carrier and
+    /// off-ball sets are bounded by the same rule rather than by two near-copies of it.
+    /// </summary>
+    private void TrimCandidatesTo(int cap)
+    {
         int count = _lastCandidates.Count;
         if (count <= cap) return;
 
@@ -2821,6 +2874,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                     Key = new CandidateKey(CandidateKind.Press, obs.BallControllingPlayerId ?? 0,
                         attemptTackle ? "tackle" : "close")
                 });
+                TrimToOffBallCap();
                 return;
             }
 
@@ -2833,7 +2887,10 @@ public sealed class CandidateGenerator : IAiStateResettable
             // unchanged: A7.4 owns the command/execution boundary, so a plan can only express itself
             // through movement and body orientation the player already has.
             if (_ai.EnableReceptionPlanning && AddReceptionCandidates(obs, selfXZ, dirToBall))
+            {
+                TrimToOffBallCap();
                 return;
+            }
 
             // The pre-A7.3 path, kept exactly as it was: with reception planning off (or no feasible
             // plan) the receiver steps onto the pass ray and cushions it.
@@ -2852,6 +2909,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             {
                 Key = new CandidateKey(CandidateKind.Intercept, TargetTag: "ray")
             });
+            TrimToOffBallCap();
             return;
         }
 
@@ -2862,7 +2920,10 @@ public sealed class CandidateGenerator : IAiStateResettable
         //     of independently abandoning the same space. A primary act is this player's defensive
         //     decision for the tick and replaces the duty; a supporting act competes with it.
         if (AddDefensiveCandidates(obs))
+        {
+            TrimToOffBallCap();
             return;
+        }
 
         // A8.1: a live combination can ask this player for one more thing — a one-two's initiator must run
         // into the frozen return region — and a participant whose move has gone abandons it. The candidate
@@ -2979,6 +3040,8 @@ public sealed class CandidateGenerator : IAiStateResettable
             Key = new CandidateKey(CandidateKind.Shape,
                 TargetTag: obs.PossessingTeam == obs.SelfTeam ? "support" : "defend")
         });
+
+        TrimToOffBallCap();
     }
 
     /// <summary>
