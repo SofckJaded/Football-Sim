@@ -146,10 +146,7 @@ public sealed class TeamTacticalCoordinator
         {
             // A turnover is an event, not structural drift: both zones are re-read from where the ball
             // is now instead of being held by the dwell of the previous passage.
-            _homeZone = ZoneOf(ball.Position.X * homeAttackDirX);
-            _awayZone = ZoneOf(ball.Position.X * -homeAttackDirX);
-            _homeZoneDwell = 0f;
-            _awayZoneDwell = 0f;
+            ReadZonesFromBall(homeAttackDirX, ball.Position.X);
         }
         else
         {
@@ -196,10 +193,7 @@ public sealed class TeamTacticalCoordinator
             // A restart is a new passage even when the claim did not change hands: a quick throw-in
             // still starts the restarting side's counter-attack window.
             _claimSeconds = 0f;
-            _homeZone = ZoneOf(ball.Position.X * homeAttackDirX);
-            _awayZone = ZoneOf(ball.Position.X * -homeAttackDirX);
-            _homeZoneDwell = 0f;
-            _awayZoneDwell = 0f;
+            ReadZonesFromBall(homeAttackDirX, ball.Position.X);
         }
 
         RebuildContexts(homeAttackDirX, ball.Position.X);
@@ -209,17 +203,26 @@ public sealed class TeamTacticalCoordinator
     /// Declares the confirmed possessing team directly. Only scenario fragments need this: a real
     /// match learns possession from the ownership tracker on the first live tick, but a fragment that
     /// starts mid-play must not spend its first ticks acting as if the other team had the ball.
+    ///
+    /// AUD-13a: a fragment also starts at a real ball position and with a real attack direction, so the
+    /// arguments are optional only for source compatibility. Seeding the old 1f/0f constants classified
+    /// both thirds from the centre spot, so a scenario starting in the second period, or with the ball
+    /// inside the 3 m zone deadband, could act on the wrong zones on tick 1.
     /// </summary>
-    public void SeedPossession(TeamId? team)
+    public void SeedPossession(TeamId? team, float homeAttackDirX = 1f, float ballX = 0f)
     {
         _claimTeam = team;
         _confirmedPossessingTeam = team;
         _claimSeconds = 0f;
         _stability = PossessionStability.Loose;
         _restart = RestartContext.None;
-        _homeZoneDwell = 0f;
-        _awayZoneDwell = 0f;
-        RebuildContexts(homeAttackDirX: 1f, ballX: 0f);
+
+        // AUD-13a: a seeded passage is a new passage, so its zones are read from the ball by the same
+        // classifier the live turnover branch uses — a seeded passage has no held band to hysteresise
+        // from, and the dwell path would keep an inside-the-deadband ball in MiddleThird for the tick.
+        ReadZonesFromBall(homeAttackDirX, ballX);
+
+        RebuildContexts(homeAttackDirX, ballX);
     }
 
     /// <summary>
@@ -321,6 +324,20 @@ public sealed class TeamTacticalCoordinator
         if (ballProgress >= boundary) return TeamZone.FinalThird;
         if (ballProgress <= -boundary) return TeamZone.OwnThird;
         return TeamZone.MiddleThird;
+    }
+
+    /// <summary>
+    /// AUD-13a: reads both teams' thirds from the ball's position through <see cref="ZoneOf"/>, the
+    /// classifier the live turnover and restart paths already use. Shared with <see cref="SeedPossession"/>
+    /// so a seeded passage cannot be classified differently from a live one, and so the third boundary
+    /// exists in exactly one place.
+    /// </summary>
+    private void ReadZonesFromBall(float homeAttackDirX, float ballX)
+    {
+        _homeZone = ZoneOf(ballX * homeAttackDirX);
+        _awayZone = ZoneOf(-ballX * homeAttackDirX);
+        _homeZoneDwell = 0f;
+        _awayZoneDwell = 0f;
     }
 
     private TeamContext BuildContext(TeamId team, TeamZone zone, bool emergency)

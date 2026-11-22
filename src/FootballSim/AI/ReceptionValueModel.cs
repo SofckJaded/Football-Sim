@@ -45,10 +45,10 @@ public readonly record struct ReceptionValueTerms(
 ///   already has (<see cref="PassSuccessTerms.DefenderPressure01"/> for a pass, the local pressure window
 ///   for a carry). This model never computes a second one.</item>
 /// <item><b>Structure</b> — does the reception keep the shape the profile asked for? A wide side values a
-///   wide reception. It is the same width expression <see cref="Tactics.JobRegionScoring"/> uses, so the two
-///   cannot drift apart — and that expression's narrow denominator saturates by |z| ≈ 18.7 m, so a narrow
-///   side is not indifferent to a wide reception either (L10: the code rewards it, the old sentence here
-///   claimed the opposite).</item>
+///   wide reception. It uses the one shared width convention (<see cref="AttackingWidthPreference"/>) that
+///   <see cref="Tactics.JobRegionScoring"/> also uses, so the two cannot drift apart: a reception at the
+///   profile's own target width scores full credit, a narrow side is not rewarded for hugging the touchline,
+///   and a wider side is never scored below a narrower one at the same lateral coordinate (AUD-01).</item>
 /// </list>
 ///
 /// <b>Transition risk is not here.</b> The pass score owns it through its loss term, which rises in the
@@ -200,8 +200,11 @@ public sealed class ReceptionValueModel
 
         float pressure = Clamp01(1f - receptionPressure01);
 
-        float widthScale = 0.55f + 0.55f * Clamp01(obs.TeamProfile.AttackingWidth01);
-        float structure = Clamp01(MathF.Abs(arrivalPointXZ.Y) / MathF.Max(1f, _pitch.HalfWidth * widthScale));
+        // AUD-01: the profile's width preference, shared with job-region scoring. The old expression
+        // divided |z| by a widthScale that grew with AttackingWidth01, so a wide side scored HALF of a
+        // narrow side's width term at the same coordinate and its target lay past the touchline.
+        float structure = AttackingWidthPreference.Score(
+            obs.TeamProfile.AttackingWidth01, arrivalPointXZ.Y, _pitch);
 
         float ownGoalDistance = MathF.Abs(arrivalProjX + _pitch.HalfLength);
         float ballSafety = Clamp01(ownGoalDistance / BallSafetyDistanceMeters);
@@ -288,6 +291,104 @@ public sealed class ReceptionValueModel
         }
 
         return Vector2.Zero;
+    }
+
+    private static float Clamp01(float value) => value < 0f ? 0f : value > 1f ? 1f : value;
+}
+
+/// <summary>
+/// AUD-01: the one width-preference convention shared by reception valuation
+/// (<see cref="ReceptionValueModel.Evaluate"/>) and job-region scoring
+/// (<see cref="Tactics.JobRegionScoring.Score"/>), so the two cannot drift apart again.
+///
+/// It replaces the old expression <c>|z| / (HalfWidth * widthScale)</c> with <c>widthScale</c> growing
+/// with <see cref="TeamTacticalProfile.AttackingWidth01"/>. Because that scale sat in the denominator,
+/// a wide side scored <b>half</b> a narrow side's width term at the same lateral coordinate (0.40 vs
+/// 0.80 at |z| = 15 m on a 68 m pitch), and the widest side's denominator reached 37.4 m — past the
+/// 34 m half-width — so it could never reach full credit on the pitch. This convention has the
+/// properties the audit requires:
+/// <list type="bullet">
+/// <item>at a fixed lateral coordinate the credit is monotonically non-decreasing in
+///   <c>AttackingWidth01</c>; a wide side is never punished for standing where a narrow side scores
+///   well (the core inversion);</item>
+/// <item>the credit peaks at the profile's own target width (<see cref="TargetFraction01"/>), so a
+///   narrow side loses credit beyond its target instead of treating the touchline as its best
+///   position, and a wide side's peak reaches further out than a narrow side's;</item>
+/// <item>it is a dimensionless 0..1 credit, continuous, with no denominator that can pass
+///   <see cref="PitchDimensions.HalfWidth"/>: the lateral coordinate is normalised by the half-width
+///   and clamped, so nothing is asked for beyond the touchline.</item>
+/// </list>
+/// The shape is a "reached the width" ramp up to <see cref="WidthReachedFraction01"/>, multiplied by
+/// a profile penalty once the position is past the profile's target. The ramp is deliberately
+/// profile-independent: a profile-dependent ramp would again lower a wide side's score at the same
+/// |z| — the inversion this convention exists to remove.
+/// </summary>
+public static class AttackingWidthPreference
+{
+    /// <summary>
+    /// Lateral utilisation (|z| / half-width) at which the "reaching width" ramp is full. It is a
+    /// property of having width at all, not of the profile, so that a wider profile is never behind a
+    /// narrower one at the same coordinate (AUD-01). 0.55 is the saturation point the old narrow-side
+    /// denominator already had (18.7 m on a 68 m pitch), so the narrow side's ramp is unchanged and
+    /// only the profile inversion is removed.
+    /// </summary>
+    public const float WidthReachedFraction01 = 0.55f;
+
+    /// <summary>Target lateral utilisation of the narrowest profile (<c>AttackingWidth01 = 0</c>).</summary>
+    public const float NarrowTargetFraction01 = 0.70f;
+
+    /// <summary>
+    /// Target lateral utilisation of the widest profile. It is kept inside the touchline so every
+    /// profile's target is reachable on the pitch — the old expression's 37.4 m "target" was not.
+    /// </summary>
+    public const float WideTargetFraction01 = 0.95f;
+
+    /// <summary>
+    /// Share of the width credit a narrow profile loses at the touchline. The credit there is 0.25
+    /// rather than 0: working the touchline is over-wide for a narrow shape, not forbidden by it.
+    /// </summary>
+    public const float OverWidthPenalty01 = 0.75f;
+
+    /// <summary>
+    /// The profile's preferred lateral utilisation, in 0..1 of the half-width: 0.70 for the narrowest
+    /// side, 0.95 for the widest. It never exceeds 1, so no target is off the pitch; the wide-job
+    /// nominal target can be read against this convention.
+    /// </summary>
+    public static float TargetFraction01(float attackingWidth01) =>
+        NarrowTargetFraction01 + (WideTargetFraction01 - NarrowTargetFraction01) * Clamp01(attackingWidth01);
+
+    /// <summary>The profile's preferred target distance from the centre line, in metres.</summary>
+    public static float TargetLateralMeters(float attackingWidth01, PitchDimensions pitch)
+    {
+        ArgumentNullException.ThrowIfNull(pitch);
+        return TargetFraction01(attackingWidth01) * pitch.HalfWidth;
+    }
+
+    /// <summary>
+    /// The 0..1 width credit of a position <paramref name="lateralAbsMeters"/> off the centre line for
+    /// a profile of width <paramref name="attackingWidth01"/>. 0 = the centre line (no width used),
+    /// 1 = the profile's width is satisfied; a narrow profile pays the over-width penalty past its
+    /// target. Plain arithmetic and allocation-free: called per candidate and per reception.
+    /// </summary>
+    public static float Score(float attackingWidth01, float lateralAbsMeters, PitchDimensions pitch)
+    {
+        ArgumentNullException.ThrowIfNull(pitch);
+        float halfWidth = pitch.HalfWidth;
+        if (!(halfWidth > 0f)) return 0f;
+
+        float utilisation = Clamp01(MathF.Abs(lateralAbsMeters) / halfWidth);
+        float reachedWidth = Clamp01(utilisation / WidthReachedFraction01);
+        float target = TargetFraction01(attackingWidth01);
+
+        // Past its own target the profile is working wider than it asked for; the penalty is relative
+        // to the room left to the touchline, so it is 1 at |z| = half-width for every profile, and the
+        // divisor cannot vanish because the target stays at or below WideTargetFraction01 < 1.
+        float overWidth01 = utilisation <= target
+            ? 0f
+            : Clamp01((utilisation - target) / (1f - target));
+
+        return Clamp01(
+            reachedWidth * (1f - OverWidthPenalty01 * (1f - Clamp01(attackingWidth01)) * overWidth01));
     }
 
     private static float Clamp01(float value) => value < 0f ? 0f : value > 1f ? 1f : value;
