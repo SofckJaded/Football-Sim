@@ -130,8 +130,10 @@ public static class JobRegionScoring
     /// <summary>
     /// One region's score. Higher is better; the value is dimensionless and only meaningful against
     /// another region scored with the same inputs. <paramref name="attackingWidth01"/> is the team
-    /// profile's width: a narrow side wants narrow channels, so both the width reward and the lateral
-    /// separation it is looking for scale with it.
+    /// profile's width: both the width reward and the lateral separation it looks for scale with it.
+    /// The width reward is the shared <see cref="AttackingWidthPreference"/> convention (AUD-01), the
+    /// same one a reception is valued with, so the allocator and the passer cannot disagree about what
+    /// "wide enough" means for a profile.
     /// </summary>
     public static float Score(
         in JobRegion region,
@@ -164,11 +166,11 @@ public static class JobRegionScoring
         if (IsReceiving(job) && opponents.Count > 0)
             score += LaneWeight * LaneOpenness(referenceXZ, centre, opponents);
 
-        // Width how this profile means it: the same expression the width jobs use for their nominal,
-        // so a direct side is not rewarded for hugging the touchline it never asked for.
-        float widthScale = 0.55f + 0.55f * Clamp01(attackingWidth01);
+        // Width how this profile means it (AUD-01): the shared width convention, so a width duty is
+        // rewarded for reaching the profile's target width and a narrow side is not rewarded for the
+        // touchline. The old |z| / ((HalfWidth - 3) * widthScale) ramp was inverted in the profile.
         if (WantsWidth(job))
-            score += WidthWeight * Clamp01(MathF.Abs(centre.Y) / MathF.Max(1f, (pitch.HalfWidth - 3f) * widthScale));
+            score += WidthWeight * AttackingWidthPreference.Score(attackingWidth01, centre.Y, pitch);
         if (WantsDepth(job))
             score += DepthWeight * Clamp01((centre.X * attackDirX) / MathF.Max(1f, pitch.HalfLength));
 
@@ -204,8 +206,10 @@ public static class JobRegionScoring
 
         // Complementary channels: being in the same lateral band as a teammate is worth less than
         // holding a different one, and what counts as "a different one" follows the profile's width.
-        // With nobody nearby the constraint simply does not apply — that is the "no compulsory
-        // five-lane occupancy" part.
+        // This scale is not the AUD-01 width reward: it multiplies the *separation another channel
+        // needs*, so a wide side's channels sit farther apart. With nobody nearby the constraint simply
+        // does not apply — that is the "no compulsory five-lane occupancy" part.
+        float widthScale = 0.55f + 0.55f * Clamp01(attackingWidth01);
         score += ChannelWeight * (lateralComparable
             ? Clamp01(nearestLateral / (ChannelSeparationMeters * widthScale))
             : 1f);
