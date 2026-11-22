@@ -228,6 +228,18 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         Vector2 ballVelXZ = new(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z);
         float distToBall = Vector2.Distance(selfXZ, ballXZ);
 
+        // A7.3: a ball above torso height is not "on the ball" — execution would refuse every kick for it
+        // as BallTooHigh. Recognising the height here is what sends the receiver of a dropping pass into
+        // the receiving branch (which plans the meeting) instead of asking for kicks it cannot execute.
+        // The gate is the execution layer's own contact rule, not a second reach number.
+        //
+        // AUD-08: resolved before the restart branch because that branch stores an intent too, and the
+        // on-ball state is what makes a cached intent ineligible once possession has changed.
+        bool ballAtFeetHeight = BallContactRules.IsHeightReachable(
+            obs.PerceivedBallPosition.Y, obs.SelfPosition.Y,
+            BallContactRules.MaxContactHeight(keeperHandling: false, jumpingOrHeading: false));
+        bool onBall = distToBall <= obs.SelfAttributes.ReachRadius * 1.35f && obs.AvailableToKick && ballAtFeetHeight;
+
         if (obs.IsSetPieceTaker && distToBall < 4.5f)
         {
             var restartCmd = EvaluateSetPieceRestart(obs, oppGoalCenter);
@@ -239,7 +251,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             _lastSelected = new UtilityCandidate("SetPieceRestart", 0f, restartCmd) { Key = CandidateKey.None };
             _lastRunnerUp = null;
             _lastCandidateCount = 0;
-            StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false);
+            StoreIntent(obs.Tick, CandidateKey.None, "SetPieceRestart", restartCmd, isJob: false,
+                onBallAtDecision: onBall);
             // A restart is not the passage of play the run was chosen for: drop any adopted run.
             _generator.NoteDecision(obs, CandidateKey.None);
             return restartCmd;
@@ -265,15 +278,6 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         bool isPrimaryBallResponder = (obs.IsDesignatedBallResponder ?? ComputeLocalResponder(obs, ballXZ, ballVelXZ))
                                       && !teammateHasControl;
 
-        // A7.3: a ball above torso height is not "on the ball" — execution would refuse every kick for it
-        // as BallTooHigh. Recognising the height here is what sends the receiver of a dropping pass into
-        // the receiving branch (which plans the meeting) instead of asking for kicks it cannot execute.
-        // The gate is the execution layer's own contact rule, not a second reach number.
-        bool ballAtFeetHeight = BallContactRules.IsHeightReachable(
-            obs.PerceivedBallPosition.Y, obs.SelfPosition.Y,
-            BallContactRules.MaxContactHeight(keeperHandling: false, jumpingOrHeading: false));
-        bool onBall = distToBall <= obs.SelfAttributes.ReachRadius * 1.35f && obs.AvailableToKick && ballAtFeetHeight;
-
         if (onBall || (obs.BallLastTouchedByPlayerId == obs.SelfId && distToBall < 1.8f))
             _timeOnBall += dt;
         else
@@ -284,8 +288,14 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
         // A1.2: re-emit the live intent instead of re-scoring. This path is unreachable unless scheduled
         // decisions are switched on, so the default build still decides every tick.
+        //
+        // AUD-08: the executor refuses to re-emit across a possession change (onBall differing from the
+        // state stored with the intent), which forces this player to decide instead of carrying an off-ball
+        // movement plan onto the ball or an on-ball plan past the touch. It also clears the one-shot
+        // discrete actions from every re-emitted command (Architecture Rule 4), so a cadence skip can never
+        // re-issue a kick or tackle that execution refused.
         if (!_scheduler.ShouldRecompute(obs.Tick, obs.SelfId, onBall) &&
-            _executor.TryGetLiveCommand(obs.Tick, out FootballerCommand liveCommand))
+            _executor.TryGetLiveCommand(obs.Tick, onBall, out FootballerCommand liveCommand))
         {
             return liveCommand;
         }
@@ -388,7 +398,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         // is why the magnitude is used instead. The current action is held only while it is still a valid
         // candidate this tick: an invalid action (the ball changed hands, the duty changed, a restart) is
         // not held, because there is nothing to re-evaluate.
-        if (hasCurrent && hasBest && !best.Key.Equals(current.Key) &&
+        //
+        // AUD-10: the commitment switch owns both halves of the hold — the live window/bonus above and this
+        // switch hysteresis. With it off the "raw scores" ablation must really decide on this tick's raw
+        // scores, so no current action is tracked or defended below; before the audit the ablation removed
+        // the window and bonus but kept holding the chosen action against marginal challengers.
+        bool commitmentEnabled = _ai.EnableCommitment;
+        if (commitmentEnabled && hasCurrent && hasBest && !best.Key.Equals(current.Key) &&
             !ShouldSwitch(best.UtilityScore, current.UtilityScore, _ai.SwitchAbsoluteMargin, _ai.SwitchRelativeMargin))
         {
             runnerUp = best;
@@ -402,20 +418,20 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         _lastRunnerUp = runnerUp;
         _lastCandidateCount = _generator.CandidateCount;
 
-        if (best.Key != _committedKey)
+        // AUD-10: with the switch off nothing is committed, so the diagnostics stay at "no hold" instead of
+        // naming an action the ablation is not defending. Reporting a committed key here would also let a
+        // later decision score a stale "current" action against the challenger.
+        if (commitmentEnabled && best.Key != _committedKey)
         {
             _committedKey = best.Key;
             _committedActionName = best.ActionName;
             // A9.2: with the commitment switch off the window is never started, so a chosen action is
             // unprotected and CommitmentRemainingSeconds stays zero for the whole match.
-            if (_ai.EnableCommitment)
-            {
-                // A job target is a commitment, not a reflex: hold it longer than a reactive press. A run is
-                // the same kind of promise (A5.2): the player has adopted a meeting region and holds it.
-                _commitmentTimer = best.Key.Kind is CandidateKind.Job or CandidateKind.Run
-                    ? _ai.JobCommitmentSeconds
-                    : _ai.ReactionCommitmentSeconds;
-            }
+            // A job target is a commitment, not a reflex: hold it longer than a reactive press. A run is
+            // the same kind of promise (A5.2): the player has adopted a meeting region and holds it.
+            _commitmentTimer = best.Key.Kind is CandidateKind.Job or CandidateKind.Run
+                ? _ai.JobCommitmentSeconds
+                : _ai.ReactionCommitmentSeconds;
         }
 
         // A5.2: tell the run generator what was chosen, so an adopted path is frozen for its window and
@@ -436,7 +452,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         _debugJob = obs.TacticalJob;
         _debugUtility = best.UtilityScore;
         StoreIntent(obs.Tick, best.Key, best.ActionName, best.Command, best.Key.Kind == CandidateKind.Job,
-            receptionPlan);
+            onBallAtDecision: onBall, reception: receptionPlan);
         return best.Command;
     }
 
@@ -475,6 +491,10 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     /// Publishes the chosen action as an intent (A1.2). Recorded even when scheduling is off, so the
     /// executor's state always describes the last real decision rather than lagging behind a feature
     /// switch.
+    ///
+    /// AUD-08: <paramref name="onBallAtDecision"/> is the possession side the decision was taken on. The
+    /// executor compares it with the live state before re-emitting a cached command, so a possession
+    /// change always forces a fresh decision.
     /// </summary>
     private void StoreIntent(
         int tick,
@@ -482,6 +502,7 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         string actionName,
         FootballerCommand command,
         bool isJob,
+        bool onBallAtDecision,
         ReceptionPlan reception = default)
     {
         _decisionsComputed++;
@@ -492,7 +513,8 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         int start = Math.Max(0, tick);
         _executor.Set(new PlayerIntent(key, actionName, command, start, start + ticks)
         {
-            Reception = reception
+            Reception = reception,
+            OnBallAtDecision = onBallAtDecision
         });
     }
 
@@ -593,6 +615,37 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
     private FootballerCommand EvaluateSetPieceRestart(in FootballerObservation obs, Vector3 oppGoalCenter)
     {
         Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+
+        // AUD-13b: the restart trigger above fires up to 4.5 m from the ball, but every branch below returns
+        // the pass/kick aim vector as the movement direction. A taker displaced 1.5-4.4 m from the ball was
+        // therefore walking *away* from it while waiting to kick. Outside the execution layer's own reach the
+        // taker closes the gap and emits no kick; inside it the aim vectors below are the real kick. The
+        // reach is the same rule the execution layer applies to a deliberate kick (and the one
+        // HumanInputController uses for the human's strike), so this cannot promise a contact execution would
+        // refuse.
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        float distToBall = Vector2.Distance(selfXZ, ballXZ);
+        bool receivingOrDribbling = BallContactRules.IsReceivingOrDribbling(
+            obs.BallLastTouchedByTeam,
+            obs.BallLastTouchedByPlayerId,
+            obs.SelfTeam,
+            obs.SelfId);
+        float kickReach = BallContactRules.ReachRadius(
+            obs.SelfAttributes.ReachRadius,
+            keeperHandling: false,
+            isDiving: false,
+            requestingTackle: false,
+            receivingOrDribbling);
+        if (distToBall > kickReach)
+        {
+            Vector2 toBall = distToBall > 1e-4f
+                ? (ballXZ - selfXZ) / distToBall
+                : new Vector2(obs.AttackingDirectionX, 0f);
+            return new FootballerCommand(
+                toBall, toBall, false, false, false, false, false, Vector3.Zero,
+                KickIntentType.None, new Vector3(toBall.X, 0f, toBall.Y), 0f, 0f);
+        }
+
         // M5: the phase checks below used to be dead — a restart's pause resets the phase before the first
         // live tick, so a controller never observes MatchPhase.PenaltyKick or CornerKick. The armed restart
         // is what the player actually knows he is taking.
