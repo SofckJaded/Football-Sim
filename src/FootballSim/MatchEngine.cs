@@ -777,16 +777,31 @@ public sealed class MatchSimulationEngine
                     visibleBuffer);
                 _latestObservations[p.Id] = obs;
 
-                // A7.2: the player's own shout, decided from the observation he just built. Only an AI
-                // makes calls; the locked human's instruction is the HUD's call-for-pass and is unchanged.
-                if (_controllers[p.Id].SourceType == ControllerSourceType.AI)
-                    TeamCallPlanner.Publish(obs, _communication.Calls, _config.Ai);
+                // AUD-13c: the player's own shout is published after the whole observation pass, never here.
+                // Publishing inside this loop made a tick-T call audible on tick T to every player whose
+                // observation was still to be built — i.e. to every player registered after its caller — but
+                // not to players registered before him, so zero-delay reception depended on player id.
+                // The publication loop below keeps the same per-player order and tick stamp.
 
                 var cmd = _controllers[p.Id].Decide(obs, dt);
                 p.LastCommand = cmd;
 
                 if (DecisionTrace.IsEnabled)
                     RecordDecisionTrace(p, obs);
+            }
+
+            // AUD-13c: publish every AI player's team call only now that all observations for this tick
+            // exist. The order, the tick stamp, the board state each Publish sees, and therefore every
+            // counter/suppression/eviction outcome are unchanged; only the observation build is no longer
+            // interleaved with them. A call published on tick T is first heard on tick T+1 by every
+            // team-mate, whichever id direction it travels; at the shipped 18-tick delay a same-tick call
+            // was never usable, so the shipped path is bit-for-bit unchanged (AudFixCallOrderTests pins
+            // both properties, the default one on a full eleven-a-side passage).
+            foreach (var p in _players)
+            {
+                if (!p.IsActiveOnPitch) continue;
+                if (_controllers[p.Id].SourceType != ControllerSourceType.AI) continue;
+                TeamCallPlanner.Publish(_latestObservations[p.Id], _communication.Calls, _config.Ai);
             }
 
             _executionSystem.UpdateLocomotionAndContacts(
