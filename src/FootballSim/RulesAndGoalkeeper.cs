@@ -95,9 +95,23 @@ public sealed class GoalkeeperController : IFootballerController
 
     private string _debugSummary = "GK:Positioning";
 
-    public GoalkeeperController(PitchDimensions pitch)
+    /// <summary>
+    /// A9.2: whether this keeper runs the sweep/1v1 race for a loose or moving ball (A6.5). On unless a
+    /// configuration says otherwise; standalone fixtures keep today's behaviour. The delivery claim (A6.5b)
+    /// is a separate duty decided before this branch and is not gated.
+    /// </summary>
+    private readonly bool _sweepEnabled;
+
+    /// <param name="pitch">The pitch the keeper defends.</param>
+    /// <param name="ai">
+    /// The match's validated AI configuration (A9.2). Null — standalone fixtures and drills — keeps every
+    /// ablation switch at its shipped default, which is what makes an unconfigured keeper behave exactly as
+    /// before.
+    /// </param>
+    public GoalkeeperController(PitchDimensions pitch, AiRuntimeConfig? ai = null)
     {
         _pitch = pitch;
+        _sweepEnabled = ai?.EnableGoalkeeperSweep != false;
         _passPlanner = new PassPlanner(pitch);
         _passSuccess = new PassSuccessModel(_passPlanner);
         _receptionValue = new ReceptionValueModel(pitch);
@@ -283,7 +297,12 @@ public sealed class GoalkeeperController : IFootballerController
         // controlled, is the model's answer now: A6.5b moved its gates from the ball's current position to the
         // point the keeper would meet it at, so a ball rolling in from the corner and a 1v1 at the edge of the
         // box are decided like any other race.
-        if (trajectoryReady && obs.PossessingTeam != obs.SelfTeam)
+        //
+        // A9.2: the whole loose/moving-ball race is the ablated mechanism. With the sweep switch off the keeper
+        // never leaves his line for it — the sweep race and the 1v1 block it also carries are not run, so
+        // SweepEvaluated stays false and LastSweep stays default. Saves, claims, distribution and support depth
+        // are separate duties above/below and are untouched.
+        if (_sweepEnabled && trajectoryReady && obs.PossessingTeam != obs.SelfTeam)
         {
             GoalkeeperRace race = GoalkeeperDecisionModel.EvaluateSweep(obs, _trajectory, _pitch);
             LastSweep = race;

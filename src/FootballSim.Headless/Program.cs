@@ -89,6 +89,9 @@ public static class Program
             case "--styles":
                 return RunStyleEvidence(args) ? 0 : 1;
 
+            case "--ablations":
+                return RunAblationEvidence(args) ? 0 : 1;
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
@@ -113,6 +116,7 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --traps [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --routines [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --styles [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --ablations [seeds] [halfSeconds]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
@@ -4657,5 +4661,876 @@ public static class Program
 
         /// <summary>Mean placed line depth over this match's valid 30-tick samples.</summary>
         public double DefensiveLinePlacedMeanMeters => LineSamples > 0 ? LinePlacedSum / LineSamples : 0d;
+    }
+
+    // =====================================================================================================
+    // A9.2 — feature ablations. One same-seed A/B per feature: the reference build (every switch on) against
+    // the build with exactly one switch off. See RunAblationEvidence for the model, the sampling and the
+    // classification rule. Every constant the report prints is declared once here so the printed rule, the
+    // XML doc and the code cannot drift apart.
+    // =====================================================================================================
+
+    private const int AblationLocalCover = 0;
+    private const int AblationRestDefence = 1;
+    private const int AblationPerceptionLimits = 2;
+    private const int AblationOrientation = 3;
+    private const int AblationCommitment = 4;
+    private const int AblationRunCoordination = 5;
+    private const int AblationGoalkeeperSweep = 6;
+    private const int AblationShallowSearch = 7;
+
+    /// <summary>The eight A9.2 ablations, one row of the report each.</summary>
+    private const int AblationFeatureCount = 8;
+
+    private static readonly string[] AblationFeatureNames =
+    {
+        "local cover", "rest defence", "perception limits", "orientation",
+        "commitment", "run coordination", "goalkeeper sweep", "lookahead"
+    };
+
+    private static readonly string[] AblationSwitchNames =
+    {
+        "EnableLocalCover", "EnableRestDefence", "EnablePerceptionLimits", "EnableOrientation",
+        "EnableCommitment", "EnableRunCoordination", "EnableGoalkeeperSweep", "EnableShallowSearch"
+    };
+
+    /// <summary>The one number each feature's ablation is expected to move, named for the report.</summary>
+    private static readonly string[] AblationCounterNames =
+    {
+        "coverage opened", "mean security", "occluded sightings", "gaze-revealed sightings",
+        "committed player-ticks", "runs published", "sweep-evaluated ticks", "continuations"
+    };
+
+    /// <summary>
+    /// A9.2's headline bounds, declared once so the XML doc, the printed rule and the classification cannot
+    /// disagree: an ablation is <c>overwhelming</c> when the off build moves one of these on at least
+    /// seeds-1 paired seeds <b>and</b> the mean ball separation reaches the separation bound.
+    /// </summary>
+    private const double AblationPossessionBoundPoints = 10d;
+    private const double AblationGoalsBound = 2d;
+    private const double AblationTicksBoundShare = 0.15d;
+    private const double AblationSeparationBoundMeters = 3d;
+
+    /// <summary>Ball separation, in metres, that counts as two builds having diverged at a sampled tick.</summary>
+    private const float AblationDivergenceMeters = 0.05f;
+
+    /// <summary>What the mechanical A9.2 rule says about one feature's ablation.</summary>
+    private enum AblationClass
+    {
+        /// <summary>The ablation changed nothing measurable, or the mechanism never ran in the reference build.</summary>
+        Inert,
+
+        /// <summary>The ablation moved the match, but inside the stated bounds.</summary>
+        Measured,
+
+        /// <summary>The ablation moves a headline aggregate past the stated bounds on at least seeds-1 seeds.</summary>
+        Overwhelming
+    }
+
+    /// <summary>
+    /// A9.2 evidence: <b>feature ablations</b>, measured as eight same-seed A/Bs between the reference build
+    /// and the build with exactly one switch off.
+    ///
+    /// <b>The model sentence.</b> An ablation is the off build of one mechanism at the same seed, the same
+    /// squads and the same ends: both builds run the same engine, profiles, rules and cadence, and the only
+    /// difference between them is one <see cref="AiRuntimeConfig"/> switch. Whatever differs between the two
+    /// matches is therefore what that mechanism is worth, not a retuning of it. The reference build is
+    /// <c>new AiRuntimeConfig()</c> (every switch on); an off build is that same configuration with exactly
+    /// one switch false.
+    ///
+    /// Each match is sampled per tick, read-only and without consuming simulation randomness: the
+    /// authoritative ball position (for the trajectory comparison), the score, player-ticks with a live
+    /// <see cref="TacticalUtilityAiController.CommitmentRemainingSeconds"/>, ticks with a keeper
+    /// <see cref="GoalkeeperController.SweepEvaluated"/>, and the rest-defence picture
+    /// (<c>TeamJobCoordinator.SecurityOf</c>) wherever it is defined. At full time the aggregate counters are
+    /// read: goals, passes, shots, possession share, the coverage / run / combination counters and
+    /// <see cref="ScanTelemetry"/>.
+    ///
+    /// <b>Classification rule</b> (mechanical; the report prints it, and the bounds are the constants above):
+    /// <list type="bullet">
+    /// <item><b>inert</b> — the mechanism's reference counter is zero, or no paired seed diverged at all
+    /// (the ablation changed nothing measurable, or the reference build never ran the mechanism);</item>
+    /// <item><b>overwhelming</b> — on at least seeds-1 paired seeds the off build moves a headline aggregate
+    /// by the stated bounds (|possession delta| &gt;= 10 pp, |goals delta| &gt;= 2, or |ticks delta| &gt;= 15 %
+    /// of the reference ticks) <b>and</b> the mean ball separation is &gt;= 3 m;</item>
+    /// <item><b>measured</b> — anything else.</item>
+    /// </list>
+    /// A sampled tick diverges when the two builds' ball positions differ by more than 0.05 m or the score
+    /// differs; the first divergence tick is the first such sampled tick.
+    ///
+    /// <b>Verdict.</b> PASS requires (a) both builds reach full time on every seed for every feature, and
+    /// (b) every gated ablation neutralises its own mechanism in the off build: with local cover off no
+    /// coverage request is opened, with run coordination off no run is published, with the keeper sweep off
+    /// no keeper decision evaluates the sweep race, with commitment off no player-tick is committed, with
+    /// perception limits off no sighting is occluded, and with rest defence off the picture reads strictly
+    /// more secure than the reference on every seed (the off build is fully secure). Orientation and
+    /// lookahead are reported, not gated beyond divergence — lookahead's strict claim belongs to
+    /// <c>--search</c>.
+    /// </summary>
+    private static bool RunAblationEvidence(string[] args)
+    {
+        int seedCount = args.Length > 1 && int.TryParse(args[1], out int requestedSeeds) && requestedSeeds > 0
+            ? requestedSeeds
+            : 3;
+        float halfSeconds = args.Length > 2 && float.TryParse(args[2], out float requestedHalf) && requestedHalf > 0f
+            ? requestedHalf
+            : 600f;
+
+        Console.WriteLine($"=== A9.2 feature ablations: same-seed A/B, {seedCount} seeds x {halfSeconds * 2f:F0} s -- " +
+                          "reference build (all switches on) vs one switch off per feature ===");
+        Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        Console.WriteLine("Ablation model     : an ablation is the off build of one mechanism at the same seed, the same");
+        Console.WriteLine("                     squads and the same ends: both builds run the same engine, profiles, rules");
+        Console.WriteLine("                     and cadence, and the only difference between them is one AiRuntimeConfig");
+        Console.WriteLine("                     switch. Whatever differs between the two matches is therefore what that");
+        Console.WriteLine("                     mechanism is worth, not a retuning of it. The reference build is");
+        Console.WriteLine("                     new AiRuntimeConfig() (every switch on).");
+        Console.WriteLine("Divergence         : a sampled tick diverges when the two builds' ball positions differ by more");
+        Console.WriteLine($"                     than {AblationDivergenceMeters:F2} m or the score differs; the first divergence");
+        Console.WriteLine("                     tick is the first such sampled tick, and mean/max ball separation is over the");
+        Console.WriteLine("                     common tick range of the two matches.");
+        Console.WriteLine("Classification     : mechanical, from the measured numbers: inert when the mechanism's reference");
+        Console.WriteLine("                     counter is zero or no paired seed diverged at all; overwhelming when on at");
+        Console.WriteLine($"                     least seeds-1 paired seeds |possession delta| >= {AblationPossessionBoundPoints:F1} pp OR");
+        Console.WriteLine($"                     |goals delta| >= {AblationGoalsBound:F0} OR |ticks delta| >= {AblationTicksBoundShare * 100d:F0} % of the");
+        Console.WriteLine($"                     reference ticks, AND the mean ball separation is >= {AblationSeparationBoundMeters:F1} m;");
+        Console.WriteLine("                     otherwise measured. The CLASS column is that rule's output, not an opinion.");
+        Console.WriteLine($"Reference (ON)     : {new AiRuntimeConfig().Describe()}");
+        Console.WriteLine("Off builds (OFF)   : one switch false each, everything else as the reference:");
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+            Console.WriteLine($"  {AblationFeatureNames[feature],-19}{AblationSwitchNames[feature],-24} " +
+                              $"{BuildAblationOffConfig(feature).Describe()}");
+        Console.WriteLine();
+
+        var seeds = new ulong[seedCount];
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+            seeds[seedIndex] = 20260818UL + (ulong)seedIndex * 7919UL;
+
+        var references = new AblationMatchSample[seedCount];
+        var comparisons = new AblationComparison[AblationFeatureCount, seedCount];
+
+        for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+        {
+            // The reference match is one world per seed, reused by all eight ablations: that is what makes the
+            // eight rows paired rather than eight different fixtures.
+            references[seedIndex] = RunAblationMatch(seeds[seedIndex], halfSeconds, featureIndex: -1);
+            Console.WriteLine($"Seed {seeds[seedIndex]}:");
+            WriteAblationReferenceTotals(references[seedIndex]);
+            for (int feature = 0; feature < AblationFeatureCount; feature++)
+            {
+                AblationMatchSample off = RunAblationMatch(seeds[seedIndex], halfSeconds, feature);
+                comparisons[feature, seedIndex] = CompareAblation(references[seedIndex], off, feature);
+                WriteAblationSeedLine(feature, comparisons[feature, seedIndex]);
+            }
+            Console.WriteLine();
+        }
+
+        AblationFeatureSummary[] summaries = SummarizeAblations(references, comparisons, seedCount);
+        WriteAblationAggregateTable(summaries, seedCount);
+        WriteAblationNeutralisationTable(summaries, seedCount);
+        WriteAblationFindings(summaries, seeds);
+        return ReportAblationVerdict(summaries, seeds);
+    }
+
+    /// <summary>
+    /// The configuration of one A9.2 off build: the reference configuration with exactly one switch false.
+    /// The switch names are the A9.2 names <see cref="AiRuntimeConfig"/> documents; nothing else is set, so
+    /// the two builds differ in one field.
+    /// </summary>
+    private static AiRuntimeConfig BuildAblationOffConfig(int feature) => feature switch
+    {
+        AblationLocalCover => new AiRuntimeConfig { EnableLocalCover = false },
+        AblationRestDefence => new AiRuntimeConfig { EnableRestDefence = false },
+        AblationPerceptionLimits => new AiRuntimeConfig { EnablePerceptionLimits = false },
+        AblationOrientation => new AiRuntimeConfig { EnableOrientation = false },
+        AblationCommitment => new AiRuntimeConfig { EnableCommitment = false },
+        AblationRunCoordination => new AiRuntimeConfig { EnableRunCoordination = false },
+        AblationGoalkeeperSweep => new AiRuntimeConfig { EnableGoalkeeperSweep = false },
+        _ => new AiRuntimeConfig { EnableShallowSearch = false }
+    };
+
+    /// <summary>
+    /// The one number that shows whether a feature's mechanism was live, from the same sampled state the
+    /// probe classifies: a lifetime count for the mechanisms that emit events, and the mean rest-defence
+    /// security (0-1) for the mechanism whose whole output is that picture. A zero therefore means "the
+    /// mechanism never ran", which is the inert rule's first clause.
+    /// </summary>
+    private static double AblationMechanismValue(AblationMatchSample sample, int feature) => feature switch
+    {
+        AblationLocalCover => sample.CoverageRequestsOpened,
+        AblationRestDefence => sample.MeanSecurity(),
+        AblationPerceptionLimits => sample.Scan.OccludedByBody,
+        AblationOrientation => sample.Scan.RevealedByGaze,
+        AblationCommitment => sample.CommittedPlayerTicks,
+        AblationRunCoordination => sample.RunsPublished,
+        AblationGoalkeeperSweep => sample.SweepEvaluatedTicks,
+        _ => sample.CombinationsContinued
+    };
+
+    /// <summary>The mechanism counter as one per-seed value: counts are integers, security is a 0-1 share.</summary>
+    private static string AblationMechanismText(double value, int feature) =>
+        feature == AblationRestDefence ? value.ToString("F3") : value.ToString("F0");
+
+    /// <summary>The mechanism counter as a mean over seeds: one decimal for counts, a share for security.</summary>
+    private static string AblationMechanismMeanText(double value, int feature) =>
+        feature == AblationRestDefence ? value.ToString("F3") : value.ToString("F1");
+
+    /// <summary>True when A9.2 requires the off build to neutralise this feature's mechanism (gate b).</summary>
+    private static bool AblationHasNeutralisationGate(int feature) =>
+        feature is not (AblationOrientation or AblationShallowSearch);
+
+    /// <summary>The gate a gated feature's off build must meet, phrased as the neutralisation claim it proves.</summary>
+    private static string AblationGateDescription(int feature) => feature switch
+    {
+        AblationLocalCover => "coverage requests opened = 0",
+        AblationRestDefence => "off mean security > on mean security",
+        AblationPerceptionLimits => "occluded sightings = 0",
+        AblationCommitment => "committed player-ticks = 0",
+        AblationRunCoordination => "runs published = 0",
+        AblationGoalkeeperSweep => "sweep-evaluated ticks = 0",
+        _ => "reported only, not gated"
+    };
+
+    /// <summary>
+    /// Runs one A9.2 probe match: the reference build when <paramref name="featureIndex"/> is negative, the
+    /// build with that one switch off otherwise. Samples the match per tick and reads the aggregate counters
+    /// at full time; the loop and the tick cap are the same ones every other Headless evidence probe uses, so
+    /// a probe match is the same fixture the other probes play.
+    /// </summary>
+    private static AblationMatchSample RunAblationMatch(ulong seed, float halfSeconds, int featureIndex)
+    {
+        var ai = featureIndex < 0 ? new AiRuntimeConfig() : BuildAblationOffConfig(featureIndex);
+        var engine = new MatchSimulationEngine(new PreMatchConfig
+        {
+            Seed = seed,
+            PlayersPerTeam = 11,
+            HalfDurationSeconds = halfSeconds,
+            HomeProfile = TeamTacticalProfile.PossessionControl,
+            AwayProfile = TeamTacticalProfile.DirectCounterattack,
+            Ai = ai
+        });
+        int maxTicks = (int)(halfSeconds * 2.25f * 60f) + 1200;
+
+        var sample = new AblationMatchSample();
+        while (engine.Rules.Phase != MatchPhase.FullTime && engine.CurrentTick < maxTicks)
+        {
+            engine.StepTick();
+            SampleAblationTick(engine, sample);
+        }
+
+        var analytics = engine.Analytics;
+        sample.Completed = engine.Rules.Phase == MatchPhase.FullTime;
+        sample.Ticks = engine.CurrentTick;
+        sample.HomeGoals = analytics.HomeGoals;
+        sample.AwayGoals = analytics.AwayGoals;
+        sample.PassesAttempted = analytics.HomePassesAttempted + analytics.AwayPassesAttempted;
+        sample.PassesCompleted = analytics.HomePassesCompleted + analytics.AwayPassesCompleted;
+        sample.Shots = analytics.HomeShots + analytics.AwayShots;
+        sample.HomePossessionShare = analytics.HomePossessionShare;
+
+        TeamJobCoordinator jobs = engine.TeamJobs;
+        sample.CoverageRequestsOpened = jobs.CoverageRequestsOpened;
+        sample.CoverageRequestsClosed = jobs.CoverageRequestsClosed;
+        sample.Handovers = jobs.HandoverCount;
+
+        RunAdvertisementBoard runs = engine.Communication.Runs;
+        sample.RunsPublished = runs.PublishedCount;
+        sample.RunsWithdrawn = runs.WithdrawnCount;
+        sample.RunsClaimed = runs.ClaimedCount;
+
+        CombinationCoordinator combinations = engine.Communication.Combinations;
+        sample.CombinationsPublished = combinations.PublishedCount;
+        sample.CombinationsContinued = combinations.ContinuedCount;
+
+        sample.Scan = engine.ScanStats;
+        return sample;
+    }
+
+    /// <summary>
+    /// Samples one stepped A9.2 probe tick. Read-only: it reads the authoritative ball and score, the
+    /// controllers' own diagnostics and the rest-defence picture, consumes no simulation randomness and
+    /// mutates nothing, so the match is exactly the match the same seed would produce without the probe.
+    /// The player scan is a plain indexed loop (no LINQ, no allocation) because it runs on every live tick.
+    /// </summary>
+    private static void SampleAblationTick(MatchSimulationEngine engine, AblationMatchSample sample)
+    {
+        sample.BallPositions.Add(engine.Ball.Position);
+        sample.HomeGoalsByTick.Add(engine.Analytics.HomeGoals);
+        sample.AwayGoalsByTick.Add(engine.Analytics.AwayGoals);
+
+        int committedThisTick = 0;
+        bool sweepEvaluatedThisTick = false;
+        IReadOnlyList<FootballerState> players = engine.Players;
+        for (int index = 0; index < players.Count; index++)
+        {
+            FootballerState player = players[index];
+            if (!player.IsActiveOnPitch) continue;
+
+            IFootballerController controller = engine.GetController(player.Id);
+            if (controller is TacticalUtilityAiController tactical)
+            {
+                if (tactical.CommitmentRemainingSeconds > 0f) committedThisTick++;
+            }
+            else if (controller is GoalkeeperController keeper && keeper.SweepEvaluated)
+            {
+                sweepEvaluatedThisTick = true;
+            }
+        }
+
+        sample.CommittedPlayerTicks += committedThisTick;
+        if (sweepEvaluatedThisTick) sample.SweepEvaluatedTicks++;
+
+        // The rest-defence picture is defined from the first in-possession evaluation; before that it is the
+        // default struct (security 0). Skipping the undefined value keeps the mean a mean of the picture, and
+        // the ablation's off build reads fully secure from the first tick, which is what the gate compares.
+        RestDefence homeSecurity = engine.TeamJobs.SecurityOf(TeamId.Home);
+        if (homeSecurity.Security01 > 0f)
+        {
+            sample.SecuritySum += homeSecurity.Security01;
+            sample.SecuritySamples++;
+        }
+
+        RestDefence awaySecurity = engine.TeamJobs.SecurityOf(TeamId.Away);
+        if (awaySecurity.Security01 > 0f)
+        {
+            sample.SecuritySum += awaySecurity.Security01;
+            sample.SecuritySamples++;
+        }
+    }
+
+    /// <summary>
+    /// Compares one off build with the same seed's reference build: end state, divergence over the common
+    /// tick range, the final aggregate deltas, the mechanism counters and the neutralisation gate. The mean
+    /// and max ball separation are recorded even when the two matches never diverge (then both are 0), because
+    /// "same trajectory" is a measured fact of the ablation rather than an absence.
+    /// </summary>
+    private static AblationComparison CompareAblation(
+        AblationMatchSample reference,
+        AblationMatchSample off,
+        int feature)
+    {
+        var comparison = new AblationComparison
+        {
+            ReferenceCompleted = reference.Completed,
+            OffCompleted = off.Completed,
+            ReferenceTicks = reference.Ticks,
+            OffTicks = off.Ticks,
+            ReferenceHomeGoals = reference.HomeGoals,
+            ReferenceAwayGoals = reference.AwayGoals,
+            OffHomeGoals = off.HomeGoals,
+            OffAwayGoals = off.AwayGoals,
+            TicksDelta = off.Ticks - reference.Ticks,
+            PossessionDeltaPp = (off.HomePossessionShare - reference.HomePossessionShare) * 100d,
+            GoalsDelta = (off.HomeGoals + off.AwayGoals) - (reference.HomeGoals + reference.AwayGoals),
+            PassesDelta = off.PassesAttempted - reference.PassesAttempted,
+            ShotsDelta = off.Shots - reference.Shots,
+            MechanismOn = AblationMechanismValue(reference, feature),
+            MechanismOff = AblationMechanismValue(off, feature),
+            GateHolds = AblationGateHolds(feature, reference, off)
+        };
+
+        int commonTicks = Math.Min(reference.BallPositions.Count, off.BallPositions.Count);
+        double separationSum = 0d;
+        double maxSeparation = 0d;
+        int divergentTicks = 0;
+        int firstDivergenceTick = -1;
+        for (int tickIndex = 0; tickIndex < commonTicks; tickIndex++)
+        {
+            Vector3 onBall = reference.BallPositions[tickIndex];
+            Vector3 offBall = off.BallPositions[tickIndex];
+            float deltaX = onBall.X - offBall.X;
+            float deltaY = onBall.Y - offBall.Y;
+            float deltaZ = onBall.Z - offBall.Z;
+            float separation = MathF.Sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ);
+            separationSum += separation;
+            if (separation > maxSeparation) maxSeparation = separation;
+
+            bool scoreDiffers = reference.HomeGoalsByTick[tickIndex] != off.HomeGoalsByTick[tickIndex] ||
+                                reference.AwayGoalsByTick[tickIndex] != off.AwayGoalsByTick[tickIndex];
+            if (scoreDiffers || separation > AblationDivergenceMeters)
+            {
+                divergentTicks++;
+                if (firstDivergenceTick < 0) firstDivergenceTick = tickIndex + 1;
+            }
+        }
+
+        comparison.DivergentTicks = divergentTicks;
+        comparison.FirstDivergenceTick = firstDivergenceTick;
+        comparison.MeanBallSeparation = commonTicks > 0 ? separationSum / commonTicks : 0d;
+        comparison.MaxBallSeparation = maxSeparation;
+
+        double ticksShare = reference.Ticks > 0
+            ? Math.Abs(comparison.TicksDelta) / (double)reference.Ticks
+            : 0d;
+        comparison.HeadlineMove = Math.Abs(comparison.PossessionDeltaPp) >= AblationPossessionBoundPoints ||
+                                  Math.Abs(comparison.GoalsDelta) >= AblationGoalsBound ||
+                                  ticksShare >= AblationTicksBoundShare;
+        return comparison;
+    }
+
+    /// <summary>
+    /// Whether the off build neutralised its own mechanism (gate b). Orientation and lookahead have no gate —
+    /// their off builds are reported and classified by divergence alone.
+    /// </summary>
+    private static bool AblationGateHolds(int feature, AblationMatchSample reference, AblationMatchSample off) =>
+        feature switch
+        {
+            AblationLocalCover => off.CoverageRequestsOpened == 0,
+            AblationRestDefence => off.MeanSecurity() > reference.MeanSecurity(),
+            AblationPerceptionLimits => off.Scan.OccludedByBody == 0,
+            AblationCommitment => off.CommittedPlayerTicks == 0,
+            AblationRunCoordination => off.RunsPublished == 0,
+            AblationGoalkeeperSweep => off.SweepEvaluatedTicks == 0,
+            _ => true
+        };
+
+    /// <summary>
+    /// The A9.2 aggregate: one summary per feature, pooled over the seed set. Means are per seed, so the
+    /// columns compare features at the same denominator; the median first-divergence tick is over the seeds
+    /// that diverged (a feature whose off build is the same match has no divergence tick to place).
+    /// </summary>
+    private static AblationFeatureSummary[] SummarizeAblations(
+        AblationMatchSample[] references,
+        AblationComparison[,] comparisons,
+        int seedCount)
+    {
+        var summaries = new AblationFeatureSummary[AblationFeatureCount];
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            var summary = new AblationFeatureSummary();
+            double mechanismOnSum = 0d;
+            double mechanismOffSum = 0d;
+            double separationSum = 0d;
+            double ticksDeltaSum = 0d;
+            double possessionDeltaSum = 0d;
+            double goalsDeltaSum = 0d;
+            double passesDeltaSum = 0d;
+            double shotsDeltaSum = 0d;
+            var firstTicks = new List<int>();
+
+            for (int seedIndex = 0; seedIndex < seedCount; seedIndex++)
+            {
+                AblationMatchSample reference = references[seedIndex];
+                AblationComparison comparison = comparisons[feature, seedIndex];
+                mechanismOnSum += AblationMechanismValue(reference, feature);
+                mechanismOffSum += comparison.MechanismOff;
+                separationSum += comparison.MeanBallSeparation;
+                ticksDeltaSum += comparison.TicksDelta;
+                possessionDeltaSum += comparison.PossessionDeltaPp;
+                goalsDeltaSum += comparison.GoalsDelta;
+                passesDeltaSum += comparison.PassesDelta;
+                shotsDeltaSum += comparison.ShotsDelta;
+
+                if (comparison.DivergentTicks > 0)
+                {
+                    summary.DivergentSeeds++;
+                    if (comparison.FirstDivergenceTick >= 0)
+                        firstTicks.Add(comparison.FirstDivergenceTick);
+                }
+
+                if (comparison.HeadlineMove) summary.HeadlineSeeds++;
+                if (comparison.ReferenceCompleted && comparison.OffCompleted)
+                {
+                    summary.FullTimePairs++;
+                }
+                else
+                {
+                    summary.IncompleteSeeds.Add(seedIndex);
+                }
+
+                if (!comparison.GateHolds)
+                {
+                    summary.GateFailures++;
+                    summary.GateFailureSeeds.Add(seedIndex);
+                }
+            }
+
+            double divisor = seedCount > 0 ? seedCount : 1;
+            summary.MechanismOnMean = mechanismOnSum / divisor;
+            summary.MechanismOffMean = mechanismOffSum / divisor;
+            summary.MeanBallSeparation = separationSum / divisor;
+            summary.TicksDeltaMean = ticksDeltaSum / divisor;
+            summary.PossessionDeltaPpMean = possessionDeltaSum / divisor;
+            summary.GoalsDeltaMean = goalsDeltaSum / divisor;
+            summary.PassesDeltaMean = passesDeltaSum / divisor;
+            summary.ShotsDeltaMean = shotsDeltaSum / divisor;
+            summary.MedianFirstDivergence = firstTicks.Count == 0 ? double.NaN : Median(firstTicks);
+            summary.CounterZeroInReference = mechanismOnSum <= 0d;
+
+            int requiredHeadlineSeeds = Math.Max(1, seedCount - 1);
+            summary.Class = summary.CounterZeroInReference || summary.DivergentSeeds == 0
+                ? AblationClass.Inert
+                : summary.HeadlineSeeds >= requiredHeadlineSeeds &&
+                  summary.MeanBallSeparation >= AblationSeparationBoundMeters
+                    ? AblationClass.Overwhelming
+                    : AblationClass.Measured;
+            summaries[feature] = summary;
+        }
+
+        return summaries;
+    }
+
+    /// <summary>The A9.2 per-seed block: the reference build's full-time counters for the seed.</summary>
+    private static void WriteAblationReferenceTotals(AblationMatchSample reference)
+    {
+        Console.WriteLine($"  reference build: {reference.HomeGoals}-{reference.AwayGoals}, {reference.Ticks} ticks, " +
+                          $"passes {reference.PassesAttempted}/{reference.PassesCompleted}, shots {reference.Shots}, " +
+                          $"poss {reference.HomePossessionShare * 100f:F1} % | cover opened {reference.CoverageRequestsOpened}" +
+                          $"/closed {reference.CoverageRequestsClosed}/handovers {reference.Handovers} | runs " +
+                          $"{reference.RunsPublished}/{reference.RunsWithdrawn}/{reference.RunsClaimed} " +
+                          "published/withdrawn/claimed | combos " +
+                          $"{reference.CombinationsPublished}/{reference.CombinationsContinued} published/continued | " +
+                          $"scan starts {reference.Scan.ScanStarts}, revealed {reference.Scan.RevealedByGaze}, " +
+                          $"occluded {reference.Scan.OccludedByBody}");
+    }
+
+    /// <summary>
+    /// One compact A9.2 per-feature line inside a seed block: both builds' end state, ticks, score, divergence
+    /// and the mechanism counter, so the aggregate row can be checked by eye against the two matches.
+    /// </summary>
+    private static void WriteAblationSeedLine(int feature, AblationComparison comparison)
+    {
+        string firstDivergence = comparison.FirstDivergenceTick < 0
+            ? "n/a"
+            : comparison.FirstDivergenceTick.ToString();
+        Console.WriteLine($"  {AblationFeatureNames[feature],-19} " +
+                          $"{(comparison.ReferenceCompleted ? "FT" : "INC")}/{(comparison.OffCompleted ? "FT" : "INC")} " +
+                          $"{comparison.ReferenceTicks,6}/{comparison.OffTicks,-6} t | " +
+                          $"score {comparison.ReferenceHomeGoals}-{comparison.ReferenceAwayGoals} vs " +
+                          $"{comparison.OffHomeGoals}-{comparison.OffAwayGoals} | " +
+                          $"div {comparison.DivergentTicks,5} t, first {firstDivergence,-6} | " +
+                          $"ball {comparison.MeanBallSeparation:F2}/{comparison.MaxBallSeparation:F2} m mean/max | " +
+                          $"{AblationCounterNames[feature]} " +
+                          $"{AblationMechanismText(comparison.MechanismOn, feature)}/" +
+                          $"{AblationMechanismText(comparison.MechanismOff, feature)}");
+    }
+
+    /// <summary>
+    /// The A9.2 aggregate table: one row per feature over the seed set. Deltas are OFF minus reference; the
+    /// pass and shot deltas are counts, the possession delta is percentage points, and the CLASS column is the
+    /// mechanical rule's output (the bounds are the constants in <see cref="RunAblationEvidence"/>).
+    /// </summary>
+    private static void WriteAblationAggregateTable(AblationFeatureSummary[] summaries, int seedCount)
+    {
+        Console.WriteLine($"=== Aggregate over {seedCount} seeds (means per seed; deltas are OFF - reference) ===");
+        Console.WriteLine($"{"feature",-19}{"mech ON",9}{"mech OFF",9}{"div",6}{"med 1st",8}{"ball m",8}" +
+                          $"{"ticks d",8}{"poss pp",8}{"goals d",8}{"passes d",9}{"shots d",9} {"CLASS",-12}");
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            AblationFeatureSummary summary = summaries[feature];
+            Console.WriteLine($"{AblationFeatureNames[feature],-19}" +
+                              $"{AblationMechanismMeanText(summary.MechanismOnMean, feature),9}" +
+                              $"{AblationMechanismMeanText(summary.MechanismOffMean, feature),9}" +
+                              $"{summary.DivergentSeeds,3}/{seedCount,-2}" +
+                              $"{DescribeMedianTick(summary.MedianFirstDivergence),8}" +
+                              $"{summary.MeanBallSeparation,8:F2}" +
+                              $"{summary.TicksDeltaMean.ToString("+0;-0;0"),8}" +
+                              $"{summary.PossessionDeltaPpMean.ToString("+0.0;-0.0;0.0"),8}" +
+                              $"{summary.GoalsDeltaMean.ToString("+0.0;-0.0;0.0"),8}" +
+                              $"{summary.PassesDeltaMean.ToString("+0.0;-0.0;0.0"),9}" +
+                              $"{summary.ShotsDeltaMean.ToString("+0.0;-0.0;0.0"),9} " +
+                              $"{AblationClassName(summary.Class),-12}");
+        }
+
+        Console.WriteLine("mech = the feature's mechanism counter (counts as per-seed means, rest-defence security");
+        Console.WriteLine("as a 0-1 mean); div = seeds on which at least one sampled tick diverged; med 1st = median");
+        Console.WriteLine("first-divergence tick over the diverged seeds; d = OFF minus reference.");
+    }
+
+    /// <summary>
+    /// The A9.2 neutralisation table: for each feature, the probe counter in the reference build and in the off
+    /// build, and whether the off build's counter meets the gate. A gated feature that does not meet it is
+    /// named NOT NEUTRALISED here and in the verdict; orientation and lookahead are reported only.
+    /// </summary>
+    private static void WriteAblationNeutralisationTable(AblationFeatureSummary[] summaries, int seedCount)
+    {
+        Console.WriteLine("=== Mechanism neutralised when off ===");
+        Console.WriteLine($"{"feature",-19}{"probe counter",-28}{"ON mean",9}{"OFF mean",9}  verdict");
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            AblationFeatureSummary summary = summaries[feature];
+            string verdict;
+            if (!AblationHasNeutralisationGate(feature))
+            {
+                verdict = "REPORTED ONLY (not gated; classified by divergence)";
+            }
+            else if (summary.GateFailures == 0)
+            {
+                verdict = "NEUTRAL -- gate holds on every seed";
+            }
+            else
+            {
+                verdict = $"NOT NEUTRALISED on {summary.GateFailures}/{seedCount} seeds";
+            }
+
+            Console.WriteLine($"{AblationFeatureNames[feature],-19}{AblationCounterNames[feature],-28}" +
+                              $"{AblationMechanismMeanText(summary.MechanismOnMean, feature),9}" +
+                              $"{AblationMechanismMeanText(summary.MechanismOffMean, feature),9}  {verdict}");
+        }
+
+        Console.WriteLine("Gates: local cover coverage opened = 0; run coordination runs published = 0; keeper sweep");
+        Console.WriteLine("       sweep-evaluated ticks = 0; commitment committed player-ticks = 0; perception limits");
+        Console.WriteLine("       occluded sightings = 0; rest defence off mean security > on mean security, every seed.");
+        Console.WriteLine("Orientation and lookahead are reported, not gated; lookahead's strict claim belongs to --search.");
+    }
+
+    /// <summary>
+    /// The A9.2 findings paragraph: every inert and overwhelming feature, each stated from the measured number
+    /// that put it there. The classification is the report's job; this block only reads it back in words, so a
+    /// reader does not have to infer the verdict from the table.
+    /// </summary>
+    private static void WriteAblationFindings(AblationFeatureSummary[] summaries, ulong[] seeds)
+    {
+        Console.WriteLine("=== Findings (the measured numbers, not an assertion) ===");
+        WriteAblationFindingGroup(summaries, seeds, AblationClass.Inert, "inert");
+        WriteAblationFindingGroup(summaries, seeds, AblationClass.Overwhelming, "overwhelming");
+        WriteAblationFindingGroup(summaries, seeds, AblationClass.Measured, "measured");
+        Console.WriteLine("An inert feature is one whose ablation changed nothing measurable, or whose reference counter");
+        Console.WriteLine("never moved - the build does not actually use the mechanism. An overwhelming feature is one");
+        Console.WriteLine("the same ablation moves far past the stated bounds - the match is not robust to its removal.");
+        Console.WriteLine("The probe reports both; neither is corrected here.");
+    }
+
+    /// <summary>Writes one A9.2 findings group (one classification) as a labelled, indented block.</summary>
+    private static void WriteAblationFindingGroup(
+        AblationFeatureSummary[] summaries,
+        ulong[] seeds,
+        AblationClass target,
+        string label)
+    {
+        var parts = new List<string>();
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            AblationFeatureSummary summary = summaries[feature];
+            if (summary.Class != target) continue;
+
+            if (target == AblationClass.Inert && summary.CounterZeroInReference)
+            {
+                parts.Add($"{AblationFeatureNames[feature]}: reference {AblationCounterNames[feature]} = 0 " +
+                          "across every seed, so there was nothing to ablate");
+            }
+            else if (target == AblationClass.Inert)
+            {
+                parts.Add($"{AblationFeatureNames[feature]}: no paired seed diverged " +
+                          $"({summary.DivergentSeeds}/{seeds.Length}), so the off build played the same match");
+            }
+            else if (target == AblationClass.Overwhelming)
+            {
+                parts.Add($"{AblationFeatureNames[feature]}: {summary.HeadlineSeeds}/{seeds.Length} paired seeds " +
+                          "moved a headline aggregate past its bound, mean ball separation " +
+                          $"{summary.MeanBallSeparation:F2} m (gain >= {AblationSeparationBoundMeters:F1} m)");
+            }
+            else
+            {
+                parts.Add($"{AblationFeatureNames[feature]}: {summary.DivergentSeeds}/{seeds.Length} seeds diverged, " +
+                          $"median first divergence {DescribeMedianTick(summary.MedianFirstDivergence)} t, mean ball " +
+                          $"separation {summary.MeanBallSeparation:F2} m; {AblationCounterNames[feature]} " +
+                          $"{AblationMechanismMeanText(summary.MechanismOnMean, feature)} -> " +
+                          $"{AblationMechanismMeanText(summary.MechanismOffMean, feature)}");
+            }
+        }
+
+        Console.Write($"{label,-13}: ");
+        if (parts.Count == 0)
+        {
+            Console.WriteLine("none");
+            return;
+        }
+
+        Console.WriteLine(parts[0]);
+        string padding = new(' ', 15);
+        for (int index = 1; index < parts.Count; index++)
+            Console.WriteLine(padding + parts[index]);
+    }
+
+    /// <summary>
+    /// The A9.2 PASS/FAIL verdict. PASS requires both builds at full time on every seed for every feature, and
+    /// every gated ablation neutralised in the off build. The failing feature — and the failing seed values —
+    /// are printed rather than only counted.
+    /// </summary>
+    private static bool ReportAblationVerdict(AblationFeatureSummary[] summaries, ulong[] seeds)
+    {
+        int seedCount = seeds.Length;
+        Console.WriteLine("=== Verdict ===");
+
+        int fullTimePairs = 0;
+        int expectedFullTimePairs = AblationFeatureCount * seedCount;
+        bool fullTimeOk = true;
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            AblationFeatureSummary summary = summaries[feature];
+            fullTimePairs += summary.FullTimePairs;
+            if (summary.FullTimePairs == seedCount) continue;
+            fullTimeOk = false;
+            Console.WriteLine($"  (a) {AblationFeatureNames[feature],-19} both builds full time on " +
+                              $"{summary.FullTimePairs}/{seedCount} seeds -- FAIL (incomplete seeds: " +
+                              $"{DescribeSeeds(summary.IncompleteSeeds, seeds)})");
+        }
+
+        Console.WriteLine($"  (a) full time, both builds, every feature x seed: {(fullTimeOk ? "OK" : "FAIL")} " +
+                          $"({fullTimePairs}/{expectedFullTimePairs} pairs)");
+
+        bool neutralisationOk = true;
+        for (int feature = 0; feature < AblationFeatureCount; feature++)
+        {
+            AblationFeatureSummary summary = summaries[feature];
+            string gate = AblationGateDescription(feature);
+            if (!AblationHasNeutralisationGate(feature))
+            {
+                Console.WriteLine($"  (b) {AblationFeatureNames[feature],-19} {gate,-44} reported only");
+                continue;
+            }
+
+            if (summary.GateFailures == 0)
+            {
+                Console.WriteLine($"  (b) {AblationFeatureNames[feature],-19} {gate,-44} OK on {seedCount}/{seedCount} seeds");
+                continue;
+            }
+
+            neutralisationOk = false;
+            Console.WriteLine($"  (b) {AblationFeatureNames[feature],-19} {gate,-44} FAIL on " +
+                              $"{summary.GateFailures}/{seedCount} seeds (failing seeds: " +
+                              $"{DescribeSeeds(summary.GateFailureSeeds, seeds)})");
+        }
+
+        bool ok = fullTimeOk && neutralisationOk;
+        Console.WriteLine();
+        Console.WriteLine(ok
+            ? "RESULT: PASS -- every feature's two builds reached full time on every seed, and every gated" +
+              " ablation neutralised its own mechanism in the off build"
+            : "RESULT: FAIL -- see the (a)/(b) lines above: a build did not reach full time, or a gated ablation" +
+              " did not neutralise its mechanism when off");
+        return ok;
+    }
+
+    /// <summary>Median of the collected first-divergence ticks; 0-2 values are the ordinary cases for the probe.</summary>
+    private static double Median(List<int> values)
+    {
+        if (values.Count == 0) return double.NaN;
+        values.Sort();
+        int middle = values.Count / 2;
+        return values.Count % 2 == 1
+            ? values[middle]
+            : (values[middle - 1] + values[middle]) / 2d;
+    }
+
+    /// <summary>A median tick as a whole number, or <c>n/a</c> when no seed diverged.</summary>
+    private static string DescribeMedianTick(double median) =>
+        double.IsNaN(median) ? "n/a" : median.ToString("F0");
+
+    /// <summary>The seed values behind a list of seed indices, for a failure line that names the actual seeds.</summary>
+    private static string DescribeSeeds(List<int> seedIndices, ulong[] seeds)
+    {
+        if (seedIndices.Count == 0) return "none";
+        var parts = new List<string>(seedIndices.Count);
+        for (int index = 0; index < seedIndices.Count; index++)
+            parts.Add(seeds[seedIndices[index]].ToString());
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>The classification as it prints in the CLASS column and the findings block.</summary>
+    private static string AblationClassName(AblationClass value) => value switch
+    {
+        AblationClass.Inert => "inert",
+        AblationClass.Overwhelming => "overwhelming",
+        _ => "measured"
+    };
+
+    /// <summary>
+    /// One A9.2 probe match's sampled state: the per-tick trajectory (ball and score, for divergence and
+    /// separation), the per-tick mechanism samples, and the full-time aggregate counters. The trajectory is
+    /// one entry per stepped tick, so its memory is bounded by the tick cap rather than by the match's events.
+    /// </summary>
+    private sealed class AblationMatchSample
+    {
+        public bool Completed;
+        public int Ticks;
+        public int HomeGoals;
+        public int AwayGoals;
+        public int PassesAttempted;
+        public int PassesCompleted;
+        public int Shots;
+        public float HomePossessionShare;
+
+        /// <summary>The authoritative ball position after each stepped tick (index i = tick i + 1).</summary>
+        public readonly List<Vector3> BallPositions = new();
+
+        /// <summary>The score after each stepped tick, so a goal is a divergence even while the ball is still.</summary>
+        public readonly List<int> HomeGoalsByTick = new();
+        public readonly List<int> AwayGoalsByTick = new();
+
+        /// <summary>Player-ticks with a live commitment; ticks on which any keeper evaluated the sweep race.</summary>
+        public long CommittedPlayerTicks;
+        public long SweepEvaluatedTicks;
+
+        /// <summary>Sum and count of the defined rest-defence security samples (both teams pooled).</summary>
+        public double SecuritySum;
+        public long SecuritySamples;
+
+        public int CoverageRequestsOpened;
+        public int CoverageRequestsClosed;
+        public int Handovers;
+        public int RunsPublished;
+        public int RunsWithdrawn;
+        public int RunsClaimed;
+        public int CombinationsPublished;
+        public int CombinationsContinued;
+
+        /// <summary>The match-level scan telemetry at full time (A7.1 diagnostics, read-only).</summary>
+        public ScanTelemetry Scan;
+
+        /// <summary>Mean rest-defence security over the samples where the picture is defined (0 when never defined).</summary>
+        public double MeanSecurity() => SecuritySamples > 0 ? SecuritySum / SecuritySamples : 0d;
+    }
+
+    /// <summary>
+    /// One (feature, seed) A9.2 comparison: the classification inputs the report needs, plus the neutralisation
+    /// gate result so the verdict does not have to hold the off match in memory.
+    /// </summary>
+    private sealed class AblationComparison
+    {
+        public bool ReferenceCompleted;
+        public bool OffCompleted;
+        public int ReferenceTicks;
+        public int OffTicks;
+        public int ReferenceHomeGoals;
+        public int ReferenceAwayGoals;
+        public int OffHomeGoals;
+        public int OffAwayGoals;
+        public int FirstDivergenceTick = -1;
+        public int DivergentTicks;
+        public double MeanBallSeparation;
+        public double MaxBallSeparation;
+        public double MechanismOn;
+        public double MechanismOff;
+        public int TicksDelta;
+        public double PossessionDeltaPp;
+        public int GoalsDelta;
+        public int PassesDelta;
+        public int ShotsDelta;
+        public bool HeadlineMove;
+        public bool GateHolds;
+    }
+
+    /// <summary>One A9.2 feature's pooled result over the seed set: the row of the aggregate table.</summary>
+    private sealed class AblationFeatureSummary
+    {
+        public int FullTimePairs;
+        public int DivergentSeeds;
+        public int HeadlineSeeds;
+        public int GateFailures;
+        public double MechanismOnMean;
+        public double MechanismOffMean;
+        public double MedianFirstDivergence = double.NaN;
+        public double MeanBallSeparation;
+        public double TicksDeltaMean;
+        public double PossessionDeltaPpMean;
+        public double GoalsDeltaMean;
+        public double PassesDeltaMean;
+        public double ShotsDeltaMean;
+        public bool CounterZeroInReference;
+        public AblationClass Class;
+        public readonly List<int> IncompleteSeeds = new();
+        public readonly List<int> GateFailureSeeds = new();
     }
 }

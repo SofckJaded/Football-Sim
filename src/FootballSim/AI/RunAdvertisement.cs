@@ -108,6 +108,11 @@ public readonly record struct RunClaim(
 /// that already carries the human's call for the pass — so there is one communication channel, not two.
 /// The human controller does not publish runs (a locked human decides his own movement); the board's read
 /// side is AI-only today, which is recorded in <c>docs/KNOWN_ISSUES.md</c>.
+///
+/// <b>A9.2 ablation.</b> The constructor takes an <c>enabled</c> flag. A disabled board <i>is</i> the ablated
+/// team channel: publishing and claiming are ignored, every read reports nothing, and no diagnostic counter
+/// moves — so the board stays exactly as empty as it was. The runner's own adopted run is unaffected (A5.1/
+/// A5.2 own its state); what disappears is that any team-mate ever hears, claims or releases it.
 /// </summary>
 public sealed class RunAdvertisementBoard
 {
@@ -143,6 +148,21 @@ public sealed class RunAdvertisementBoard
 
     private readonly Entry[] _entries = new Entry[Capacity];
 
+    /// <summary>
+    /// A9.2: whether this channel is live. Off makes a publish a no-op and both reads report nothing, so
+    /// the team never hears about a run — the runner's own adopted run is unaffected.
+    /// </summary>
+    private readonly bool _enabled;
+
+    /// <param name="enabled">
+    /// False builds the ablated channel (A9.2). The default is the shipped behaviour: one live board on the
+    /// match's communication context.
+    /// </param>
+    public RunAdvertisementBoard(bool enabled = true) => _enabled = enabled;
+
+    /// <summary>A9.2: true when this channel publishes and delivers run advertisements.</summary>
+    public bool Enabled => _enabled;
+
     /// <summary>Advertisements published on this board since the match started (diagnostics).</summary>
     public int PublishedCount { get; private set; }
 
@@ -156,9 +176,12 @@ public sealed class RunAdvertisementBoard
     /// Publishes (or renews) one runner's promise. Renewing the *same* promise keeps its original publish
     /// tick, so re-deciding the run every tick cannot restart the communication delay and hide the run for
     /// ever. A different meeting region is a different promise and starts the delay again.
+    ///
+    /// A9.2: does nothing on a disabled board — no entry is created or renewed and no counter moves.
     /// </summary>
     public void Publish(TeamId team, int playerId, in RunIntent intent, int tick)
     {
+        if (!_enabled) return;
         if (playerId <= 0) return;
         if (!SimMath.IsFinite(intent.Path.MeetXZ)) return;
 
@@ -204,9 +227,15 @@ public sealed class RunAdvertisementBoard
         PublishedCount++;
     }
 
-    /// <summary>Withdraws one runner's promise: he is no longer running there.</summary>
+    /// <summary>
+    /// Withdraws one runner's promise: he is no longer running there.
+    ///
+    /// A9.2: a no-op on a disabled board; nothing was ever published there to retract.
+    /// </summary>
     public void Withdraw(TeamId team, int playerId)
     {
+        if (!_enabled) return;
+
         int slot = Find(team, playerId);
         if (slot < 0) return;
 
@@ -216,10 +245,16 @@ public sealed class RunAdvertisementBoard
 
     /// <summary>
     /// The promise a carrier can act on for this receiver: visible, live, and published by the same team.
-    /// Returns false when there is nothing to hear.
+    /// Returns false when there is nothing to hear — including always on a disabled board (A9.2).
     /// </summary>
     public bool TryGetAdvertisement(TeamId team, int playerId, int tick, out RunAdvertisement advert)
     {
+        if (!_enabled)
+        {
+            advert = default;
+            return false;
+        }
+
         int slot = Find(team, playerId);
         if (slot < 0)
         {
@@ -231,9 +266,13 @@ public sealed class RunAdvertisementBoard
         return advert.IsUsableAt(tick);
     }
 
-    /// <summary>Number of promises this team can currently hear and still play to.</summary>
+    /// <summary>
+    /// Number of promises this team can currently hear and still play to. Zero on a disabled board (A9.2).
+    /// </summary>
     public int VisibleCount(TeamId team, int tick)
     {
+        if (!_enabled) return 0;
+
         int count = 0;
         for (int i = 0; i < _entries.Length; i++)
         {
@@ -248,9 +287,16 @@ public sealed class RunAdvertisementBoard
     /// <summary>
     /// The <paramref name="index"/>-th promise this team can hear, in publication order. Together with
     /// <see cref="VisibleCount"/> this is how a diagnostic or a test reads the board without an allocation.
+    /// Reports nothing on a disabled board (A9.2).
     /// </summary>
     public bool TryGetVisibleAt(TeamId team, int index, int tick, out RunAdvertisement advert)
     {
+        if (!_enabled)
+        {
+            advert = default;
+            return false;
+        }
+
         int seen = 0;
         for (int i = 0; i < _entries.Length; i++)
         {
@@ -270,9 +316,14 @@ public sealed class RunAdvertisementBoard
     /// <summary>
     /// Records that a team-mate has played the ball into this runner's advertised region. Only an existing
     /// promise can be claimed: there is nothing to be committed to if the board never heard the run.
+    ///
+    /// A9.2: does nothing on a disabled board — with no published promise there is nothing to claim, and the
+    /// claim counter stays zero.
     /// </summary>
     public void Claim(TeamId team, int runnerId, int carrierId, int arriveTick, int tick)
     {
+        if (!_enabled) return;
+
         int slot = Find(team, runnerId);
         if (slot < 0) return;
 
@@ -297,9 +348,18 @@ public sealed class RunAdvertisementBoard
         ClaimedCount++;
     }
 
-    /// <summary>The live claim on this runner's run, if a team-mate has announced a ball to him.</summary>
+    /// <summary>
+    /// The live claim on this runner's run, if a team-mate has announced a ball to him. Always false on a
+    /// disabled board (A9.2): an ablated run can never have been claimed.
+    /// </summary>
     public bool TryGetClaim(TeamId team, int runnerId, int tick, out RunClaim claim)
     {
+        if (!_enabled)
+        {
+            claim = default;
+            return false;
+        }
+
         int slot = Find(team, runnerId);
         if (slot < 0 || !_entries[slot].HasClaim)
         {
@@ -311,9 +371,14 @@ public sealed class RunAdvertisementBoard
         return claim.IsLiveAt(tick);
     }
 
-    /// <summary>Drops everything this team has advertised (diagnostics, phase fixtures, tests).</summary>
+    /// <summary>
+    /// Drops everything this team has advertised (diagnostics, phase fixtures, tests). A disabled board
+    /// (A9.2) is already empty, so this sweeps nothing.
+    /// </summary>
     public void Clear(TeamId team)
     {
+        if (!_enabled) return;
+
         for (int i = 0; i < _entries.Length; i++)
         {
             if (_entries[i].Occupied && _entries[i].Team == team) _entries[i] = default;

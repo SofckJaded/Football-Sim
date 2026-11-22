@@ -407,6 +407,89 @@ public sealed class AiRuntimeConfigTests
         AiRuntimeConfigValidation.Validate(new AiRuntimeConfig { EnableRestartRoutines = false });
     }
 
+    [Fact]
+    public void A92AblationSwitches_AreAllOnByDefaultAndStatedInTheDescription()
+    {
+        // A9.2 adds the seven switches the plan names that had no ablation before it. Every one ships ON:
+        // the switch is the measurement's A/B, not a hidden guard, and the description records which build
+        // produced an artifact's numbers.
+        AiRuntimeConfig defaults = AiRuntimeConfig.Default;
+        Assert.True(defaults.EnableLocalCover);
+        Assert.True(defaults.EnableRestDefence);
+        Assert.True(defaults.EnablePerceptionLimits);
+        Assert.True(defaults.EnableOrientation);
+        Assert.True(defaults.EnableCommitment);
+        Assert.True(defaults.EnableRunCoordination);
+        Assert.True(defaults.EnableGoalkeeperSweep);
+
+        string text = defaults.Describe();
+        Assert.Contains("cover(on)", text);
+        Assert.Contains("restdef(on)", text);
+        Assert.Contains("percept(on)", text);
+        Assert.Contains("orient(on)", text);
+        Assert.Contains("commit(on)", text);
+        Assert.Contains("runs(on)", text);
+        Assert.Contains("sweep(on)", text);
+    }
+
+    [Fact]
+    public void A92AblationSwitches_AreEachALegalConfigurationAndStatedOff()
+    {
+        // Every ablation is a supported configuration rather than a validation error: the off build is the
+        // previous behaviour of that one mechanism, which is what makes an on/off pair two builds instead of
+        // two tunings of the same decision.
+        var cover = new AiRuntimeConfig { EnableLocalCover = false };
+        var restDefence = new AiRuntimeConfig { EnableRestDefence = false };
+        var limits = new AiRuntimeConfig { EnablePerceptionLimits = false };
+        var orientation = new AiRuntimeConfig { EnableOrientation = false };
+        var commitment = new AiRuntimeConfig { EnableCommitment = false };
+        var runs = new AiRuntimeConfig { EnableRunCoordination = false };
+        var sweep = new AiRuntimeConfig { EnableGoalkeeperSweep = false };
+
+        AiRuntimeConfigValidation.Validate(cover);
+        AiRuntimeConfigValidation.Validate(restDefence);
+        AiRuntimeConfigValidation.Validate(limits);
+        AiRuntimeConfigValidation.Validate(orientation);
+        AiRuntimeConfigValidation.Validate(commitment);
+        AiRuntimeConfigValidation.Validate(runs);
+        AiRuntimeConfigValidation.Validate(sweep);
+
+        Assert.Contains("cover(off)", cover.Describe());
+        Assert.Contains("restdef(off)", restDefence.Describe());
+        Assert.Contains("percept(off)", limits.Describe());
+        Assert.Contains("orient(off)", orientation.Describe());
+        Assert.Contains("commit(off)", commitment.Describe());
+        Assert.Contains("runs(off)", runs.Describe());
+        Assert.Contains("sweep(off)", sweep.Describe());
+    }
+
+    [Fact]
+    public void A92AblationSwitches_CanAllBeOffTogether()
+    {
+        // The measurement batch's most extreme build: every A9.2 mechanism removed at once. It must still be
+        // a legal configuration (the probe's "all off" build) and it must describe all seven as off.
+        var allOff = new AiRuntimeConfig
+        {
+            EnableLocalCover = false,
+            EnableRestDefence = false,
+            EnablePerceptionLimits = false,
+            EnableOrientation = false,
+            EnableCommitment = false,
+            EnableRunCoordination = false,
+            EnableGoalkeeperSweep = false
+        };
+        AiRuntimeConfigValidation.Validate(allOff);
+
+        string text = allOff.Describe();
+        Assert.Contains("cover(off)", text);
+        Assert.Contains("restdef(off)", text);
+        Assert.Contains("percept(off)", text);
+        Assert.Contains("orient(off)", text);
+        Assert.Contains("commit(off)", text);
+        Assert.Contains("runs(off)", text);
+        Assert.Contains("sweep(off)", text);
+    }
+
     /// <summary>Minimal valid observation for exercising a standalone controller.</summary>
     private static FootballerObservation Observation(int id, TeamId team, TacticalRole role) => new()
     {

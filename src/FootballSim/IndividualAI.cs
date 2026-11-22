@@ -322,7 +322,9 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
 
             // Identity, not label: the same act against the same target keeps its commitment even if the
             // display name is reworded or the target point moves by centimetres.
-            if (_commitmentTimer > 0f && cand.Key == _committedKey)
+            // A9.2: the bonus is part of the hold this switch owns. Off is the ablation — every decision is
+            // taken on this tick's raw scores — so no bonus is added even if a window were somehow live.
+            if (_ai.EnableCommitment && _commitmentTimer > 0f && cand.Key == _committedKey)
                 score += _ai.CommitmentBonus;
 
             UtilityCandidate scored = cand with { UtilityScore = score };
@@ -379,11 +381,16 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         {
             _committedKey = best.Key;
             _committedActionName = best.ActionName;
-            // A job target is a commitment, not a reflex: hold it longer than a reactive press. A run is
-            // the same kind of promise (A5.2): the player has adopted a meeting region and holds it.
-            _commitmentTimer = best.Key.Kind is CandidateKind.Job or CandidateKind.Run
-                ? _ai.JobCommitmentSeconds
-                : _ai.ReactionCommitmentSeconds;
+            // A9.2: with the commitment switch off the window is never started, so a chosen action is
+            // unprotected and CommitmentRemainingSeconds stays zero for the whole match.
+            if (_ai.EnableCommitment)
+            {
+                // A job target is a commitment, not a reflex: hold it longer than a reactive press. A run is
+                // the same kind of promise (A5.2): the player has adopted a meeting region and holds it.
+                _commitmentTimer = best.Key.Kind is CandidateKind.Job or CandidateKind.Run
+                    ? _ai.JobCommitmentSeconds
+                    : _ai.ReactionCommitmentSeconds;
+            }
         }
 
         // A5.2: tell the run generator what was chosen, so an adopted path is frozen for its window and

@@ -94,7 +94,9 @@ public sealed class MatchSimulationEngine
     private readonly List<FootballerState> _players = new();
     private readonly Dictionary<int, IFootballerController> _controllers = new();
     private readonly Dictionary<int, FootballerObservation> _latestObservations = new();
-    private readonly MatchCommunicationContext _communication = new();
+    // A9.2: the communication context owns the run-advertisement board, whose channel is one of the
+    // ablation switches, so it is built from the validated configuration rather than field-initialised.
+    private readonly MatchCommunicationContext _communication;
     private readonly List<BallContactEvent> _contactLog = new();
     private readonly ContactGeometrySnapshot _contactGeometry = new();
     private readonly HashSet<int> _inactivePlayerIds = new();
@@ -166,7 +168,8 @@ public sealed class MatchSimulationEngine
         // depend on directness and pressing intensity), so it needs them from the start.
         _tacticalCoordinator = new TeamTacticalCoordinator(_pitch, _config.HomeProfile, _config.AwayProfile);
         _ballResponderElection = new BallResponderElection(_pitch);
-        _teamJobs = new TeamJobCoordinator(_pitch);
+        _communication = new MatchCommunicationContext(_config.Ai);
+        _teamJobs = new TeamJobCoordinator(_pitch, _config.Ai);
         _rulesEngine = new MatchRulesEngine(_pitch, _ballSolver.Parameters.Radius);
         Analytics = new MatchAnalyticsSummary();
         _statistics = new MatchStatisticsTracker(Analytics);
@@ -361,7 +364,7 @@ public sealed class MatchSimulationEngine
                 }
                 else if (role == TacticalRole.Goalkeeper)
                 {
-                    _controllers[playerId] = new GoalkeeperController(_pitch);
+                    _controllers[playerId] = new GoalkeeperController(_pitch, _config.Ai);
                 }
                 else
                 {
@@ -433,7 +436,7 @@ public sealed class MatchSimulationEngine
             }
             else if (spec.Role == TacticalRole.Goalkeeper)
             {
-                controller = new GoalkeeperController(_pitch);
+                controller = new GoalkeeperController(_pitch, _config.Ai);
             }
             else
             {

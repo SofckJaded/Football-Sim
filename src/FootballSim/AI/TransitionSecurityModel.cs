@@ -99,6 +99,23 @@ public static class TransitionSecurityModel
     /// <summary>Security is capped here when nobody at all is behind the ball (A3.6).</summary>
     private const float NoCoverCeiling = 0.40f;
 
+    /// <summary>
+    /// A9.2: the A3.6 picture of a side that is fully secure — the neutral substitute the rest-defence
+    /// ablation hands its consumers. The ablation removes the mechanism's <i>veto</i>, not the model, so a
+    /// reader that would normally gate on an evaluation is given this instead: three behind the ball, no
+    /// recovery debt, no central access, no outlet exposure and no threat. It aggregates to
+    /// <see cref="RestDefence.Security01"/> = 1, so it allows a forward commitment
+    /// (<see cref="RestDefence.AllowsForwardCommitment"/>) and the full two-forward allowance
+    /// (<see cref="RestDefence.ForwardAllowance"/>), and the A6.4 turnover response reads the secure answer.
+    /// </summary>
+    public static RestDefence FullySecure { get; } = new(
+        BehindBall: 3,
+        WorstRecoverySeconds: 0f,
+        CentralAccess01: 0f,
+        OutletExposure01: 0f,
+        Threat01: 0f,
+        Security01: 1f);
+
     public static RestDefence Evaluate(
         IReadOnlyList<FootballerState> players,
         TeamId team,

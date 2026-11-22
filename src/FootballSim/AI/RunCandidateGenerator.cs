@@ -35,6 +35,11 @@ namespace FootballSim.AI;
 /// what lets a claim extend this run's window to the ball's own arrival rather than expiring underneath
 /// the pass.
 ///
+/// <b>Ablation (A9.2).</b> Announcing is the A5.3 team channel and <see cref="RunAdvertisementBoard.Enabled"/>
+/// is its switch. With the channel disabled nothing is published or heard, so a claim can never extend the
+/// run and there are no team-mate arrivals to complement: the runner's own run — the generated path set, the
+/// frozen intent and its release by its own window — is exactly as it was. Only the team channel goes.
+///
 /// This object owns per-player state (the adopted intent) and is reset with the controller (A1.5): a run
 /// chosen before a restart is a run into a passage of play that ended.
 /// </summary>
@@ -174,6 +179,7 @@ public sealed class RunCandidateGenerator
     /// <param name="board">
     /// The team's advertisement board (A5.3). Null when the caller has no match communication (a probe or a
     /// unit test built without one): runs then stay local to the runner, exactly as they did before A5.3.
+    /// A board built with <c>enabled: false</c> is the A9.2 ablation: same local run, and nothing announced.
     /// </param>
     public RunCandidateGenerator(PitchDimensions pitch, RunAdvertisementBoard? board = null)
     {
@@ -328,9 +334,13 @@ public sealed class RunCandidateGenerator
         EndIntent();
     }
 
+    /// <summary>
+    /// Announces the adopted run to the team (A5.3). A9.2: an ablated channel (a disabled board) is never
+    /// touched, so no publication state is recorded either — <see cref="EndIntent"/> has nothing to withdraw.
+    /// </summary>
     private void Publish(in FootballerObservation obs, in RunIntent intent)
     {
-        if (_board is null) return;
+        if (_board is null || !_board.Enabled) return;
 
         _board.Publish(obs.SelfTeam, obs.SelfId, intent, obs.Tick);
         _publishedPlayerId = obs.SelfId;
@@ -340,8 +350,11 @@ public sealed class RunCandidateGenerator
     private void EndIntent()
     {
         // Only a run that was actually announced needs withdrawing; a player whose run was never heard (or
-        // who is not the player this generator was publishing for) has nothing to retract.
-        if (_publishedPlayerId > 0) _board?.Withdraw(_publishedTeam, _publishedPlayerId);
+        // who is not the player this generator was publishing for) has nothing to retract. A9.2: with the
+        // channel ablated no publication was ever recorded, so this stays a no-op.
+        if (_board is { Enabled: true } && _publishedPlayerId > 0)
+            _board.Withdraw(_publishedTeam, _publishedPlayerId);
+
         _intent = null;
         _publishedPlayerId = 0;
     }
@@ -763,10 +776,14 @@ public sealed class RunCandidateGenerator
 
     private bool IsClaimLive(in FootballerObservation obs, int tick) => IsClaimLive(obs, tick, out _);
 
+    /// <summary>
+    /// A5.3: is there a live claim on this runner's advertised run? A9.2: an ablated channel has no claims,
+    /// so a team-mate's ball can never extend the run on an off board.
+    /// </summary>
     private bool IsClaimLive(in FootballerObservation obs, int tick, out RunClaim claim)
     {
         claim = default;
-        return _board is not null && _board.TryGetClaim(obs.SelfTeam, obs.SelfId, tick, out claim);
+        return _board is { Enabled: true } && _board.TryGetClaim(obs.SelfTeam, obs.SelfId, tick, out claim);
     }
 
     /// <summary>
@@ -774,10 +791,12 @@ public sealed class RunCandidateGenerator
     /// <see cref="MaxTeamBoxArrivals"/> of them, so the per-path score stays bounded and allocation-free.
     /// Only promises the player can actually hear (visible and live) and only box kinds count; a team-mate's
     /// checking run is a complementary option, not a competing arrival.
+    ///
+    /// A9.2: an ablated channel advertises no box arrivals, so the score sees none — the lone-runner world.
     /// </summary>
     private TeamBoxArrivals CollectTeamBoxArrivals(in FootballerObservation obs, int tick)
     {
-        if (_board is null) return TeamBoxArrivals.None;
+        if (_board is null || !_board.Enabled) return TeamBoxArrivals.None;
 
         Vector2 first = default, second = default, third = default;
         int firstTick = 0, secondTick = 0, thirdTick = 0;

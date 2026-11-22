@@ -246,6 +246,12 @@ public static class TurnoverResponseModel
     /// </summary>
     /// <param name="transitionSeconds">Seconds since the ball's claim last changed (A3.2's clock).</param>
     /// <param name="counterPressWindowOpen">True while the profile's own counter-press window is live.</param>
+    /// <param name="restDefenceEnabled">
+    /// A9.2: whether the A3.6 picture is evaluated for the side that just lost the ball. False substitutes
+    /// <see cref="TransitionSecurityModel.FullySecure"/>, so the central-security and escape-route inputs see
+    /// a fully secure side — the rest-defence ablation reaching A6.4's answer, not only the allocator's
+    /// forward-duty gate. Defaults to true, so a caller that does not know about the ablation is unchanged.
+    /// </param>
     public static TurnoverSituation Evaluate(
         TeamId team,
         IReadOnlyList<FootballerState> players,
@@ -256,7 +262,8 @@ public static class TurnoverResponseModel
         float attackDirX,
         PitchDimensions pitch,
         float transitionSeconds,
-        bool counterPressWindowOpen)
+        bool counterPressWindowOpen,
+        bool restDefenceEnabled = true)
     {
         // Having the ball is not a turnover to answer. A keeper holding it is not a contest either: he will
         // put it down and play, and pressing him is a shape mistake rather than a counter-press.
@@ -291,8 +298,11 @@ public static class TurnoverResponseModel
         float local01 = Clamp01(0.5f + 0.25f * (ours - theirs));
 
         // 2. Central security: the A3.6 model, asked of the side that just lost the ball. Same model, same
-        // inputs, opposite side of the same event — not a second exposure estimate.
-        RestDefence security = TransitionSecurityModel.Evaluate(players, team, ball, opponents, attackDirX, pitch);
+        // inputs, opposite side of the same event — not a second exposure estimate. A9.2's rest-defence
+        // ablation makes it read the neutral fully-secure picture instead of evaluating.
+        RestDefence security = restDefenceEnabled
+            ? TransitionSecurityModel.Evaluate(players, team, ball, opponents, attackDirX, pitch)
+            : TransitionSecurityModel.FullySecure;
 
         // 3. The carrier's own constraint, and 4. his team's escape route out of the area.
         float constraint01 = hasCarrier

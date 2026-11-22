@@ -14,6 +14,15 @@ namespace FootballSim.Input;
 /// </summary>
 public sealed class MatchCommunicationContext
 {
+    /// <param name="ai">
+    /// The match's validated AI configuration (A9.2). Null — standalone fixtures and drills — leaves every
+    /// ablation channel at its shipped default, which keeps an unconfigured context behaving exactly as before.
+    /// </param>
+    public MatchCommunicationContext(AI.AiRuntimeConfig? ai = null)
+    {
+        Runs = new AI.RunAdvertisementBoard(ai?.EnableRunCoordination != false);
+    }
+
     public int? HumanCallForPassPlayerId { get; private set; }
     public float HumanCallForPassTimer { get; private set; }
     public bool HumanCalledThroughBall { get; private set; }
@@ -29,7 +38,7 @@ public sealed class MatchCommunicationContext
     /// match-owned object that carries the human's call for the pass now carries the AI's announcements of
     /// where its runners have committed to meet the ball, with the communication delay the plan asks for.
     /// </summary>
-    public AI.RunAdvertisementBoard Runs { get; } = new();
+    public AI.RunAdvertisementBoard Runs { get; }
 
     /// <summary>
     /// The teams' call boards (A7.2). The same match-owned communication object carries the human's call

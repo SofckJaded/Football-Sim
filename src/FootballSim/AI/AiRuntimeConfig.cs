@@ -318,6 +318,80 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public bool EnableRestartRoutines { get; init; } = true;
 
+    // ---------------------------------------------------------------------------------------------
+    // A9.2 — the feature ablations the plan names that had no switch before this milestone. Every one
+    // of them is <b>on by default</b>: the switch exists so a same-seed A/B can measure what the feature
+    // is worth, and the off build is the previous behaviour of that mechanism, not a new model. They are
+    // grouped here because they are one measurement batch: each gates a mechanism, none retunes one.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether the defending side maintains A3.5's local cover request — the temporary handover of a
+    /// teammate's responsibility to a second defender while the first commits. <b>On by default</b>: this
+    /// is the behaviour the version ships. Off means no coverage request is ever opened, awarded or paid,
+    /// so a committing defender keeps his own job and no second defender inherits it — the local-cover
+    /// mechanism removed, not retuned. See <see cref="FootballSim.AI.CoverageRequest"/>.
+    /// </summary>
+    public bool EnableLocalCover { get; init; } = true;
+
+    /// <summary>
+    /// Whether the side reasons about A3.6's rest defence: the transition-security picture that gates
+    /// forward commitments and shapes the turnover response (<see cref="FootballSim.AI.TransitionSecurityModel"/>).
+    /// <b>On by default</b>. Off makes the picture read fully secure — nothing behind the ball is a
+    /// liability, so the allocator never withholds a forward duty and the turnover response is the
+    /// pre-A3.6 answer. The evaluation itself is not deleted: this is the mechanism's own veto removed.
+    /// </summary>
+    public bool EnableRestDefence { get; init; } = true;
+
+    /// <summary>
+    /// Whether A2.2's perception <i>limits</i> apply: an opponent outside the sight cone is not measured
+    /// this tick, is published from memory as a prediction with age and growing uncertainty, and a body
+    /// can occlude the sight line. <b>On by default</b>. Off is the pre-A2.2 model — every active opponent
+    /// observed live every tick — which is the "does the knowledge boundary matter?" ablation.
+    /// Distinct from <see cref="EnableScanning"/>: that turns the head, this removes the cone and memory
+    /// altogether.
+    /// </summary>
+    public bool EnablePerceptionLimits { get; init; } = true;
+
+    /// <summary>
+    /// Whether what a player sees depends on where he is <i>oriented</i> — the body/gaze facing gate on
+    /// the sight cone (<see cref="FootballSim.AI.PerceptionSystem"/>). <b>On by default</b>. Off keeps
+    /// the distance limits, memory ageing and occlusion but makes the cone omnidirectional: facing no
+    /// longer hides anything, so turn cost and head scanning stop paying for vision. Distinct from
+    /// <see cref="EnablePerceptionLimits"/> (which removes the limits) and from
+    /// <see cref="EnableScanning"/> (which turns the head).
+    /// </summary>
+    public bool EnableOrientation { get; init; } = true;
+
+    /// <summary>
+    /// Whether commitment holds a chosen action (A1.1c/A4.5): the live commitment window plus the score
+    /// bonus that protects it from per-tick wobble. <b>On by default</b>. Off sets the window to zero and
+    /// the bonus to nothing — every decision is taken on this tick's raw scores, which is the "how much
+    /// is the hold worth?" ablation. The action set, the switch-margin rule and the candidate scores are
+    /// unchanged; only the hold and its bonus disappear.
+    /// </summary>
+    public bool EnableCommitment { get; init; } = true;
+
+    /// <summary>
+    /// Whether A5.3's run coordination channel is live: an adopted run is announced to the team through
+    /// <see cref="FootballSim.AI.RunAdvertisementBoard"/> (with delay), visible to team-mates and
+    /// releasable on expiry. <b>On by default</b>. Off keeps the runner's own run (A5.1/A5.2) but the
+    /// team never hears about it, so no team-mate reacts to, claims or releases it — a lone runner rather
+    /// than a coordinated one.
+    /// </summary>
+    public bool EnableRunCoordination { get; init; } = true;
+
+    /// <summary>
+    /// Whether the goalkeeper leaves his line for a loose/moving ball (A6.5): the race against the nearest
+    /// believed opponent over the one trajectory estimate, in both of its modes — the <b>sweep</b> of a loose
+    /// ball and the <b>1v1 block</b> of an opponent in control inside the area. They are one decision (see
+    /// <see cref="FootballSim.AI.GoalkeeperDecisionModel"/>: "the same race"), so the ablation removes both
+    /// rather than pretending they are separate mechanisms. <b>On by default</b>. Off keeps every other keeper
+    /// duty — shot save, claim/delivery in the air (A6.5b), distribution and support depth — but the race is
+    /// never run, so the keeper stays on his line and the sweep's contribution is measurable.
+    /// </summary>
+    public bool EnableGoalkeeperSweep { get; init; } = true;
+
     /// <summary>Short, stable description used in artifacts and replay metadata.</summary>
     public string Describe() =>
         $"commit(bonus {CommitmentBonus:F2}, job {JobCommitmentSeconds:F2}s, react {ReactionCommitmentSeconds:F2}s) " +
@@ -338,7 +412,14 @@ public sealed class AiRuntimeConfig
         $"search({(EnableShallowSearch ? "on" : "off")}) " +
         $"switchrec({(EnableSwitchRecognition ? "on" : "off")}) " +
         $"traps({(EnableTrapContracts ? "on" : "off")}) " +
-        $"routines({(EnableRestartRoutines ? "on" : "off")})";
+        $"routines({(EnableRestartRoutines ? "on" : "off")}) " +
+        $"cover({(EnableLocalCover ? "on" : "off")}) " +
+        $"restdef({(EnableRestDefence ? "on" : "off")}) " +
+        $"percept({(EnablePerceptionLimits ? "on" : "off")}) " +
+        $"orient({(EnableOrientation ? "on" : "off")}) " +
+        $"commit({(EnableCommitment ? "on" : "off")}) " +
+        $"runs({(EnableRunCoordination ? "on" : "off")}) " +
+        $"sweep({(EnableGoalkeeperSweep ? "on" : "off")})";
 }
 
 /// <summary>

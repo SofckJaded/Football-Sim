@@ -43,6 +43,13 @@ namespace FootballSim.AI;
 /// The scan model is opt-in for callers that supply an <see cref="AiRuntimeConfig"/>: a standalone
 /// <c>new PerceptionSystem()</c> (fixtures, probes) keeps the pre-A7.1 model exactly — gaze is the body
 /// facing, every profile-length check is unchanged, and no scan state exists.
+///
+/// A9.2 splits the boundary into two separately measurable switches, both <b>on</b> unless a configuration
+/// says otherwise, so the shipped model and its ablation are two builds rather than two tunings of one:
+/// <see cref="AiRuntimeConfig.EnablePerceptionLimits"/> off restores the pre-A2.2 model (every active
+/// opponent measured live every tick — no cone, no occlusion, no memory prediction), and
+/// <see cref="AiRuntimeConfig.EnableOrientation"/> off removes only the facing/gaze gate while the distance
+/// limit, occlusion and memory ageing stay. Both are named in the plan's A9.2 ablation list.
 /// </summary>
 public sealed class PerceptionSystem
 {
@@ -94,6 +101,25 @@ public sealed class PerceptionSystem
     private readonly bool _scanningEnabled;
 
     /// <summary>
+    /// A9.2: true when A2.2's perception <i>limits</i> apply — the sight cone, occlusion and the memory
+    /// prediction path for an unseen opponent. On unless a supplied configuration turns it off (a null
+    /// configuration means the shipped model). Off is the pre-A2.2 model the plan's A9.2 ablation list names:
+    /// every active opponent is measured live every tick, so no body can hide a man and no sighting goes
+    /// stale. Distinct from <see cref="AiRuntimeConfig.EnableScanning"/> (which turns the head) and from
+    /// <see cref="AiRuntimeConfig.EnableOrientation"/> (which removes only the facing gate).
+    /// </summary>
+    private readonly bool _perceptionLimitsEnabled;
+
+    /// <summary>
+    /// A9.2: true when what a player sees depends on where he is <i>oriented</i> — the body/gaze gate on the
+    /// sight cone. On unless a supplied configuration turns it off (a null configuration means the shipped
+    /// model). Off keeps the distance limit, memory ageing and occlusion but makes the cone omnidirectional:
+    /// an opponent behind the observer is in sight as long as a body does not occlude him, so turning the
+    /// head stops buying vision. Named in the plan's A9.2 ablation list.
+    /// </summary>
+    private readonly bool _orientationEnabled;
+
+    /// <summary>
     /// A7.5: true when the match supplied a configuration with the cognitive error model on. Like scanning,
     /// a standalone <see cref="PerceptionSystem"/> is off by construction, so a fixture or probe that does
     /// not opt in keeps the pre-A7.5 model exactly (distance-only noise, the attribute's own delay).
@@ -117,13 +143,17 @@ public sealed class PerceptionSystem
     /// The match's validated AI configuration (A7.1). Null — the default for standalone controllers,
     /// fixtures and probes — keeps the pre-A7.1 sight model: the gaze is the body facing and nothing is
     /// occluded. The match always passes its validated configuration, so <see cref="AiRuntimeConfig.EnableScanning"/>
-    /// decides whether its players turn their heads.
+    /// decides whether its players turn their heads. A null configuration means the A9.2 perception limits
+    /// and orientation are <i>on</i>, so those two switches only change behaviour when a configuration
+    /// turns them off; <see cref="AiRuntimeConfig.EnableScanning"/> remains opt-in.
     /// </param>
     public PerceptionSystem(ScoutingReport? scouting = null, AiRuntimeConfig? ai = null)
     {
         _scouting = scouting;
         _scanningEnabled = ai?.EnableScanning == true;
         _cognitiveEnabled = ai?.EnableCognitiveError == true;
+        _perceptionLimitsEnabled = ai?.EnablePerceptionLimits != false;
+        _orientationEnabled = ai?.EnableOrientation != false;
         _scanPlanner = new ScanPlanner(ai ?? AiRuntimeConfig.Default);
     }
 
@@ -237,7 +267,12 @@ public sealed class PerceptionSystem
             scan = ChooseScan(self, ball, ballPossession, isDesignatedBallResponder, memory, tick);
             gaze = scan.GazeFrom(self.FacingXZ);
             if (scan.IsScanning) _scanTicks++;
-            occluderCount = CollectOccluders(self, allPlayers, occluderIds, occluderDistances, occluderOffsets);
+
+            // A9.2: with the perception limits ablated no sight line is tested at all, so collecting the
+            // occluder set would be dead work. The head still turns (A7.1 is its own feature); it simply
+            // stops deciding what is seen.
+            if (_perceptionLimitsEnabled)
+                occluderCount = CollectOccluders(self, allPlayers, occluderIds, occluderDistances, occluderOffsets);
         }
 
         var visible = new List<PerceivedEntity>(allPlayers.Count - 1);
@@ -255,15 +290,21 @@ public sealed class PerceptionSystem
 
             // Teammates are coordinated, not scouted (A7.2's calls are a delayed instruction channel, not
             // teammate-position belief); an opponent has to be in front of the player, close enough to
-            // feel, or seen on the first look at the pitch.
-            bool inSight = firstLook ||
+            // feel, or seen on the first look at the pitch. A9.2: with the limits ablated every active
+            // opponent qualifies (the pre-A2.2 model), and with orientation ablated the facing term is
+            // dropped while the near field and the first look keep their meaning.
+            bool inSight = !_perceptionLimitsEnabled ||
+                           firstLook ||
                            other.Team == self.Team ||
                            dist <= NearFieldMeters ||
+                           !_orientationEnabled ||
                            gazeDot >= SightConeMinFacingDot;
 
             // A7.1 simple occlusion: a body standing on the sight line hides a distant opponent. The near
-            // field is exempt (contact and voice) and a teammate is never hidden.
-            if (inSight && !firstLook && dist > NearFieldMeters && other.Team != self.Team &&
+            // field is exempt (contact and voice) and a teammate is never hidden. A9.2 removes occlusion
+            // with the rest of the limits; the orientation ablation deliberately keeps it.
+            if (_perceptionLimitsEnabled &&
+                inSight && !firstLook && dist > NearFieldMeters && other.Team != self.Team &&
                 IsOccluded(toOther * (1f / dist), dist, other.Id,
                     occluderCount, occluderIds, occluderDistances, occluderOffsets))
             {
@@ -293,8 +334,11 @@ public sealed class PerceptionSystem
                     Capability = CapabilityOf(other.Id)
                 });
 
-                // Evidence for A7.1: this opponent is in the picture only because the head turned.
-                if (_scanningEnabled && !firstLook && other.Team != self.Team &&
+                // Evidence for A7.1: this opponent is in the picture only because the head turned. A9.2:
+                // with the perception limits or the orientation ablated the cone gated nothing, so no
+                // sighting may be credited to the gaze.
+                if (_perceptionLimitsEnabled && _orientationEnabled && _scanningEnabled &&
+                    !firstLook && other.Team != self.Team &&
                     gazeDot >= SightConeMinFacingDot && facingDot < SightConeMinFacingDot)
                 {
                     _revealedByGaze++;

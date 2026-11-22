@@ -182,9 +182,28 @@ public sealed class TeamJobCoordinator
     private TeamId? _lastPossessionTeam;
     private int _lastRecomputeTick = -RecomputeIntervalTicks;
 
-    public TeamJobCoordinator(PitchDimensions pitch)
+    /// <summary>
+    /// A9.2: whether the defending side maintains A3.5's local coverage request. On unless a configuration
+    /// says otherwise; standalone fixtures (no configuration) keep today's behaviour.
+    /// </summary>
+    private readonly bool _localCoverEnabled;
+
+    /// <summary>
+    /// A9.2: whether the allocator reasons about A3.6's rest-defence picture. On unless a configuration says
+    /// otherwise; the ablation makes the picture read fully secure so it never withholds a forward duty.
+    /// </summary>
+    private readonly bool _restDefenceEnabled;
+
+    /// <param name="pitch">The pitch the jobs are placed on.</param>
+    /// <param name="ai">
+    /// The match's validated AI configuration (A9.2). Null — standalone fixtures — keeps every ablation
+    /// switch at its shipped default, which is what makes an unconfigured fixture behave exactly as before.
+    /// </param>
+    public TeamJobCoordinator(PitchDimensions pitch, AiRuntimeConfig? ai = null)
     {
         _pitch = pitch;
+        _localCoverEnabled = ai?.EnableLocalCover != false;
+        _restDefenceEnabled = ai?.EnableRestDefence != false;
         _coverage[TeamId.Home] = new CoverageRequest(TeamId.Home);
         _coverage[TeamId.Away] = new CoverageRequest(TeamId.Away);
     }
@@ -200,10 +219,14 @@ public sealed class TeamJobCoordinator
 
     /// <summary>
     /// The rest-defence picture from <paramref name="team"/>'s most recent in-possession pass (A3.6).
-    /// Diagnostics and tests read it to explain why a forward duty was or was not offered.
+    /// Diagnostics and tests read it to explain why a forward duty was or was not offered. With the A9.2
+    /// rest-defence ablation active the picture is the neutral fully-secure one, whatever the pass evaluated,
+    /// because that is what every consumer — the allocator's gates and the published observation — must see.
     /// </summary>
     public RestDefence SecurityOf(TeamId team) =>
-        _security.TryGetValue(team, out RestDefence security) ? security : default;
+        _restDefenceEnabled
+            ? (_security.TryGetValue(team, out RestDefence security) ? security : default)
+            : TransitionSecurityModel.FullySecure;
 
     /// <summary>
     /// The depth band <paramref name="team"/>'s defensive line is standing in (A6.3), or an invalid band
@@ -471,8 +494,13 @@ public sealed class TeamJobCoordinator
         {
             // A3.6: how exposed the side would be if the ball were lost here. One evaluation per pass;
             // the forward duties below are gated on it rather than on a fixed count behind the ball.
-            _security[team] = TransitionSecurityModel.Evaluate(players, team, ball, opponents, attackDirX, _pitch);
-            int forwardAllowance = _security[team].ForwardAllowance;
+            // A9.2's rest-defence ablation substitutes the neutral fully-secure picture: nothing behind the
+            // ball is a liability, so the forward-duty gate below never withholds a duty on this account.
+            RestDefence security = _restDefenceEnabled
+                ? TransitionSecurityModel.Evaluate(players, team, ball, opponents, attackDirX, _pitch)
+                : TransitionSecurityModel.FullySecure;
+            _security[team] = security;
+            int forwardAllowance = security.ForwardAllowance;
             int forwardCommitted = 0;
 
             AssignUniqueJob(available, counts, taken, TacticalJob.DefensiveCover, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
@@ -638,7 +666,8 @@ public sealed class TeamJobCoordinator
         TurnoverSituation fresh = TurnoverResponseModel.Evaluate(
             team, players, ball, possession, opponents, profile, attackDirX, _pitch,
             teamContext.TransitionSeconds,
-            teamContext.Transition == TransitionMode.CounterPress);
+            teamContext.Transition == TransitionMode.CounterPress,
+            _restDefenceEnabled);
 
         bool carrierChanged = fresh.HasCarrier && commitment.CarrierId != 0 &&
                               fresh.CarrierId != commitment.CarrierId;
@@ -680,6 +709,17 @@ public sealed class TeamJobCoordinator
         List<FootballerState> available)
     {
         CoverageRequest request = _coverage[team];
+
+        // A9.2: with local cover ablated the mechanism is removed, not retuned — no region is offered, no
+        // bid is collected and no teammate inherits the source's job, so a committing defender keeps his own
+        // job. A request still open from before the switch (a fixture world; the flag is fixed at
+        // construction for a match) is closed with the stated reason instead of being paid out, and
+        // CloseCoverage strips the owner's ProtectGap duty.
+        if (!_localCoverEnabled)
+        {
+            CloseCoverage(team, CoverageRequestState.PassageEnded, tick, "local cover ablated (A9.2)");
+            return;
+        }
 
         if (inPossession)
         {
