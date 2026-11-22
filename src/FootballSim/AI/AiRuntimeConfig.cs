@@ -21,6 +21,43 @@ public sealed class AiRuntimeConfig
     /// </summary>
     public static readonly AiRuntimeConfig Default = new();
 
+    /// <summary>
+    /// A9.5: the named <b>legacy comparison</b> configuration — every mechanism switch the advanced-AI
+    /// milestones introduced is off, and every numeric setting keeps its shipped default. It is the
+    /// "what did the programme buy?" build a tuning session plays beside <see cref="Default"/>; it is a
+    /// measurement configuration with a name, never a shipping preset (nothing in the shipped path
+    /// constructs it, and a match only plays it when a caller asks for it).
+    ///
+    /// The switches are listed explicitly rather than derived by reflection so a reader, a test and an
+    /// artifact agree on exactly what "legacy" means. Two honest limits: only mechanisms that have a
+    /// switch can be removed, so a mechanism with no switch (the A2.1 reach model, the A2.3/A2.4
+    /// scouting and belief model, A2.5/A2.6's shares, the A3 formation/allocator, the A4 planner and the
+    /// laws) stays at its shipped implementation — this is "every switchable advanced-AI mechanism off",
+    /// not a bit-exact pre-A2 engine; and <see cref="EnableScheduledDecisions"/> is listed off because it
+    /// is off in the shipped path too, so the comparison never gains a scheduler the release does not have.
+    /// </summary>
+    public static readonly AiRuntimeConfig Legacy = new()
+    {
+        EnableScheduledDecisions = false,
+        EnableScanning = false,
+        EnableTeamCalls = false,
+        EnableReceptionPlanning = false,
+        EnableCognitiveError = false,
+        EnableArchetypes = false,
+        EnableCombinations = false,
+        EnableShallowSearch = false,
+        EnableSwitchRecognition = false,
+        EnableTrapContracts = false,
+        EnableRestartRoutines = false,
+        EnableLocalCover = false,
+        EnableRestDefence = false,
+        EnablePerceptionLimits = false,
+        EnableOrientation = false,
+        EnableCommitment = false,
+        EnableRunCoordination = false,
+        EnableGoalkeeperSweep = false
+    };
+
     // ---------------------------------------------------------------------------------------------
     // Consumed today by TacticalUtilityAiController.
     // ---------------------------------------------------------------------------------------------
@@ -404,6 +441,7 @@ public sealed class AiRuntimeConfig
         $"cadence(p{PerceptionRefreshTicks} c{CarrierDecisionTicks} o{OutfieldDecisionTicks} " +
         $"s{LocalSpatialCacheTicks} b{TeamBeliefMapTicks} t{TacticalStructureTicks} " +
         $"l{LocalCoordinationTicks} r{StructuralReassessmentTicks}) " +
+        $"sched({(EnableScheduledDecisions ? "on" : "off")}) " +
         $"caps(off {MaxOffBallCandidates}, carrier {MaxCarrierCandidates}, passTargets {MaxPassTargets}, " +
         $"runs {MaxRunCandidates}) " +
         $"scan({(EnableScanning ? "on" : "off")} turn {ScanMaxHeadTurnDegrees:F0}deg " +

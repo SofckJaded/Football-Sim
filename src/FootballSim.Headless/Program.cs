@@ -27,10 +27,16 @@ public static class Program
                 return 0;
 
             case "--match-5v5":
-                return RunHeadlessMatch(playersPerTeam: 5, halfDurationSeconds: 300f, seed: 101UL) ? 0 : 1;
+            {
+                AiRuntimeConfig ai = ParseMatchAiConfig(args, allowRestartRoutinesOff: false, out string aiLabel);
+                return RunHeadlessMatch(5, 300f, 101UL, ai, aiLabel) ? 0 : 1;
+            }
 
             case "--match-11v11":
-                return RunHeadlessMatch(11, 2700f, 20260818UL, restartRoutines: !IsOffArgument(args)) ? 0 : 1;
+            {
+                AiRuntimeConfig ai = ParseMatchAiConfig(args, allowRestartRoutinesOff: true, out string aiLabel);
+                return RunHeadlessMatch(11, 2700f, 20260818UL, ai, aiLabel) ? 0 : 1;
+            }
 
             case "--tactical-batch":
                 return RunTacticalComparisonBatch() ? 0 : 1;
@@ -97,8 +103,8 @@ public static class Program
 
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
-                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5");
-                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-11v11");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5 [on|legacy]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-11v11 [on|off|legacy]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --tactical-batch");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario list");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --scenario build-up-3v2 [ticks]");
@@ -124,6 +130,11 @@ public static class Program
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
+                Console.WriteLine();
+                Console.WriteLine("AI build argument (match modes): nothing or 'on' = the shipped AI configuration;");
+                Console.WriteLine("'legacy' = A9.5's comparison build, every switchable advanced-AI mechanism off;");
+                Console.WriteLine("'off' (11v11 only) = A8.5's restart routines off, kept to reproduce the recorded");
+                Console.WriteLine("version-50 restart-routine equivalence.");
 
                 // L47: an unknown mode used to print this help and exit 0, so a typo'd or stale documented
                 // command looked successful while running nothing. Only an explicit help request is success.
@@ -135,12 +146,28 @@ public static class Program
     }
 
     /// <summary>
-    /// True when the optional argument after a mode is <c>off</c>. Used by the ablation argument of
-    /// <c>--match-11v11</c>: A8.5's <c>off</c> run is the version-50 build exactly, which is how the
-    /// restart-routine-off equivalence is proved against the recorded <c>ai50</c> match.
+    /// A9.5: the AI build a match mode runs. No argument (or <c>on</c>) is the shipped configuration;
+    /// <c>legacy</c> is <see cref="AiRuntimeConfig.Legacy"/>, the comparison build with every switchable
+    /// advanced-AI mechanism off; <c>off</c> keeps A8.5's single-switch history (<c>--match-11v11</c> only:
+    /// restart routines off), so the recorded version-50 equivalence stays reproducible. <paramref name="buildLabel"/>
+    /// is the artifact line that names which of the three builds ran, so a capture cannot be misread later.
     /// </summary>
-    private static bool IsOffArgument(string[] args) =>
-        args.Length > 1 && args[1].Equals("off", StringComparison.OrdinalIgnoreCase);
+    private static AiRuntimeConfig ParseMatchAiConfig(string[] args, bool allowRestartRoutinesOff, out string buildLabel)
+    {
+        buildLabel = "shipped default (A9 release build)";
+        if (args.Length < 2) return AiRuntimeConfig.Default;
+        if (args[1].Equals("legacy", StringComparison.OrdinalIgnoreCase))
+        {
+            buildLabel = "LEGACY comparison (every switchable advanced-AI mechanism off)";
+            return AiRuntimeConfig.Legacy;
+        }
+        if (allowRestartRoutinesOff && args[1].Equals("off", StringComparison.OrdinalIgnoreCase))
+        {
+            buildLabel = "A8.5 restart-routines-off build (historical ablation)";
+            return new AiRuntimeConfig { EnableRestartRoutines = false };
+        }
+        return AiRuntimeConfig.Default;
+    }
 
     /// <summary>
     /// Runs one advanced-AI scenario fixture. This exists so a behaviour can be reproduced from the
@@ -273,6 +300,7 @@ public static class Program
 
         Console.WriteLine("=== Advanced-AI performance sample (11v11, 22 active players) ===");
         Console.WriteLine($"Simulation version     : {SimulationVersion.Tag}");
+        Console.WriteLine($"AI configuration       : {config.Ai.Describe()}");
         Console.WriteLine($"Runtime                : {Environment.Version} | {Environment.OSVersion}");
         Console.WriteLine($"Machine                : {Environment.MachineName} | {Environment.ProcessorCount} logical cores");
         Console.WriteLine($"CPU                    : {Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER")}");
@@ -357,6 +385,7 @@ public static class Program
 
         Console.WriteLine("=== Decision-trace cost sample (A9.3) ===");
         Console.WriteLine($"Simulation version     : {SimulationVersion.Tag}");
+        Console.WriteLine($"AI configuration       : {config.Ai.Describe()}");
         Console.WriteLine($"Runtime                : {Environment.Version} | {Environment.OSVersion}");
         Console.WriteLine($"Machine                : {Environment.MachineName} | {Environment.ProcessorCount} logical cores");
         Console.WriteLine($"CPU                    : {Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER")}");
@@ -2472,8 +2501,10 @@ public static class Program
         int playersPerTeam,
         float halfDurationSeconds,
         ulong seed,
-        bool restartRoutines = true)
+        AiRuntimeConfig? ai = null,
+        string aiBuildLabel = "shipped default (A9 release build)")
     {
+        ai ??= AiRuntimeConfig.Default;
         var config = new PreMatchConfig
         {
             Seed = seed,
@@ -2481,9 +2512,10 @@ public static class Program
             HalfDurationSeconds = halfDurationSeconds,
             HomeProfile = TeamTacticalProfile.PossessionControl,
             AwayProfile = TeamTacticalProfile.DirectCounterattack,
-            // The `off` ablation disables the newest behaviour (A8.5's restart routines), which is the version-50
-            // build exactly: every earlier feature keeps its shipped default.
-            Ai = new AiRuntimeConfig { EnableRestartRoutines = restartRoutines }
+            // No argument is the shipped configuration. `legacy` is A9.5's named comparison build (every
+            // switchable advanced-AI mechanism off); `off` keeps A8.5's one-switch history so the recorded
+            // version-50 restart-routine equivalence stays reproducible.
+            Ai = ai
         };
 
         var engine = new MatchSimulationEngine(config);
@@ -2535,6 +2567,7 @@ public static class Program
 
         Console.WriteLine($"=== {playersPerTeam}v{playersPerTeam} Headless Match in {sw.ElapsedMilliseconds} ms ===");
         Console.WriteLine($"Simulation version: {SimulationVersion.Tag} (seed {seed})");
+        Console.WriteLine($"AI build          : {aiBuildLabel}");
         Console.WriteLine($"AI configuration  : {config.Ai.Describe()}");
         Console.WriteLine($"Status            : {(completed ? "FULL TIME" : $"INCOMPLETE â€” tick cap {maxTicks} reached")}" +
                           $" | phase {engine.Rules.Phase} | period {engine.Rules.Period}");
@@ -4035,6 +4068,8 @@ public static class Program
         // AGENTS Â§2.2: every recorded artifact states the simulation version, and only same-version numbers
         // are comparable. The match and perf modes already do; the gate artifact did not until A6.1.
         Console.WriteLine($"Simulation version: {SimulationVersion.Tag}");
+        // A9.5: the gate artifact states the AI configuration it measured, not only the model version.
+        Console.WriteLine($"AI configuration  : {AiRuntimeConfig.Default.Describe()}");
         const float halfSeconds = 120f;
         bool allPassed = true;
         float widthDifferenceSum = 0f;
@@ -4186,6 +4221,9 @@ public static class Program
         Console.WriteLine($"=== A9.1 style-matrix evidence: six presets vs the neutral benchmark, {seedCount} seeds x " +
                           $"{halfSeconds * 2f:F0} s, home and away ===");
         Console.WriteLine($"Simulation version : {SimulationVersion.Tag}");
+        // A9.5: the style matrix runs the shipped AI configuration on top of the style presets, so the
+        // artifact states both the model version and the runtime configuration it measured.
+        Console.WriteLine($"AI configuration   : {AiRuntimeConfig.Default.Describe()}");
         Console.WriteLine("Style matrix       : every preset plays the neutral benchmark profile (new TeamTacticalProfile(),");
         Console.WriteLine("                     \"Balanced\") once at home and once away on the same seed, so the venue and");
         Console.WriteLine("                     end effect cancel in the style's mean. The six presets are preference bundles");

@@ -1,0 +1,19 @@
+﻿=== 11v11 Headless Match in 63266 ms ===
+Simulation version: ai52-rs1 (seed 20260818)
+AI build          : LEGACY comparison (every switchable advanced-AI mechanism off)
+AI configuration  : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 s6 b12 t20 l6 r60) sched(off) caps(off 12, carrier 20, passTargets 8, runs 4) scan(off turn 100deg rate 600deg/s hold 0.20s range 18m) calls(off delay 18t) reception(off) cognitive(off) archetypes(off) combinations(off) search(off) switchrec(off) traps(off) routines(off) cover(off) restdef(off) percept(off) orient(off) commit(off) runs(off) sweep(off)
+Status            : FULL TIME | phase FullTime | period SecondHalf
+Tick / Clock      : tick 325052 | clock 5400.0s of 5400s
+Final Score       : Home (Possession / Positional Play) 1 - 0 Away (Direct Counterattack)
+Possession Share  : Home 50.6% | Away 49.4%
+Controlled Ball   : Home 49.7% | Away 50.3%
+Passes Attempted  : Home 640 | Away 683
+Passes Completed  : Home 547 (85%) | Away 592 (87%)
+Shots Attempted   : Home 39 | Away 29
+Mean Team Width   : Home 47.9m | Away 43.5m
+Kicks (execution) : 1393 executed / 1461 requested | refused [LostArbitration, 16], [OutOfReach, 52]
+Run adverts (A5.3): 0 published | 0 withdrawn | 0 claims by a carrier
+Team calls (A7.2) : 0 published | 0 suppressed | 0 expired | none
+Airborne (A5.5)   : 0 crosses | 17 lofted | 0 driven executed
+Restart routines  : 0 raised | taken 0 | stolen 0 | replaced 0 | expired 0
+Events Logged     : 29

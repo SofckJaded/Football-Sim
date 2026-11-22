@@ -1308,10 +1308,107 @@ world identical — **PASS**.
 
 ---
 
+## 2026-11-22 — Release packaging: legacy comparison build and model version (A9.5, `ai52-rs1`)
+
+Same machine and tag: A9.5 changes no shipped behaviour, so the reference match is bit-identical to the
+`a9-style`/`a9-profile2` capture and `AiBehaviour` is not bumped. What the release adds to an artifact: the
+match modes print `AI build` beside `AI configuration` (so a capture names which of the three builds ran),
+`--perf`, `--tracing`, `--tactical-batch` and `--styles` now print the runtime configuration beside the
+version, and `AiRuntimeConfig.Describe()` gained `sched(on/off)` so the one off-by-default switch is visible
+in the artifact that claims to describe the configuration. All of that is diagnostic text; no world changed.
+
+Commands:
+
+```
+dotnet run --project src\FootballSim.Headless -c Release -- --match-11v11
+dotnet run --project src\FootballSim.Headless -c Release -- --match-5v5
+dotnet run --project src\FootballSim.Headless -c Release -- --match-11v11 legacy
+dotnet run --project src\FootballSim.Headless -c Release -- --match-5v5 legacy
+dotnet run --project src\FootballSim.Headless -c Release -- --perf 20000
+dotnet run --project src\FootballSim.Headless -c Release -- --tracing 20000
+dotnet run --project src\FootballSim.Headless -c Release -- --tactical-batch
+```
+
+Files: `a9-release-match-11v11.txt`, `a9-release-match-5v5.txt`, `a9-legacy-match-11v11.txt`,
+`a9-legacy-match-5v5.txt`, `a9-release-perf.txt`, `a9-release-perf-repeat.txt`, `a9-release-tracing.txt`,
+`a9-release-tactical-gate.txt`.
+
+### Shipped build — `a9-release-match-11v11.txt` / `a9-release-match-5v5.txt`
+
+| Metric | 11v11 | 5v5 |
+| :--- | :--- | :--- |
+| Wall time | 70 088 ms | 4 397 ms |
+| Tick / clock | 325 628 / 5400.0 s | 36 245 / 600.0 s |
+| Status / score | FULL TIME, 0–1 | FULL TIME, 0–0 |
+| Passes attempted / completed | 1367 / 1089, completed 1102 / 851 | 66 / 56, completed 53 / 44 |
+| Shots | 38 / 31 | 10 / 12 |
+| Kicks executed / requested | 2530 / 2583 | 149 / 162 |
+| Run adverts / calls / routines | 17 828 / 42 546 / 63 (taken 63) | 621 / 1 669 / 13 (taken 13) |
+| Events | 65 | 16 |
+
+The 11v11 numbers are identical to `a9-profile2-match-11v11.txt` and `a9-style-match-11v11.txt`. The 5v5
+sample is the "5v5 baseline" the A0.5 capture list still had open; it is a headless sample, not a rendered
+review (there is no rendered 5v5 at `ai52` — see `docs/A9_RENDERED_REVIEW.md`).
+
+### Legacy comparison build — `a9-legacy-*`
+
+`AiRuntimeConfig.Legacy` is every switchable advanced-AI mechanism off with every numeric setting at its
+shipped default. The `AI build` line names it, the `AI configuration` line shows every switch `(off)`, the
+match still reaches full time, and every ablated mechanism reports zero — which is what makes it a live
+comparison build rather than a label. It is a measurement configuration, not a shipping preset
+(`docs/KNOWN_ISSUES.md`, "Release packaging (A9.5)"); its numbers are not the pre-A2 engine's, because
+mechanisms without a switch keep their shipped implementation.
+
+| Metric | 11v11 legacy | 5v5 legacy | 11v11 shipped (control) |
+| :--- | :--- | :--- | :--- |
+| Wall time | 63 266 ms | 3 496 ms | 70 088 ms |
+| Tick / clock | 325 052 / 5400.0 s | 36 053 / 600.0 s | 325 628 / 5400.0 s |
+| Status / score | FULL TIME, 1–0 | FULL TIME, 0–0 | FULL TIME, 0–1 |
+| Passes attempted / completed | 640 / 683, completed 547 / 592 | 18 / 21, completed 15 / 19 | 1367 / 1089, completed 1102 / 851 |
+| Shots | 39 / 29 | 4 / 1 | 38 / 31 |
+| Kicks executed / requested | 1393 / 1461 | 45 / 50 | 2530 / 2583 |
+| Run adverts / calls / routines | 0 / 0 / 0 | 0 / 0 / 0 | 17 828 / 42 546 / 63 |
+| Events | 29 | 4 | 65 |
+
+### Perf and tracing — `a9-release-perf*.txt`, `a9-release-tracing.txt`
+
+| Metric | Run 1 | Run 2 | A9.3 part 2 |
+| :--- | :--- | :--- | :--- |
+| Per-tick mean | 270.7 µs | 264.9 µs | 258.0 / 253.2 µs |
+| p50 / p95 | 210.4 / 704.1 µs | 200.5 / 675.6 µs | 203.0 / 599.2 µs |
+| p99 / max | 995.5 / 2033.2 µs | 915.0 / 1896.5 µs | 900.8 / 1911.7 µs |
+| Allocated per tick | 24 646 B | 24 900 B | 27 169 B |
+| GC collections (0/1/2) | 29/0/0 | 29/0/0 | 32/0/0 |
+
+The AI work section is unchanged from A9.3 (decisions 19.90/tick, carrier max 14/cap 20/0 trims, off-ball max
+6/cap 12/0 trims, search max 8 continuations/budget 9, trajectory 30 samples/bound 32, belief rebuilds
+0.17/tick) and **BUDGET: 60 Hz step holds at p99**. The difference from the A9.3 sample is the machine's own
+~10 % spread; only same-version numbers compare.
+
+Decision-trace cost (`a9-release-tracing.txt`): off 259.7 µs mean / 24 892 B/tick / 0 entries vs on 362.6 µs /
+25 408 B/tick / 4 096 entries (buffer full); **world identical: yes** — **PASS** (+102.9 µs/tick and
++515.7 B/tick on this sample; the delta is printed, never gated).
+
+### Tactical gate — `a9-release-tactical-gate.txt`
+
+**GATE: PASS** — 5/5 seeds full time, width separation mean **5.00 m**, wider on 5/5 (the same numbers as
+`a9-style-tactical-gate.txt`, so the gate reproduces).
+
+### Version statement
+
+The release ships AI model `AiBehaviour 52`, tag **`ai52-rs1`**; `A9ReleaseConfigTests` pins the shipped
+configuration (every switchable mechanism on, only the inert scheduler off) and the legacy build (legal,
+named, live, deterministic). `--match-11v11 off` still runs A8.5's single-switch historical build and is
+labelled as such; `--match-5v5` accepts only `on`/`legacy`. The `--styles` artifact was captured before the
+configuration line was added (A9.1); a future `--styles` run prints it.
+
+---
+
 ## Still to capture (A0.5, part 2)
 
 - A per-phase breakdown of the tick (perception / decisions / execution / physics / rules), so a
   regression can be attributed to a subsystem.
-- 5v5 baseline.
+- ~~5v5 baseline.~~ Captured at `ai52-rs1` as `a9-release-match-5v5.txt` (A9.5, headless; there is no
+  rendered 5v5 — see `docs/A9_RENDERED_REVIEW.md`).
 - Short rendered clips from the Godot client (needs a human at the machine; tracked as part of A9.4).
 - Fixed development seed set + a separate held-out seed set, recorded per matchup.
