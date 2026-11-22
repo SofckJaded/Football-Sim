@@ -233,7 +233,11 @@ public sealed class MatchSimulationEngine
 
             BallPossessionSnapshot seeded = scenario.CreatePossessionSnapshot();
             _possessionTracker.Seed(seeded);
-            _tacticalCoordinator.SeedPossession(seeded.PossessionTeam);
+            // AUD-13a (audit 2026-11-22): a seeded passage is classified from the ball's real position in
+            // the scenario's own period. Hard-coding (1f, 0f) here left a second-half fixture or a ball in
+            // the zone deadband misclassified as MiddleThird on tick 1.
+            _tacticalCoordinator.SeedPossession(
+                seeded.PossessionTeam, _rulesEngine.GetHomeAttackDirectionX(), Ball.Position.X);
 
             if (scenario.BallSetup == ScenarioBallSetup.KeeperHeld)
             {

@@ -590,12 +590,35 @@ public enum TeamId
 /// rebound of a parry being re-shot. All of it is candidate/scoring and duty-level — no new model, allocator,
 /// channel or second pipeline. Trajectories differ from version 52 wherever a carrier, winger or shooter
 /// decided.</item>
+/// <item><c>AiBehaviour 54</c> — the 2026-11-22 code/AI audit (<c>docs/Bug_Audit_2026-11-22.md</c>), AUD-01
+/// to AUD-13. (1) <b>Width is a profile target, not an inverted divisor</b>: the reception value and the
+/// job-region width reward share one documented
+/// <see cref="AI.AttackingWidthPreference"/> convention (credit peaks at the profile's own target width,
+/// monotone non-decreasing in <c>AttackingWidth01</c>, always reachable on the pitch), and the width duty's
+/// nominal anchor no longer overshoots the touchline. (2) A final-third box <c>DepthRun</c> is clamped to
+/// the believed offside line instead of being hard-rejected at 41.5 m, so a low block no longer removes the
+/// box arrival. (3) An AI phase reset now clears the previous half's observations and beliefs, the job
+/// allocator closes its coverage requests / turnover commitments / assignments and recomputes immediately,
+/// and runaway run advertisements are cleared. (4) A team belief breaks an equal-age sighting tie on
+/// confidence, so the keeper's long-range sighting no longer overrides a nearby defender's. (5) The offside
+/// line for a sparse belief falls back to the halfway line (as documented) instead of the opponent goal
+/// line. (6) A raised delivery is charged the defender's positional uncertainty, uses the caller's lane
+/// clearance, and is hard-capped when a playable body is in the flight (driven like a ground pass, lofted
+/// at half its control share). (7) Duty counts follow the duty actually held through a marking handover or
+/// a coverage protection. (8) A rushing goalkeeper now produces local pressure. (9) Memory's stale-target
+/// scan breaks distance ties on player id, so its result no longer depends on hash order. (10) Restart
+/// takers close on a ball they are not in reach of instead of walking along the aim vector. (11) A seeded
+/// scenario passage is classified from the ball's real position and period. The scheduler-only and
+/// commitment-ablation-only fixes (AUD-08/AUD-10) leave the shipped default path unchanged, and the cadence
+/// wiring (AUD-12) is behaviour-neutral at its defaults. Trajectories differ from version 53 wherever a
+/// receiver, width duty, depth run, phase reset, belief, raised pass, coverage assignment or restart taker
+/// decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 53;
+    public const int AiBehaviour = 54;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
