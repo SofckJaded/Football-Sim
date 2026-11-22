@@ -82,6 +82,13 @@ public sealed class PlayerMemory
     /// <summary>Confidence floor: an old sighting is weak evidence, not no evidence.</summary>
     public const float MinConfidence01 = 0.15f;
 
+    /// <summary>
+    /// Distance tolerance within which two predicted opponents count as equidistant when the A7.1 scan
+    /// picks its target (AUD-11). One micrometre: far below anything the reach model can distinguish but
+    /// above the float error two different predicted positions can carry.
+    /// </summary>
+    public const float TieDistanceToleranceMeters = 1e-5f;
+
     private readonly Dictionary<int, PlayerBelief> _beliefs = new();
 
     /// <summary>
@@ -184,7 +191,20 @@ public sealed class PlayerMemory
             if (!TryPredict(belief.PlayerId, nowTick, out PerceivedEntity predicted)) continue;
 
             float distance = Vector3.Distance(predicted.EstimatedPosition, from);
-            if (distance > maxRangeMeters || distance >= bestDistance) continue;
+            if (distance > maxRangeMeters) continue;
+            if (distance >= bestDistance)
+            {
+                // AUD-11 (audit 2026-11-22): _beliefs is a hash map, so for two equidistant stale
+                // opponents the first one iterated won and the choice depended on hash-slot order — which
+                // Forget (a sending-off or substitution) changes. Resolve an equidistant tie on the lower
+                // PlayerId instead, so the scan target is a function of the beliefs and not of their
+                // storage order.
+                if (MathF.Abs(distance - bestDistance) > TieDistanceToleranceMeters ||
+                    belief.PlayerId >= found.PlayerId)
+                {
+                    continue;
+                }
+            }
 
             bestDistance = distance;
             found = predicted;
