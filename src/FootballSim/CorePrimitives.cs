@@ -664,7 +664,7 @@ public enum TeamId
 /// the width -&gt; central-threat reception blend moves from +17.5/+25.5 m to +5/+18 m. Trajectories differ from
 /// version 55 wherever a carrier, passer, receiver, runner or off-ball anchor decided.</item>
 /// <item><c>AiBehaviour 57</c> — the AUD-P7 correction found by the review of version 56. The near-line power
-/// cap is <b>removed</b>: a ground ball always rolls 26–54 m before resting, so the only cap that could keep
+/// cap is <b>removed</b>: a ground ball always rolls 26.4–51.6 m before resting, so the only cap that could keep
 /// the projected rest point inside the pitch was a 0.20–0.35-power roller (measured: the audit's own 17.5 m
 /// touchline ball went 0.85 power / 1.30 s -&gt; 0.20 power / 3.33 s and still left the pitch if untrapped),
 /// and the timed/promised path was inert for that geometry. The pass model instead charges a bounded

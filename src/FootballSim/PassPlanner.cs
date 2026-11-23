@@ -77,7 +77,7 @@ public sealed class PassPlanner
     /// <summary>
     /// AUD-P7 / fix 4.3: the largest share of a ground pass's completion charged for a boundary exit.
     /// Fix 4.3 offered two implementations — cap the power so the ball stops inside, or price the exit.
-    /// The cap was built first and removed: a ground ball always rolls 26–54 m before resting (even the
+    /// The cap was built first and removed: a ground ball always rolls 26.4–51.6 m before resting (even the
     /// gentlest 0.20-power ball rolls 26.4 m), so "keep the rest point inside the pitch" could essentially
     /// never be satisfied for a target nearer than that, and the only way to satisfy it was to turn the
     /// pass into a 0.20-power slow roller — the exact AUD-P5 defect class this batch removes. The bounded
@@ -181,7 +181,7 @@ public sealed class PassPlanner
     /// <see cref="AI.PassSuccessModel.Estimate"/> through <see cref="BoundaryExitRisk01"/>, not by altering
     /// the launch. This method therefore produces the same plan the pre-AUD-P7 planner produced for every
     /// input; the cap experiment that used to live here was removed because a ground ball always rolls
-    /// 26–54 m, so the only way to satisfy it was a 0.20-power slow roller (the AUD-P5 defect class).
+    /// 26.4–51.6 m, so the only way to satisfy it was a 0.20-power slow roller (the AUD-P5 defect class).
     /// </summary>
     public PassPlan PlanGroundPass(
         Vector2 originXZ,
@@ -263,7 +263,7 @@ public sealed class PassPlanner
 
         // AUD-P7: the planner deliberately does not touch the ball for boundary safety. Capping the power
         // so the projected rest point stays inside the pitch was built and removed: a ground ball always
-        // rolls 26–54 m, so the cap could only be satisfied by turning near-line passes into 0.20-power
+        // rolls 26.4–51.6 m, so the cap could only be satisfied by turning near-line passes into 0.20-power
         // rollers (the AUD-P5 defect class). The boundary-exit risk is priced in
         // <see cref="AI.PassSuccessModel.Estimate"/> instead, so this method produces the same plan the
         // pre-AUD-P7 planner produced for every input.
@@ -411,7 +411,7 @@ public sealed class PassPlanner
     /// AUD-P7 / fix 4.3: the bounded share of a ground pass's completion that is charged because the ball
     /// would leave the pitch <b>just past its aim point</b> — the audit's "fast pass aimed 1.0 m inside a
     /// boundary rolls out of play" defect, priced instead of capped (the cap experiment is recorded in
-    /// <see cref="BoundaryExitMaxRisk01"/>'s doc; a ground ball always rolls 26–54 m, so the only way to
+    /// <see cref="BoundaryExitMaxRisk01"/>'s doc; a ground ball always rolls 26.4–51.6 m, so the only way to
     /// keep its rest point inside was to turn the pass into a slow roller, the AUD-P5 defect class).
     ///
     /// The rules, in order:

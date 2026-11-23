@@ -582,12 +582,13 @@ public sealed class PassSuccessModel
     /// announced arrival is not offered at all: there is nothing to time it to.
     ///
     /// <b>AUD-P7 is deliberately not charged here.</b> The boundary-exit risk exists because a rolled
-    /// ground ball keeps travelling for tens of metres after the aim point, so an overhit near a line runs
-    /// out of play. An airborne ball does not do that: it lands at the point the power solve drops it, and
-    /// a delivery that overshoots the pitch is already priced by the raised trajectory's landing
-    /// (<see cref="RaisedPassModel.TryPowerForLanding"/> refuses a landing outside the band) and by the
-    /// receiver's arrival term. Charging a ground-roll exit model to a ball that is never on the ground
-    /// past its landing would double-count a risk the raised estimate does not have.
+    /// ground ball keeps travelling for tens of metres after the aim point (26.4–51.6 m to rest on the
+    /// calibrated deck), so an overhit near a line runs out of play. An airborne ball does not do that: it
+    /// lands at the point the power solve drops it — within <see cref="RaisedPassModel"/>'s own landing band
+    /// around the aim, so an overshoot is bounded to a few metres rather than the deck roll, with only a
+    /// bounded skip/roll after the landing — and a delivery that overshoots is already priced by that landing
+    /// band and by the receiver's arrival term. Charging a ground-roll exit model to a ball that is never on
+    /// the ground past its landing would double-count a risk the raised estimate does not have.
     /// </summary>
     public LoftedPassTerms EstimateRaised(
         in FootballerObservation obs,
