@@ -429,8 +429,13 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>
     /// How many refused candidates one decision records with a reason (A4.6). Bounded like every other
     /// diagnostic buffer: a carrier with eleven team-mates can be refused by all of them.
+    ///
+    /// AUD-P3 (2026-11-23) raised it 8 → 16: the carrier-initiated space probe can spend up to two refusals
+    /// per planned receiver (crowded grass, race lost) before the ordinary lane/completion refusals, so eight
+    /// could be filled by probes alone and hide `lane-blocked`/`low-completion` for other targets from the
+    /// inspector. The buffer stores 16 entries regardless of use; this is a diagnostic-size change only.
     /// </summary>
-    public const int MaxRejections = 8;
+    public const int MaxRejections = 16;
 
     /// <summary>Reason text for a pass the model priced as not worth offering.</summary>
     public const string RejectionLowCompletion = "low-completion";
@@ -717,10 +722,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// ball") and <c>ScheduledDecisionTests</c> pins that a scheduled decision's first scored command is a
     /// movement command, not a kick. At a zero lockout every tempo released a pass on tick 1, deleting the
     /// tempo ordering the trait exists for. The measured compromise is this scale: a penetrative ball waits
-    /// <c>passTriggerSeconds x 0.35</c> (0.07–0.23 s across the 0.20–0.65 s tempo band, i.e. 4–14 ticks)
-    /// instead of 0.20–0.65 s, which keeps the trait's ordering (fast &lt; slow) while releasing the
-    /// one-touch through ball well before the routine lockout. The routine, lateral and safe passes keep the
-    /// full delay.
+    /// <c>passTriggerSeconds x 0.35</c> (the trigger band is 0.315–0.615 s over the whole tempo range, so the
+    /// window is ≈0.11–0.22 s, i.e. 7–13 ticks) instead of 0.315–0.615 s, which keeps the trait's ordering
+    /// (fast &lt; slow) while releasing the one-touch through ball well before the routine lockout. The routine,
+    /// lateral and safe passes keep the full delay.
     /// <para>Note that the <b>unit</b> of the audit's own fix is preserved: inside the window only the
     /// penetrative subset is built (promised/advertised run, <c>ToSpace</c>, a geometrically line-breaking
     /// feet ball), never the routine set.</para>

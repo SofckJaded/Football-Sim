@@ -1,35 +1,47 @@
 using System;
 using System.Numerics;
+using FootballSim;
+using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Locomotion;
 using FootballSim.Physics;
 using Xunit;
 
 namespace FootballSim.Tests;
 
 /// <summary>
-/// Regression tests for AUD-P5 / AUD-P7 ("Fix 4") of the 2026-11-23 passing-and-space audit — the
-/// ground-pass physics the audit's forensic traces measured.
+/// Regression tests for AUD-P5 / AUD-P7 ("Fix 4") of the 2026-11-23 passing-and-space audit.
 ///
-/// <b>The pace story (recorded here because the numbers are the argument).</b> AUD-P5 fix 4.2 proposed
-/// lowering the crisp arrival pace from 9.0 to ~6.5–7.0 m/s to shorten the overhit roll. That was tried and
-/// <b>reversed on measurement</b>: at 7.0 m/s a 17 m pass anchored at 0.70 power instead of 0.80 and its
-/// flight lengthened from 1.317 s to 1.483 s (20 m: 1.433 s → 1.683 s); the longer flight made clean passes
-/// interceptable under the AIB-02a physics lane model (two AIB-02b congestion fixtures flipped to
-/// lane-blocked merely from a 10 m flight going 0.867 s → 1.033 s). The audit's own evidence records slow
-/// rollers costing 26.8 % interceptions while <c>ai55</c> completes 80–83 % of passes at the 9.0 m/s pace.
-/// So the pace is <b>restored to 9.0 m/s</b> and the overhit half of AUD-P5 is owned by the AUD-P7 stop cap
-/// (a fast ball aimed near a line is power-capped, and the plan is kept rather than refused).
+/// <b>AUD-P5 pace story.</b> The audit's fix 4.2 proposed lowering the crisp arrival pace from 9.0 to
+/// ~6.5–7.0 m/s to shorten the overhit roll. That was tried and <b>reversed on measurement</b>: at 7.0 m/s a
+/// 17 m pass anchored at 0.70 power instead of 0.80 and its flight lengthened from 1.317 s to 1.483 s (20 m:
+/// 1.433 s → 1.683 s); the longer flight made clean passes interceptable under the AIB-02a physics lane
+/// model (two AIB-02b congestion fixtures flipped to lane-blocked merely from a 10 m flight going
+/// 0.867 s → 1.033 s). The audit's own evidence records slow rollers costing 26.8 % interceptions while
+/// <c>ai55</c> completes 80–83 % of passes at the 9.0 m/s pace. The pace is <b>restored to 9.0 m/s</b>.
 ///
-/// Tests 1–3 pin that restored 9.0 baseline as regression guards: they pass on the pre-fix code by design,
-/// and a later pace change must justify itself by updating them with new measurement. The rule tests
-/// (AUD-P7 caps, fix-4.1 minimum arrival pace, <see cref="PassPlanner.MinCrispPower01"/>) are new
-/// behaviour and fail without the change (the pace parameter does not exist pre-fix; the uncapped plan is
-/// the pre-fix answer). Every fixture states the arithmetic in its comment.
+/// <b>AUD-P7 story.</b> Fix 4.3 offered two implementations: cap the pass power so the ball stops inside
+/// the pitch, or price the boundary-exit risk in <see cref="PassSuccessModel"/>. The cap was built and
+/// removed: a ground ball always rolls 26–54 m (the gentlest 0.20-power ball rests at 26.4 m), so "keep the
+/// projected rest point inside the pitch" could essentially never be satisfied for a target nearer than
+/// that, and the only way to satisfy it was to turn near-line passes into 0.20-power slow rollers — the
+/// exact AUD-P5 defect class this batch removes. Concretely, the audit shape (15,−15)→(24,−30) went from
+/// 0.85 power / 1.30 s to 0.20 power / 3.33 s, and a 31 m goal-line ball from 1.00 / 2.78 s to 0.35 / 7.98 s
+/// (both still rolled out if untrapped). The planner now never touches the ball: both planners produce the
+/// pre-AUD-P7 plan for every input, and <see cref="PassSuccessModel.Estimate"/> charges a bounded
+/// boundary-exit risk through <see cref="PassPlanner.BoundaryExitRisk01"/> on the untimed <i>and</i>
+/// timed/promised path.
+///
+/// Tests 1–3 pin the restored 9.0 baseline as regression guards (they pass on the pre-fix code by design; a
+/// later pace change must justify them with new measurement). The fix-4.1 tests and the AUD-P7 risk tests
+/// are new behaviour (the pace parameter / risk API do not exist pre-fix; the cap-era behaviour is the
+/// recorded failure above). Every fixture states its arithmetic in the comment.
 /// </summary>
 public sealed class Aib2PassPhysicsTests
 {
     private static readonly PitchDimensions Pitch = new();
     private static readonly PassPlanner Planner = new(Pitch);
+    private static readonly PassSuccessModel Model = new(Planner);
     private const float Dt = SimConstants.FixedDeltaTime;
 
     // ---------------------------------------------------------------------------------------------
@@ -40,8 +52,8 @@ public sealed class Aib2PassPhysicsTests
     /// Regression guard for the restored AUD-P5 pace: a 17 m crisp pass is anchored to power 0.80 (the
     /// lowest power whose 9.0 m/s crisp range reaches 17 m — 17.13 m), a 17.20 m/s launch, and its
     /// closest-approach flight is 1.317 s. The ball's calibrated resting point is 48.04 m from the passer,
-    /// i.e. it rolls 31.04 m past a 17 m target if nobody touches it — the overhit that AUD-P7's stop cap
-    /// handles when the target is near a line (the central target here is not, so nothing is capped).
+    /// i.e. it rolls 31.04 m past a 17 m target if nobody touches it — the overhit AUD-P7 prices when it
+    /// matters (a near-line exit); a central target is not penalised.
     ///
     /// These are the pre-fix numbers on purpose: fix 4.2's experimental 7.0 m/s pace moved them to 0.70 /
     /// 16.05 m/s / 1.483 s and was reversed because the longer flight increased lane blocking (see the
@@ -61,17 +73,15 @@ public sealed class Aib2PassPhysicsTests
         Vector2 rest = MeasureRestPosition(Vector2.Zero, plan.AimDirectionXZ, plan.Power01, out _);
         float overrun = Vector2.Distance(Vector2.Zero, rest) - plan.DistanceMeters;
         Assert.True(MathF.Abs(overrun - 31.04f) <= 0.1f,
-            $"a 17 m crisp pass rolls {overrun:F2} m past the target; the 9.0 m/s baseline is 31.04 m " +
-            "(this is the roll AUD-P7's cap owns near a line)");
+            $"a 17 m crisp pass rolls {overrun:F2} m past the target; the 9.0 m/s baseline is 31.04 m");
     }
 
     /// <summary>
     /// Regression guard for the restored AUD-P5 pace, the 20 m case: anchor power 0.95 (the lowest power
     /// whose 9.0 m/s crisp range reaches 20 m — 19.81 m), 18.92 m/s launch, 1.433 s flight. The ball is
     /// still rolling when it reaches the 52 m stop-calibration clearance (measured rest 52.01 m there), so
-    /// the AUD-P7 calibration marks this power saturated and treats it as stopping far away (180 m) — the
-    /// explicit saturation check that stops the old 45 m table cap hiding a real overrun. On a near-line
-    /// target that is what triggers the cap (tested below); this central target is untouched.
+    /// the AUD-P7 calibration marks this power saturated and reports it as stopping far away (180 m) — the
+    /// explicit saturation check that stops the old 45 m table cap hiding a real overrun.
     /// </summary>
     [Fact]
     public void AIB2_PassPhysics_TwentyMetreCrispPass_PinsTheNinePace()
@@ -95,8 +105,7 @@ public sealed class Aib2PassPhysicsTests
     /// <summary>
     /// The restored 9.0 m/s calibration is the pre-fix one: the trapable reach is still 37.63 m and the
     /// full-power crisp range is 22.57 m (the rejected 7.0 m/s experiment would have grown the latter to
-    /// 28.35 m, which is how an "innocent" pace change silently moves every power anchor). Reach must not
-    /// be shortened by any of this: <see cref="PassPlanner.MaxPassDistance"/> is the same 37.63 m.
+    /// 28.35 m, which is how an "innocent" pace change silently moves every power anchor).
     /// </summary>
     [Fact]
     public void AIB2_PassPhysics_Calibration_ReachIsPreserved()
@@ -264,142 +273,215 @@ public sealed class Aib2PassPhysicsTests
     }
 
     // ---------------------------------------------------------------------------------------------
-    // AUD-P7 / fix 4.3 — touchline-overrun cap in PlanGroundPass
+    // AUD-P7 / fix 4.3 — the planner never touches the ball for boundary safety
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// A pass from (0, −28) to a receiver at (18, −31) — a target 3 m inside the touchline, with the aim
-    /// carrying on outward — is planned uncapped at power 0.85 (the 9.0 m/s anchor: crisp range 18.53 m ≥
-    /// 18.25 m; a 17.78 m/s launch). That ball's calibrated resting point is 49.80 m, so its projected stop
-    /// is at z = −31 − 0.1644 × (49.80 − 18.25) = <b>−36.19, i.e. 2.19 m outside the touchline</b>: the
-    /// audit's "simple pass rolls out of bounds". The cap walks the power down to 0.55 (14.33 m/s), whose
-    /// projected stop is z = −34.40, inside the allowed 34.5 m. The plan is kept (never refused), only the
-    /// power is capped, and the assertion compares against the uncapped anchor so it fails with the cap
-    /// disabled.
+    /// The reviewer's blocker: the cap experiment drove the audit shape (15,−15)→(24,−30) from 0.85 power /
+    /// 1.30 s down to <b>0.20 power / 3.33 s</b> (the gentlest solving power) because no ground ball's rest
+    /// point can stay inside the pitch from there (0.20 power alone rests at 26.4 m). The cap is gone: the
+    /// plan must be the pre-AUD-P7 plan, the same power and flight as the identical geometry translated away
+    /// from the line (same displacement at Z = 0), and at least the firm-ball floor
+    /// <see cref="PassPlanner.MinCrispPower01"/> for its distance. The anchor here is 0.85 because the
+    /// calibrated 9.0 m/s crisp range at 0.85 power is 18.53 m ≥ 17.49 m. The 31 m goal-line shape is pinned
+    /// too — cap-era it was 0.35 power / 7.98 s.
     /// </summary>
     [Fact]
-    public void AIB2_PassPhysics_TouchlineOverrun_IsCappedInsideThePitch()
+    public void AIB2_PassPhysics_NearLinePass_KeepsItsFirmPace()
     {
-        Vector2 origin = new(0f, -28f);
-        Vector2 receiver = new(18f, -31f);
-        float expectedUncappedPower = AnchoredPower(Planner, Vector2.Distance(origin, receiver));
-        Assert.Equal(0.85f, expectedUncappedPower, 3);
+        Vector2 origin = new(15f, -15f);
+        Vector2 target = new(24f, -30f);
+        PassPlan nearLine = Planner.PlanGroundPass(origin, 9, target, Vector2.Zero, 8f);
+        Assert.True(nearLine.Feasible);
 
-        PassPlan plan = Planner.PlanGroundPass(origin, 9, receiver, Vector2.Zero, 8f);
-        Assert.True(plan.Feasible);
-        Vector2 projected = ProjectedStop(plan, origin, out float stopDistance);
-        Assert.True(plan.Power01 < expectedUncappedPower - 0.05f,
-            $"a pass that would roll {MathF.Abs(projected.Y) - Pitch.HalfWidth:F2} m past the " +
-            $"touchline was planned at {plan.Power01:F2}, not capped below the uncapped " +
-            $"{expectedUncappedPower:F2}");
+        // Same relative displacement (9, −15) but away from the line: the plan must be identical.
+        PassPlan central = Planner.PlanGroundPass(new Vector2(15f, 15f), 9, new Vector2(24f, 0f), Vector2.Zero, 8f);
+        Assert.True(central.Feasible);
 
-        Assert.Equal(0.55f, plan.Power01, 3);
-        Assert.Equal(2.0500f, plan.FlightTimeSeconds, 3);
-        Assert.True(stopDistance > plan.DistanceMeters,
-            $"the fixture's ball must overrun the receiver to exercise the cap ({stopDistance:F2} m rest)");
-        Assert.True(MathF.Abs(projected.Y) <= Pitch.HalfWidth + PassPlanner.BoundaryStopMarginMeters + 0.01f,
-            $"the capped ball's projected stop is z = {projected.Y:F2}, " +
-            $"{MathF.Abs(projected.Y) - Pitch.HalfWidth:F2} m outside the touchline");
+        Assert.Equal(0.85f, nearLine.Power01, 3);
+        Assert.Equal(1.3000f, nearLine.FlightTimeSeconds, 3);
+        Assert.Equal(central.Power01, nearLine.Power01);
+        Assert.Equal(central.FlightTimeSeconds, nearLine.FlightTimeSeconds);
+        Assert.True(nearLine.Power01 >= Planner.MinCrispPower01(nearLine.DistanceMeters) - 1e-4f,
+            $"plan {nearLine.Power01:F2} is below the firm-ball floor " +
+            $"{Planner.MinCrispPower01(nearLine.DistanceMeters):F2}");
+
+        // Explicitly not the cap-era roller (0.20 power / 3.33 s).
+        Assert.True(nearLine.Power01 > 0.50f,
+            $"the near-line pass is a {nearLine.Power01:F2}-power roller (cap-era was 0.20)");
+        Assert.True(nearLine.FlightTimeSeconds < 2f,
+            $"the near-line pass takes {nearLine.FlightTimeSeconds:F2} s of flight (cap-era was 3.33 s)");
+
+        // The 31 m goal-line shape: cap-era 0.35 power / 7.98 s, now the plain full-power plan.
+        PassPlan goalLine = Planner.PlanGroundPass(new Vector2(20f, 0f), 9, new Vector2(51f, 0f), Vector2.Zero, 8f);
+        Assert.True(goalLine.Feasible);
+        Assert.Equal(31f, goalLine.DistanceMeters, 2);
+        Assert.Equal(1.00f, goalLine.Power01, 3);
+        Assert.Equal(19.50f, PassPlanner.GroundPassLaunchSpeed(goalLine.Power01), 2);
+        Assert.Equal(2.7833f, goalLine.FlightTimeSeconds, 3);
     }
 
     /// <summary>
-    /// The guard against over-capping: a central 20 m pass has no boundary within 4 m of the target, so the
-    /// projected-stop rule must not fire even though the 0.95-power ball's stop is saturated (treated as
-    /// stopping 180 m away — well outside any pitch). The plan is the plain 9.0 m/s anchor: power 0.95,
-    /// 18.92 m/s launch, 1.433 s closest-approach flight, i.e. exactly the pre-safeguard plan.
+    /// AUD-P7: the audit shape's ball does leave the pitch just past its aim point, so the risk is charged at
+    /// the documented ramp. Arithmetic: the 0.85-power ball rests at
+    /// <see cref="PassPlanner.PredictStopDistance"/> = 49.79 m; the aim is (9, −15)/17.493 = (0.5145, −0.8575);
+    /// the negative-Z touchline (z = −34) is crossed at t = (−34 + 15)/−0.8575 = 22.16 m from the passer,
+    /// i.e. 22.16 − 17.49 = <b>4.66 m past the aim point</b>; the ramp gives
+    /// 0.35 × (1 − 4.66/6) = <b>0.0779</b>. The identical central geometry is 0 (its roll stays in play).
     /// </summary>
     [Fact]
-    public void AIB2_PassPhysics_CentralPass_IsNotCapped()
+    public void AIB2_PassPhysics_BoundaryExitRisk_IsPricedJustPastTheTarget()
     {
-        PassPlan plan = Planner.PlanGroundPass(Vector2.Zero, 9, new Vector2(20f, 0f), Vector2.Zero, 8f);
+        Vector2 origin = new(15f, -15f);
+        PassPlan plan = Planner.PlanGroundPass(origin, 9, new Vector2(24f, -30f), Vector2.Zero, 8f);
         Assert.True(plan.Feasible);
+        Assert.Equal(0.85f, plan.Power01, 3);
 
-        Assert.Equal(0.95f, plan.Power01, 3);
-        Assert.Equal(ExpectedStationaryFlight(Planner, 0.95f, 20f), plan.FlightTimeSeconds, 3);
+        float risk = Planner.BoundaryExitRisk01(origin, plan.TargetXZ, plan.Power01);
+        Assert.Equal(0.0779f, risk, 3);
 
-        Vector2 rest = MeasureRestPosition(Vector2.Zero, plan.AimDirectionXZ, plan.Power01, out _);
-        Assert.True(Vector2.Distance(Vector2.Zero, rest) >= 51.9f,
-            "the fixture expects a saturated stop, which is what the cap must ignore off the line");
+        // Re-derive the ramp from the published constants and the calibrated stop distance.
+        float stopDistance = Planner.PredictStopDistance(plan.Power01);
+        Assert.Equal(49.79f, stopDistance, 2);
+        Vector2 aim = Vector2.Normalize(plan.TargetXZ - origin);
+        float exitDistance = (-Pitch.HalfWidth - origin.Y) / aim.Y;
+        float pastAim = exitDistance - plan.DistanceMeters;
+        Assert.True(pastAim > 0f && pastAim < PassPlanner.BoundaryExitPenaltyRadiusMeters,
+            $"the fixture must exit inside the pricing radius (pastAim was {pastAim:F2} m)");
+        float expected = PassPlanner.BoundaryExitMaxRisk01 *
+                         (1f - pastAim / PassPlanner.BoundaryExitPenaltyRadiusMeters);
+        Assert.Equal(expected, risk, 4);
+        Assert.True(risk > 0f);
+
+        // The same relative geometry far from any line is untouched.
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(
+            new Vector2(15f, 15f), new Vector2(24f, 0f), plan.Power01));
     }
 
     /// <summary>
-    /// The other half of the guard: a pass aimed from near the touchline <b>toward the middle</b> is not
-    /// touched even though it starts near the line. Origin (0, −28), receiver (15, −22): the 0.80-power
-    /// anchor (9.0 m/s crisp range 17.13 m ≥ 16.16 m) is kept, and the projected stop lands at
-    /// (44.60, −10.16) — inside. A policy that caps on "origin near the line" instead of "aim outward"
-    /// would fail this.
+    /// The scoping half of the risk rule: it is zero when the ball stays in play (the central plan), zero
+    /// when the exit is further than <see cref="PassPlanner.BoundaryExitPenaltyRadiusMeters"/> past the aim
+    /// point (ordinary long forward ball: here the 0.30-power ball exits z = 34 ten metres past a z = 24
+    /// aim, i.e. 0.30 rests at 29.97 m), and zero when the exit is inside the <b>goal mouth</b> (a ball
+    /// between the posts is a goal, not out of play). A goal-line exit outside the posts is still charged,
+    /// which proves the exemption is the goal mouth and not the whole goal line. Non-finite and
+    /// zero-length inputs are deterministic zero.
     /// </summary>
     [Fact]
-    public void AIB2_PassPhysics_TouchlineInwardPass_IsNotCapped()
+    public void AIB2_PassPhysics_BoundaryExitRisk_IsZeroFarFromTheLineAndInTheGoalMouth()
     {
-        Vector2 origin = new(0f, -28f);
-        PassPlan plan = Planner.PlanGroundPass(origin, 9, new Vector2(15f, -22f), Vector2.Zero, 8f);
-        Assert.True(plan.Feasible);
+        // Central: inside the pitch for bounds of reasons.
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(Vector2.Zero, new Vector2(20f, 0f), 0.95f));
 
-        Assert.Equal(0.80f, plan.Power01, 3);
+        // Exit 10 m past the aim point: outside the 6 m pricing radius.
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(Vector2.Zero, new Vector2(0f, 24f), 0.30f));
 
-        Vector2 projected = ProjectedStop(plan, origin, out _);
-        Assert.True(MathF.Abs(projected.Y) < Pitch.HalfWidth,
-            $"an inward pass was capped: projected stop z = {projected.Y:F2}");
-        Assert.True(MathF.Abs(projected.X) < Pitch.HalfLength);
+        // Goal mouth: a ball rolled into the opponent goal (z = 0, between the posts) is a goal, not out.
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(Vector2.Zero, new Vector2(50f, 0f), 1.00f));
+        PassPlan goalLine = Planner.PlanGroundPass(new Vector2(20f, 0f), 9, new Vector2(51f, 0f), Vector2.Zero, 8f);
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(new Vector2(20f, 0f), goalLine.TargetXZ, goalLine.Power01));
+
+        // ... but the goal line outside the posts is out of play and charged (z = 10 at the crossing).
+        Assert.True(Planner.BoundaryExitRisk01(
+            new Vector2(20f, 0f), new Vector2(51f, 10f), 1.00f) > 0.2f,
+            "a goal-line exit outside the goal mouth must still be priced");
+
+        // Deterministic handling of nonsense inputs.
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(new Vector2(float.NaN, 0f), new Vector2(10f, 0f), 0.5f));
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(new Vector2(5f, 5f), new Vector2(5f, 5f), 0.5f));
+        Assert.Equal(0f, Planner.BoundaryExitRisk01(new Vector2(15f, -15f), new Vector2(24f, -30f), float.NaN));
     }
 
     /// <summary>
-    /// "Never refuse a plan that the cap can rescue; cap the power instead" — and when <b>no</b> allowed
-    /// power keeps the ball in play, take the gentlest power and keep the plan. A receiver standing 1 m
-    /// inside the touchline at (18, −33) is unreachable for every power: the gentlest 0.20-power ball still
-    /// rolls 26.39 m and its projected stop is z = −35.06, 1.06 m outside the line. The uncapped anchor here
-    /// is 0.90 power (9.0 m/s crisp range 19.81 m ≥ 18.68 m); the capped plan must stay feasible at 0.20
-    /// rather than being refused.
+    /// AUD-P7 on the timed/promised path: the audit's own (15,−15)→(24,−30) wanted-1.4 s plan was
+    /// <b>byte-identical before and after the cap</b> — the cap was inert here, so the reviewer's finding
+    /// held: the timed path had no pricing at all. With the cap removed the plan is the pre-fix timed plan
+    /// (0.80 power / 1.3833 s; the uncapped best arrival closest to 1.4 s) and the completion estimate now
+    /// carries the positive exit risk, so P7 is live on the timed/promised path.
     /// </summary>
     [Fact]
-    public void AIB2_PassPhysics_TouchlineOverrun_WithNoRescuingPower_TakesTheGentlestBall()
+    public void AIB2_PassPhysics_TimedBall_ExitRisk_IsPriced()
     {
-        Vector2 origin = new(0f, -28f);
-        Vector2 receiver = new(18f, -33f);
-        Assert.Equal(0.90f, AnchoredPower(Planner, Vector2.Distance(origin, receiver)), 3);
+        Vector2 origin = new(15f, -15f);
+        PassPlan timed = Planner.PlanGroundPassToRegion(origin, new Vector2(24f, -30f), arriveInSeconds: 1.4f);
+        Assert.True(timed.Feasible);
+        Assert.Equal(0.80f, timed.Power01, 3);
+        Assert.Equal(1.3833f, timed.FlightTimeSeconds, 3);
 
-        PassPlan plan = Planner.PlanGroundPass(origin, 9, receiver, Vector2.Zero, 8f);
-        Assert.True(plan.Feasible,
-            "the overrun cap refused a pass instead of taking the gentlest power that still reaches");
-        Assert.Equal(0.20f, plan.Power01, 3);
-        Assert.True(plan.FlightTimeSeconds > 0f);
+        float risk = Planner.BoundaryExitRisk01(origin, timed.TargetXZ, timed.Power01);
+        Assert.True(risk > 0f, "the timed near-line plan must carry the boundary-exit risk");
 
-        // Prove the fixture really has no rescuing power: the capped plan's own ball still leaves the pitch.
-        Vector2 projected = ProjectedStop(plan, origin, out float stopDistance);
-        Assert.True(stopDistance > plan.DistanceMeters);
-        Assert.True(MathF.Abs(projected.Y) > Pitch.HalfWidth + PassPlanner.BoundaryStopMarginMeters + 0.05f,
-            $"fixture no longer exercises the no-rescue path: projected stop z = {projected.Y:F2}");
+        // The same timed plan translated away from the line: no risk, and the completion is lower near
+        // the line by exactly the risk fraction (all other model terms are translation-invariant).
+        PassPlan centralTimed = Planner.PlanGroundPassToRegion(
+            new Vector2(15f, 15f), new Vector2(24f, 0f), arriveInSeconds: 1.4f);
+        Assert.True(centralTimed.Feasible);
+        Assert.Equal(timed.Power01, centralTimed.Power01);
+
+        PassSuccessTerms near = Estimate(origin, timed, risk);
+        PassSuccessTerms away = Estimate(new Vector2(15f, 15f), centralTimed, 0f);
+        Assert.Equal(0f, away.BoundaryExitRisk01);
+        Assert.True(near.BoundaryExitRisk01 > 0f);
+        Assert.Equal(away.CompletionProbability01 * (1f - risk), near.CompletionProbability01, 5);
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // AUD-P7 / fix 4.3 — touchline-overrun cap in PlanGroundPassToRegion
-    // ---------------------------------------------------------------------------------------------
-
     /// <summary>
-    /// The same cap on the region planner: a timed ball from (−5, −28) to a region at (13, −30.5), 3.5 m
-    /// inside the touchline, wanted at 1.0 s. Uncapped the bisection chooses power 1.00 (a saturated stop =
-    /// stopping far away, the audit's 100 %-power overhit; 1.200 s flight), whose projected stop is well
-    /// outside. The cap finds 0.75 (46.25 m rest ⇒ projected z = −34.36, inside) and re-solves the flight
-    /// at that power against the same "closest to the wanted meeting" objective: 1.550 s. The plan is kept.
+    /// Saturation cannot hide the overrun: powers 0.95 and 1.00 are still rolling at the 52 m stop
+    /// calibration clearance, so <see cref="PassPlanner.PredictStopDistance"/> reports them as stopping far
+    /// away (180 m) instead of the old table's 45 m cap. A full-power ball at the touchline therefore still
+    /// gets the ramp: aim (0, 30) from the centre, power 1.00, exits z = 34 at 34 m, i.e. 4 m past the aim
+    /// point ⇒ 0.35 × (1 − 4/6) = 0.1167.
     /// </summary>
     [Fact]
-    public void AIB2_PassPhysics_TimedRegion_TouchlineOverrun_IsCapped()
+    public void AIB2_PassPhysics_SaturatedPower_ExitRisk_IsPriced()
     {
-        Vector2 origin = new(-5f, -28f);
-        Vector2 region = new(13f, -30.5f);
-        PassPlan plan = Planner.PlanGroundPassToRegion(origin, region, arriveInSeconds: 1.0f);
+        Assert.Equal(51.59f, Planner.PredictStopDistance(0.90f), 2); // measured, not saturated
+        Assert.Equal(Planner.PredictStopDistance(0.95f), Planner.PredictStopDistance(1.00f));
+        Assert.True(Planner.PredictStopDistance(1.00f) > 100f,
+            $"a saturated power must be reported as stopping far away, not at the table cap " +
+            $"({Planner.PredictStopDistance(1.00f):F2} m)");
 
-        Assert.True(plan.Feasible);
-        Assert.Equal(0.75f, plan.Power01, 3);
-        Assert.Equal(1.5500f, plan.FlightTimeSeconds, 3);
+        float riskFull = Planner.BoundaryExitRisk01(Vector2.Zero, new Vector2(0f, 30f), 1.00f);
+        float riskNineFive = Planner.BoundaryExitRisk01(Vector2.Zero, new Vector2(0f, 30f), 0.95f);
+        Assert.Equal(0.1167f, riskFull, 3);
+        Assert.Equal(riskFull, riskNineFive, 5);
+        Assert.True(riskFull > 0f, "saturation must not excise the exit risk");
+    }
 
-        Vector2 projected = ProjectedStop(plan, origin, out float stopDistance);
-        Assert.True(stopDistance > plan.DistanceMeters,
-            $"the fixture's ball must overrun the region to exercise the cap ({stopDistance:F2} m rest)");
-        Assert.True(MathF.Abs(projected.Y) <= Pitch.HalfWidth + PassPlanner.BoundaryStopMarginMeters + 0.01f,
-            $"the capped timed ball's projected stop is z = {projected.Y:F2}, outside the touchline");
-        Assert.True(plan.FlightTimeSeconds <= 1.0f + PassPlanner.MaxTimedArrivalLateSeconds);
+    /// <summary>
+    /// The completion pricing through <see cref="PassSuccessModel.Estimate"/>: with an open, unblocked,
+    /// unpromised fixture the central plan's completion is 0.850000 (receiver term 1, defender term 1, lane
+    /// weight 0.30 at clearance 0.5, control 1: 0.7 + 0.3 × 0.5 = 0.85). The near-line plan's completion is
+    /// 0.850000 × (1 − 0.077889) = <b>0.783794</b> — all other terms are translation-invariant, so the
+    /// ratio is exactly the risk; the risk is published in the terms and the lead charge stays 0 (this is a
+    /// distinct physical outcome, not a second lead charge). The central plan's completion is unchanged.
+    /// </summary>
+    [Fact]
+    public void AIB2_PassPhysics_Estimate_PricesBoundaryExitRisk()
+    {
+        Vector2 origin = new(15f, -15f);
+        PassPlan nearPlan = Planner.PlanGroundPass(origin, 9, new Vector2(24f, -30f), Vector2.Zero, 8f);
+        Assert.True(nearPlan.Feasible);
+
+        Vector2 centralOrigin = new(15f, 15f);
+        PassPlan centralPlan = Planner.PlanGroundPass(centralOrigin, 9, new Vector2(24f, 0f), Vector2.Zero, 8f);
+        Assert.True(centralPlan.Feasible);
+
+        float risk = Planner.BoundaryExitRisk01(origin, nearPlan.TargetXZ, nearPlan.Power01);
+        Assert.Equal(0.0779f, risk, 3);
+
+        PassSuccessTerms central = Estimate(centralOrigin, centralPlan, 0f);
+        PassSuccessTerms nearLine = Estimate(origin, nearPlan, risk);
+
+        Assert.Equal(0.850000f, central.CompletionProbability01, 4);
+        Assert.Equal(0f, central.BoundaryExitRisk01);
+        Assert.Equal(risk, nearLine.BoundaryExitRisk01, 5);
+        Assert.Equal(0f, nearLine.LeadCharge01); // a distinct outcome, not a lead/territory charge
+        Assert.Equal(central.CompletionProbability01 * (1f - risk), nearLine.CompletionProbability01, 5);
+
+        // Both are inside the clamp band, so the ratio above is not a clamp artefact.
+        Assert.True(nearLine.CompletionProbability01 > PassSuccessModel.MinCompletion01 &&
+                    nearLine.CompletionProbability01 < PassSuccessModel.MaxCompletion01);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -435,14 +517,6 @@ public sealed class Aib2PassPhysicsTests
         return new Vector2(ball.Position.X, ball.Position.Z);
     }
 
-    /// <summary>The projected final stop point of a plan if the receiver never touched the ball (AUD-P7).</summary>
-    private static Vector2 ProjectedStop(PassPlan plan, Vector2 origin, out float stopDistance)
-    {
-        Vector2 rest = MeasureRestPosition(origin, plan.AimDirectionXZ, plan.Power01, out _);
-        stopDistance = Vector2.Distance(origin, rest);
-        return plan.TargetXZ + plan.AimDirectionXZ * (stopDistance - plan.DistanceMeters);
-    }
-
     /// <summary>
     /// Arrival speed derived from the planner's own calibrated distance/time samples by finite difference —
     /// the public-API form of the derivation the fix-4.1 pace floor uses internally.
@@ -456,59 +530,66 @@ public sealed class Aib2PassPhysicsTests
     }
 
     /// <summary>
-    /// The documented <see cref="PassPlanner"/> power anchor: the crisper of the lowest trapable-reach power
-    /// and the lowest crisp-pace power. Mirrors the planner's private anchor so the cap tests can name the
-    /// power the *uncapped* code would have returned.
+    /// Estimates a plan with one open, unblocked, unpromised receiver at the plan's own target: the
+    /// canonical fixture for isolating the AUD-P7 completion multiplier (all other terms equal).
     /// </summary>
-    private static float AnchoredPower(PassPlanner planner, float distance)
+    private static PassSuccessTerms Estimate(Vector2 origin, PassPlan plan, float expectRisk)
     {
-        float trapable = 1f;
-        float crisp = 1f;
-        bool foundTrapable = false;
-        bool foundCrisp = false;
-        for (int index = 0; index < 17; index++)
-        {
-            float power = 0.20f + 0.05f * index;
-            if (!foundTrapable && planner.RangeFor(power) >= distance)
-            {
-                trapable = power;
-                foundTrapable = true;
-            }
-
-            if (!foundCrisp && planner.CrispRangeFor(power) >= distance)
-            {
-                crisp = power;
-                foundCrisp = true;
-            }
-        }
-
-        return MathF.Max(trapable, crisp);
+        FootballerState self = Player(origin);
+        PerceivedEntity receiver = Mate(plan.TargetXZ);
+        FootballerObservation observation = Observation(self, receiver);
+        PassSuccessTerms terms = Model.Estimate(observation, receiver, plan, laneClearance01: 0.5f);
+        Assert.Equal(expectRisk, terms.BoundaryExitRisk01, 5);
+        Assert.False(terms.LaneBlocked, "the Estimate fixture must be an open lane");
+        return terms;
     }
 
-    /// <summary>
-    /// The flight time the planner's closest-approach solve picks for a stationary receiver: the first
-    /// sample at which the calibrated ball distance is closest to the requested distance.
-    /// </summary>
-    private static float ExpectedStationaryFlight(PassPlanner planner, float power01, float distance)
+    private static FootballerState Player(Vector2 position) => new()
     {
-        float bestMiss = float.MaxValue;
-        float bestTime = 0f;
-        float previous = 0f;
-        for (int k = 1; k < 480; k++)
-        {
-            float t = k * Dt;
-            float ballDistance = planner.BallDistanceAtTime(power01, t);
-            if (ballDistance <= previous + 1e-4f && k > 2) break;
-            previous = ballDistance;
+        Id = 8,
+        Team = TeamId.Home,
+        ShirtNumber = 8,
+        Role = TacticalRole.CentralMidfielder,
+        Attributes = new PlayerAttributes(),
+        Tendencies = PlayerTendencyProfile.ForRole(TacticalRole.CentralMidfielder),
+        Position = new Vector3(position.X, 0f, position.Y),
+        FacingXZ = new Vector2(1f, 0f)
+    };
 
-            float miss = MathF.Abs(distance - ballDistance);
-            if (miss < bestMiss)
-            {
-                bestMiss = miss;
-                bestTime = t;
-            }
-        }
+    private static PerceivedEntity Mate(Vector2 position) => new(
+        9, TeamId.Home, TacticalRole.CentralMidfielder,
+        new Vector3(position.X, 0f, position.Y), Vector3.Zero, 0.95f)
+    {
+        Capability = CapabilityEstimate.Generic
+    };
 
-        return bestTime;
-    }
+    private static FootballerObservation Observation(FootballerState self, params PerceivedEntity[] visible) => new()
+    {
+        SelfId = self.Id,
+        SelfTeam = self.Team,
+        SelfRole = self.Role,
+        SelfPosition = self.Position,
+        SelfVelocity = Vector3.Zero,
+        SelfFacingXZ = new Vector2(1f, 0f),
+        Stamina01 = 1f,
+        AvailableToKick = true,
+        ControlQuality01 = 1f,
+        PerceivedBallPosition = self.Position,
+        PerceivedBallVelocity = Vector3.Zero,
+        PossessingTeam = self.Team,
+        BallLastTouchedByPlayerId = self.Id,
+        BallLastTouchedByTeam = self.Team,
+        BallControlState = BallControlState.Controlled,
+        BallControllingPlayerId = self.Id,
+        TacticalAnchorPosition = self.Position,
+        AttackingDirectionX = 1f,
+        MatchTimeSeconds = 10f,
+        CurrentMatchPhase = MatchPhase.FirstHalf,
+        IsSetPieceTaker = false,
+        Tick = 100,
+        VisiblePlayers = visible,
+        TeamProfile = TeamTacticalProfile.PossessionControl,
+        SelfTendencies = new PlayerTendencies(),
+        SelfAttributes = new PlayerAttributes()
+    };
 }

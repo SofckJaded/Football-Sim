@@ -656,18 +656,29 @@ public enum TeamId
 /// to 0.55 m of the ball's predicted trajectory (the old 1.1 / 1.3 m offsets already exceeded the 1.24 m
 /// execution reach), and the approach deadband tightens 0.45 -&gt; 0.15 m. (5) <b>A ground pass stays in play
 /// and arrives firm</b>: both planners project the calibrated stop point and cap the power when a near-line
-/// target would roll out of the pitch, and a timed-region pass can be floored to a minimum arrival pace; the
-/// crisp arrival pace itself stays at 9.0 m/s because a measured 7.0 m/s experiment lengthened flights and
-/// increased lane blocking (the overhit is owned by the stop cap). (6) <b>The attack uses the middle</b>:
+/// target would roll out of the pitch (that cap was reworked in version 57 — see below), and a timed-region pass
+/// can be floored to a minimum arrival pace; the crisp arrival pace itself stays at 9.0 m/s because a measured
+/// 7.0 m/s experiment lengthened flights and increased lane blocking. (6) <b>The attack uses the middle</b>:
 /// midfield carries value goalward penetration from -10 m, the line-break target floor drops 12 -&gt; 4 m, and
 /// the width -&gt; central-threat reception blend moves from +17.5/+25.5 m to +5/+18 m. Trajectories differ from
 /// version 55 wherever a carrier, passer, receiver, runner or off-ball anchor decided.</item>
+/// <item><c>AiBehaviour 57</c> — the AUD-P7 correction found by the review of version 56. The near-line power
+/// cap is <b>removed</b>: a ground ball always rolls 26–54 m before resting, so the only cap that could keep
+/// the projected rest point inside the pitch was a 0.20–0.35-power roller (measured: the audit's own 17.5 m
+/// touchline ball went 0.85 power / 1.30 s -&gt; 0.20 power / 3.33 s and still left the pitch if untrapped),
+/// and the timed/promised path was inert for that geometry. The pass model instead charges a bounded
+/// boundary-exit risk (<see cref="Physics.PassPlanner.BoundaryExitRisk01"/>, up to 0.35) when the ball would
+/// leave the pitch within six metres past its aim point, with goal-mouth exits exempt — the audit's own stated
+/// alternative ("or penalize high-speed boundary-exit risk in <c>PassSuccessModel</c>"). Both planners produce
+/// byte-identical plans to the pre-AUD-P7 planner for every input. The diagnostic rejection buffer also grows
+/// 8 -&gt; 16 so space-probe refusals cannot hide lane/completion reasons. Trajectories differ from version 56
+/// wherever a near-line pass was priced.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 56;
+    public const int AiBehaviour = 57;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

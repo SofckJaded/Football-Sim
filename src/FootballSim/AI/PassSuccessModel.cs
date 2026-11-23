@@ -60,6 +60,17 @@ public readonly record struct PassSuccessTerms(
     /// estimate; a default-constructed term reports 0, not 1.
     /// </summary>
     public float CongestionFactor01 { get; init; }
+
+    /// <summary>
+    /// AUD-P7 / fix 4.3: the bounded share of completion removed because the ground ball would leave the
+    /// pitch <b>just past its aim point</b> before anyone could trap it (0 when it stays in play, the goal
+    /// mouth, or the exit is far enough past the aim point to be ordinary play). It is a distinct physical
+    /// outcome — the ball is out of play, not intercepted — priced inside the completion probability by
+    /// <see cref="Physics.PassPlanner.BoundaryExitRisk01"/>; it is <b>not</b> a lead/territory charge
+    /// (that is <see cref="LeadCharge01"/>) and the loss term <c>1−p</c> still owns the turnover. Published
+    /// so a decision trace can show the charge.
+    /// </summary>
+    public float BoundaryExitRisk01 { get; init; }
 }
 
 /// <summary>
@@ -348,6 +359,20 @@ public sealed class PassSuccessModel
     /// (<see cref="CandidateGenerator.EvaluateLaneClearance"/>); it is passed in rather than recomputed so
     /// a decision scores one lane once. <paramref name="promise"/> is an advertised meeting region when
     /// one exists (A5.3); without it the arrival is estimated from the receiver's own velocity.
+    ///
+    /// <b>AUD-P7 / fix 4.3 — boundary-exit risk.</b> After the completion is assembled (and after the lead
+    /// charge and the blocked-lane cap, before the final clamp) the estimate asks
+    /// <see cref="Physics.PassPlanner.BoundaryExitRisk01"/> whether the ground ball would leave the pitch
+    /// just past its aim point — the audit's "fast pass aimed 1.0 m inside a boundary rolls out of play"
+    /// defect — and applies <c>completion ×= 1 − risk</c>. This is a <b>distinct physical outcome</b> (the
+    /// ball is out of play before it can be trapped, not intercepted), bounded at
+    /// <see cref="Physics.PassPlanner.BoundaryExitMaxRisk01"/>, and it is <b>not</b> a second lead or
+    /// territory charge: the unpromised lead is charged once via <see cref="LeadCharge01"/>, the promised
+    /// lead through the promise, and the loss term <c>1−p</c> still owns the turnover. It applies to the
+    /// untimed and the timed/promised plan alike because both are estimated here, and the charge is zero
+    /// for a central ball, for a ball that stays in play, and once the exit is more than
+    /// <see cref="Physics.PassPlanner.BoundaryExitPenaltyRadiusMeters"/> past the aim point (an ordinary
+    /// long forward ball whose roll ends far beyond the receiver).
     /// </summary>
     public PassSuccessTerms Estimate(
         in FootballerObservation obs,
@@ -479,6 +504,19 @@ public sealed class PassSuccessModel
         bool blocked = IsLaneBlocked(plan, obs);
         if (blocked) completion = MathF.Min(completion, BlockedLaneCompletionCap01);
 
+        // AUD-P7 / fix 4.3: the ball leaving the pitch just past its aim point is a distinct physical
+        // outcome — not an interception, not a lead/territory loss — so it is charged inside the completion
+        // probability as a bounded multiplier. The planner does not alter the launch for boundary safety:
+        // a ground ball always rolls 26–54 m, so capping the power to keep the rest point inside could only
+        // be met by making the pass a 0.20-power roller (the AUD-P5 defect class); pricing the outcome is
+        // honest and applies to the untimed and the timed/promised plan alike, because both are estimated
+        // through this method. Only exits within BoundaryExitPenaltyRadiusMeters past the aim point are
+        // charged, so an ordinary long forward ball whose roll ends far beyond the receiver is untouched.
+        // The loss term (1−p) still owns the turnover; this is not a second charge for the same thing.
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        float boundaryExitRisk = _planner.BoundaryExitRisk01(ballXZ, target, plan.Power01);
+        if (boundaryExitRisk > 0f) completion *= 1f - boundaryExitRisk;
+
         return new PassSuccessTerms(
             CompletionProbability01: Math.Clamp(completion, MinCompletion01, MaxCompletion01),
             LaneBlocked: blocked,
@@ -497,7 +535,8 @@ public sealed class PassSuccessModel
             PromisedArrival = promised,
             PromisedConfidence01 = promised ? Math.Clamp(promise.Confidence01, 0f, 1f) : 0f,
             CongestionExtraDefenders = congestionExtra,
-            CongestionFactor01 = congestion
+            CongestionFactor01 = congestion,
+            BoundaryExitRisk01 = boundaryExitRisk
         };
     }
 
@@ -541,6 +580,14 @@ public sealed class PassSuccessModel
     /// promise is honoured by the power itself and what remains is the runner's own confidence in the
     /// announcement — exactly the substitution A5.3 made for the ground ball. A driven delivery without an
     /// announced arrival is not offered at all: there is nothing to time it to.
+    ///
+    /// <b>AUD-P7 is deliberately not charged here.</b> The boundary-exit risk exists because a rolled
+    /// ground ball keeps travelling for tens of metres after the aim point, so an overhit near a line runs
+    /// out of play. An airborne ball does not do that: it lands at the point the power solve drops it, and
+    /// a delivery that overshoots the pitch is already priced by the raised trajectory's landing
+    /// (<see cref="RaisedPassModel.TryPowerForLanding"/> refuses a landing outside the band) and by the
+    /// receiver's arrival term. Charging a ground-roll exit model to a ball that is never on the ground
+    /// past its landing would double-count a risk the raised estimate does not have.
     /// </summary>
     public LoftedPassTerms EstimateRaised(
         in FootballerObservation obs,

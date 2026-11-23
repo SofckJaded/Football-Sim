@@ -50,15 +50,15 @@ public sealed class PassPlanner
     /// full-power pass (~22.6 m here) the planner falls back to the same lowest-power-that-reaches rule.
     ///
     /// <b>AUD-P5 fix 4.2 was tried and reversed on measurement.</b> The audit recommended lowering this
-    /// pace to ~6.5–7.0 m/s to reduce the overhit roll. That outcome is already owned by the AUD-P7 stop
-    /// cap (a fast ball aimed near a line is power-capped, below), and the pace change measured badly:
+    /// pace to ~6.5–7.0 m/s to reduce the overhit roll. The overhit is now priced where it belongs — the
+    /// AUD-P7 boundary-exit risk in <see cref="AI.PassSuccessModel"/> — and the pace change measured badly:
     /// at 7.0 m/s a 17 m pass anchored at 0.70 power instead of 0.80 and its flight lengthened from
     /// 1.317 s to 1.483 s (20 m: 1.433 s to 1.683 s). A longer flight is exactly what makes a ball
     /// interceptable under this repo's AIB-02a physics lane model — the 2026-11-22 evidence recorded
     /// slow rollers costing 26.8 % interceptions, and <c>ai55</c> completes 80–83 % of passes with the
     /// 9.0 m/s pace. Concretely, the 7.0 experiment turned two clean AIB-02b congestion fixtures into
-    /// lane-blocked passes merely by lengthening their 10 m flight from 0.867 s to 1.033 s. So the
-    /// overhit half of AUD-P5 is fixed by the AUD-P7 stop cap and the pace stays at 9.0 m/s; lowering it
+    /// lane-blocked passes merely by lengthening their 10 m flight from 0.867 s to 1.033 s. So the overhit
+    /// half of AUD-P5 stays a probabilistic pricing problem and the pace stays at 9.0 m/s; lowering it
     /// lengthens the flight and increases lane blocking (measured).
     /// </summary>
     private const float CrispArrivalSpeed = 9.0f;
@@ -66,30 +66,32 @@ public sealed class PassPlanner
     private const float MaxMeetingMiss = 1.0f;        // reception reach is ~1.24 m, leave margin
 
     /// <summary>
-    /// AUD-P7 / fix 4.3: how far a projected stop point may sit past a goal line or touchline and still
-    /// count as inside the pitch. The touchline-overrun cap only needs to stop a ball that visibly
-    /// leaves the field; a stop point half a metre over the line is a near-miss, so the tolerance keeps
-    /// float noise at the boundary from throttling an otherwise fine pass.
+    /// AUD-P7 / fix 4.3: how far past its aim point a ground pass may leave the pitch before the exit is
+    /// considered harmless, in metres. Only an overhit that runs out of play <i>just past the receiver</i>
+    /// is the audit's defect; a long forward ball whose roll leaves the pitch after the receiver had ample
+    /// room to move onto it is ordinary play, so the risk ramps to zero at this distance. The same radius
+    /// is the ramp length of <see cref="BoundaryExitRisk01"/>'s linear charge.
     /// </summary>
-    public const float BoundaryStopMarginMeters = 0.5f;
+    public const float BoundaryExitPenaltyRadiusMeters = 6f;
 
     /// <summary>
-    /// AUD-P7 / fix 4.3: only a target this close to a goal line or touchline is exposed to the audit's
-    /// overrun — the fast pass "aimed 1.0 m inside a boundary" whose ball rolls straight out of play just
-    /// past the receiver. The audit scopes the safeguard to <c>margin &lt; 4 m</c>, and the scoping is
-    /// load-bearing: a rolling ground pass always stops 26–54 m from the passer (the gentlest 0.20-power
-    /// ball still runs ~26 m), so an un-scoped projection would cap every forward ball in the attacking
-    /// third whose roll crosses the goal line — including short passes nowhere near a touchline. Past
-    /// this margin the receiver has room to move onto the ball, and the completion model already prices
-    /// the miss; near the line the ball is simply out of play.
+    /// AUD-P7 / fix 4.3: the largest share of a ground pass's completion charged for a boundary exit.
+    /// Fix 4.3 offered two implementations — cap the power so the ball stops inside, or price the exit.
+    /// The cap was built first and removed: a ground ball always rolls 26–54 m before resting (even the
+    /// gentlest 0.20-power ball rolls 26.4 m), so "keep the rest point inside the pitch" could essentially
+    /// never be satisfied for a target nearer than that, and the only way to satisfy it was to turn the
+    /// pass into a 0.20-power slow roller — the exact AUD-P5 defect class this batch removes. The bounded
+    /// pricing below is honest, applies to the untimed and the timed/promised plan alike, and never
+    /// deletes the pass. 0.35 is deliberately smaller than the loss cost's own share of an ordinary
+    /// turnover so an otherwise good near-line ball is charged, not vetoed.
     /// </summary>
-    private const float BoundaryTargetMarginMeters = 4f;
+    public const float BoundaryExitMaxRisk01 = 0.35f;
 
     /// <summary>
     /// AUD-P7: how long the one-time calibration keeps rolling a cloned ball to find where it actually
     /// comes to rest. The 8 s flight table is not long enough for the slow tail of the roll (the gentlest
-    /// ground pass is still creeping at 8 s and only stops after ~9–12 s), and the AUD-P7 overrun check
-    /// is a question about the final rest position, not about the position after eight seconds.
+    /// ground pass is still creeping at 8 s and only stops after ~9–12 s), and the boundary-exit risk asks
+    /// where the ball would rest, not where it is after eight seconds.
     /// </summary>
     private const int StopSamples = 1200;             // 20 s of roll
 
@@ -109,10 +111,11 @@ public sealed class PassPlanner
     private const float StopSpeedMetersPerSecond = 0.031f;
 
     /// <summary>
-    /// AUD-P7: the projected stop distance of a saturated power — one whose calibration never saw the
-    /// ball come to rest before <see cref="MaxStopCalibrationDistance"/>. Deliberately far outside any
-    /// pitch (the diagonal is ~125 m) so the overrun check cannot hide a real overrun: a saturated power
-    /// is treated as "stopping far away", exactly as the fix requires.
+    /// AUD-P7: the reported stop distance of a saturated power — one whose calibration never saw the ball
+    /// come to rest before <see cref="MaxStopCalibrationDistance"/>. Deliberately far outside any pitch
+    /// (the diagonal is ~125 m) so a saturation cap cannot hide a real overrun: a saturated power is
+    /// treated as "stopping far away" by <see cref="PredictStopDistance"/> and
+    /// <see cref="BoundaryExitRisk01"/>, and the boundary-exit risk is then charged at its ramp value.
     /// </summary>
     private const float FarStopDistanceMeters = 4f * MaxCalibrationDistance;
 
@@ -172,6 +175,13 @@ public sealed class PassPlanner
     /// he will keep going. The default is <c>true</c> so every existing caller keeps its current plan
     /// exactly; a caller that cannot promise the run passes <c>false</c> and gets the
     /// <see cref="UncommittedLeadMaxMeters"/> hedge instead of a ball aimed metres away.
+    ///
+    /// <b>AUD-P7 does not touch the plan.</b> The boundary-exit defect (a fast pass aimed 1.0 m inside a
+    /// line that rolls out of play just past the receiver) is priced by
+    /// <see cref="AI.PassSuccessModel.Estimate"/> through <see cref="BoundaryExitRisk01"/>, not by altering
+    /// the launch. This method therefore produces the same plan the pre-AUD-P7 planner produced for every
+    /// input; the cap experiment that used to live here was removed because a ground ball always rolls
+    /// 26–54 m, so the only way to satisfy it was a 0.20-power slow roller (the AUD-P5 defect class).
     /// </summary>
     public PassPlan PlanGroundPass(
         Vector2 originXZ,
@@ -251,115 +261,19 @@ public sealed class PassPlanner
         if (distance < 0.5f || distance > MaxCalibrationDistance)
             return Infeasible(distance);
 
-        // AUD-P7 / fix 4.3: a ball that would roll out of play just past a receiver near the line is
-        // capped *after* the power was chosen — the plan is kept and only the pace is reduced. This is a
-        // no-op for every plan whose projected stop point is already inside the pitch, which is most
-        // passes; see <see cref="TryCapPowerForBoundaryOverrun"/> for the exact scoping.
-        Vector2 aimDirection = SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f));
-        if (!ProjectedStopStaysInside(target, aimDirection, distance, powerIndex))
-        {
-            int minAllowedIndex = minPower01 > 0f
-                ? Math.Clamp((int)MathF.Round((minPower01 - MinPower) / PowerStep), 0, PowerSamples - 1)
-                : 0;
-
-            if (TryCapPowerForBoundaryOverrun(
-                    originXZ, receiverPositionXZ, velocity, extraLead, leadCap, freezeLead,
-                    minAllowedIndex, powerIndex,
-                    out int cappedIndex, out float cappedFlight, out Vector2 cappedTarget))
-            {
-                powerIndex = cappedIndex;
-                flightTime = cappedFlight;
-                target = cappedTarget;
-                distance = Vector2.Distance(originXZ, target);
-                aimDirection = SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f));
-            }
-        }
-
+        // AUD-P7: the planner deliberately does not touch the ball for boundary safety. Capping the power
+        // so the projected rest point stays inside the pitch was built and removed: a ground ball always
+        // rolls 26–54 m, so the cap could only be satisfied by turning near-line passes into 0.20-power
+        // rollers (the AUD-P5 defect class). The boundary-exit risk is priced in
+        // <see cref="AI.PassSuccessModel.Estimate"/> instead, so this method produces the same plan the
+        // pre-AUD-P7 planner produced for every input.
         return new PassPlan(
             Feasible: true,
-            AimDirectionXZ: aimDirection,
+            AimDirectionXZ: SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f)),
             TargetXZ: target,
             Power01: MinPower + powerIndex * PowerStep,
             FlightTimeSeconds: flightTime,
             DistanceMeters: distance);
-    }
-
-    /// <summary>
-    /// AUD-P7 / fix 4.3, planner side: walks the power down from <paramref name="powerIndex"/> to find the
-    /// highest power whose projected stop point stays inside the pitch when the pass is aimed near a
-    /// boundary. The gentlest power that still solves the meeting is the documented fallback when no
-    /// allowed power keeps the ball in play, so a plan is never refused just because it is overhit.
-    ///
-    /// The search is bounded by the 17-power grid and does not allocate; it only runs when
-    /// <see cref="ProjectedStopStaysInside"/> has already failed, which is the rare near-line case.
-    /// A candidate is only accepted when the arrival solve still finds a real meeting at that slower
-    /// pace — if every slower ball is a punt (the receiver has run past the lead bound) the original
-    /// plan is kept, because refusing the pass or replacing it with an unreachable lead would be worse
-    /// than an overhit that the receiver may still cut out. The caller's own power floor
-    /// (<paramref name="minAllowedIndex"/>) is the lower bound of the search, so a human caller's
-    /// explicitly requested firm ball is not silently turned into a dribble; if even that floor overruns,
-    /// the floor is the "gentlest" allowed power.
-    /// </summary>
-    private bool TryCapPowerForBoundaryOverrun(
-        Vector2 originXZ,
-        Vector2 receiverPositionXZ,
-        Vector2 receiverVelocityXZ,
-        Vector2 extraLead,
-        float maxLeadMeters,
-        bool freezeReceiverAtLeadBound,
-        int minAllowedIndex,
-        int powerIndex,
-        out int cappedIndex,
-        out float cappedFlight,
-        out Vector2 cappedTarget)
-    {
-        cappedIndex = powerIndex;
-        cappedFlight = 0f;
-        cappedTarget = default;
-
-        bool haveGentlest = false;
-        int gentlestIndex = powerIndex;
-        float gentlestFlight = 0f;
-        Vector2 gentlestTarget = default;
-
-        for (int candidate = powerIndex - 1; candidate >= minAllowedIndex; candidate--)
-        {
-            if (!TrySolveArrivalTime(
-                    candidate, originXZ, receiverPositionXZ, receiverVelocityXZ, extraLead,
-                    maxLeadMeters, freezeReceiverAtLeadBound, out float candidateFlight))
-            {
-                continue;
-            }
-
-            Vector2 candidateTarget = ClampToPitch(receiverPositionXZ
-                + ClampVectorLength(receiverVelocityXZ * candidateFlight, maxLeadMeters)
-                + extraLead);
-            float candidateDistance = Vector2.Distance(originXZ, candidateTarget);
-            if (candidateDistance < 0.5f || candidateDistance > MaxCalibrationDistance) continue;
-
-            Vector2 candidateAim = SimMath.SafeNormalize(candidateTarget - originXZ, new Vector2(1f, 0f));
-            gentlestIndex = candidate;
-            gentlestFlight = candidateFlight;
-            gentlestTarget = candidateTarget;
-            haveGentlest = true;
-
-            if (!ProjectedStopStaysInside(candidateTarget, candidateAim, candidateDistance, candidate))
-                continue;
-
-            cappedIndex = candidate;
-            cappedFlight = candidateFlight;
-            cappedTarget = candidateTarget;
-            return true;
-        }
-
-        if (!haveGentlest) return false;
-
-        // No allowed power keeps the ball inside: take the gentlest power that still makes the pass, the
-        // documented AUD-P7 fallback, so the overrun is as short as the caller's own floor allows.
-        cappedIndex = gentlestIndex;
-        cappedFlight = gentlestFlight;
-        cappedTarget = gentlestTarget;
-        return true;
     }
 
     /// <summary>Ball speed leaving the foot for a ground pass at the given power (mirrors the kick model).</summary>
@@ -403,6 +317,12 @@ public sealed class PassPlanner
     /// meeting, and <see cref="AI.PassSuccessModel"/>'s promise timing term prices that mistiming — the
     /// caller decides whether the interception-risk trade is worth it. The default of <c>0</c> means
     /// "exactly today's behaviour", so every existing call site is unchanged.
+    ///
+    /// <b>AUD-P7 does not touch the timed plan either.</b> The boundary-exit risk of a timed/promised ball
+    /// is priced by <see cref="AI.PassSuccessModel.Estimate"/> through
+    /// <see cref="BoundaryExitRisk01"/> — the same place the untimed plan's risk is priced — so this method
+    /// produces the same plan the pre-AUD-P7 timed planner produced for every input, including the audit's
+    /// own (15,−15)→(24,−30) wanted-1.4 s geometry.
     /// </summary>
     public PassPlan PlanGroundPassToRegion(
         Vector2 originXZ,
@@ -436,47 +356,36 @@ public sealed class PassPlanner
         // Flight time for a fixed distance is strictly decreasing in power, so the arrival closest to the
         // meeting is found by bisecting the crossing of `wanted` instead of scanning all seventeen powers.
         // A carrier plans one timed pass per receiver per decision, and each scan is a 480-sample lookup.
-        if (!TrySolveTimedPower(distance, wanted, gentlest, PowerSamples - 1, out int bestIndex, out float bestFlight))
-            return Infeasible(distance);
+        int lo = gentlest;
+        int hi = PowerSamples - 1;
+        while (hi - lo > 1)
+        {
+            int mid = (lo + hi) / 2;
+            if (!TryGetFlightTimeAt(mid, distance, out float midTime)) { hi = mid; continue; }
+            if (midTime > wanted) lo = mid;
+            else hi = mid;
+        }
+
+        if (!TryGetFlightTimeAt(lo, distance, out float flightLo)) return Infeasible(distance);
+
+        int bestIndex = lo;
+        float bestFlight = flightLo;
+        if (hi != lo && TryGetFlightTimeAt(hi, distance, out float flightHi) &&
+            MathF.Abs(flightHi - wanted) < MathF.Abs(flightLo - wanted) - TimedArrivalTieSeconds)
+        {
+            bestIndex = hi;
+            bestFlight = flightHi;
+        }
 
         if (bestFlight > wanted + MaxTimedArrivalLateSeconds) return Infeasible(distance);
 
-        // AUD-P7 / fix 4.3: a timed ball that would roll out just past a target near the line is capped and
-        // the arrival re-solved at the capped power, keeping the same "closest to the wanted meeting"
-        // objective. When the cap would make the plan infeasible (the slower ball arrives too late) the
-        // original plan is kept: losing the pass entirely is worse than an overhit the receiver may cut out.
-        Vector2 aimDirection = SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f));
-        if (!ProjectedStopStaysInside(target, aimDirection, distance, bestIndex))
-        {
-            int cappedIndex = -1;
-            for (int candidate = bestIndex - 1; candidate >= gentlest; candidate--)
-            {
-                if (ProjectedStopStaysInside(target, aimDirection, distance, candidate))
-                {
-                    cappedIndex = candidate;
-                    break;
-                }
-            }
-
-            if (cappedIndex < 0)
-            {
-                // No allowed power keeps the projected stop inside: take the gentlest power that still
-                // reaches (the caller's pace floor included), which minimises the overrun.
-                cappedIndex = gentlest;
-            }
-
-            if (cappedIndex < bestIndex &&
-                TrySolveTimedPower(distance, wanted, gentlest, cappedIndex, out int cappedBest, out float cappedFlight) &&
-                cappedFlight <= wanted + MaxTimedArrivalLateSeconds)
-            {
-                bestIndex = cappedBest;
-                bestFlight = cappedFlight;
-            }
-        }
-
+        // AUD-P7: the timed plan is not power-capped either. The boundary-exit risk of a ball that would
+        // leave the pitch just past the region is priced by
+        // <see cref="AI.PassSuccessModel.Estimate"/> (the same place the untimed plan's risk is priced),
+        // so this method is byte-identical to the pre-AUD-P7 timed planner for every input.
         return new PassPlan(
             Feasible: true,
-            AimDirectionXZ: aimDirection,
+            AimDirectionXZ: SimMath.SafeNormalize(target - originXZ, new Vector2(1f, 0f)),
             TargetXZ: target,
             Power01: MinPower + bestIndex * PowerStep,
             FlightTimeSeconds: bestFlight,
@@ -484,45 +393,124 @@ public sealed class PassPlanner
     }
 
     /// <summary>
-    /// The power whose flight time lands closest to <paramref name="wantedSeconds"/> for a fixed distance,
-    /// searched by bisection between <paramref name="gentlestIndex"/> and <paramref name="ceilingIndex"/>.
-    /// The same routine serves the uncapped plan (<paramref name="ceilingIndex"/> = the firmest power) and
-    /// the AUD-P7 re-solve (<paramref name="ceilingIndex"/> = the boundary-capped power), so the capped
-    /// arrival is measured against exactly the same objective as the uncapped one.
-    /// Returns false only when the gentlest allowed power cannot reach the distance at all.
+    /// AUD-P7: the calibrated distance a ground pass struck at <paramref name="power01"/> travels before
+    /// it comes to rest. This is the rest-position table the one-time calibration builds with the real
+    /// solver (it continues the roll past the 8 s flight table); a power whose calibration never saw the
+    /// ball stop is <b>saturated</b> and returns <see cref="FarStopDistanceMeters"/>, deliberately far
+    /// outside any pitch (the diagonal is ~125 m), so the measurement's cap cannot hide a real overrun.
+    /// Deterministic, allocation-free, one table lookup. Non-finite powers are clamped to the grid.
     /// </summary>
-    private bool TrySolveTimedPower(
-        float distanceMeters,
-        float wantedSeconds,
-        int gentlestIndex,
-        int ceilingIndex,
-        out int bestIndex,
-        out float bestFlight)
+    public float PredictStopDistance(float power01)
     {
-        bestIndex = -1;
-        bestFlight = 0f;
-        int lo = Math.Max(0, gentlestIndex);
-        int hi = Math.Clamp(ceilingIndex, lo, PowerSamples - 1);
-        while (hi - lo > 1)
+        float power = float.IsFinite(power01) ? power01 : MinPower;
+        int index = Math.Clamp((int)MathF.Round((power - MinPower) / PowerStep), 0, PowerSamples - 1);
+        return StopDistanceForIndex(index);
+    }
+
+    /// <summary>
+    /// AUD-P7 / fix 4.3: the bounded share of a ground pass's completion that is charged because the ball
+    /// would leave the pitch <b>just past its aim point</b> — the audit's "fast pass aimed 1.0 m inside a
+    /// boundary rolls out of play" defect, priced instead of capped (the cap experiment is recorded in
+    /// <see cref="BoundaryExitMaxRisk01"/>'s doc; a ground ball always rolls 26–54 m, so the only way to
+    /// keep its rest point inside was to turn the pass into a slow roller, the AUD-P5 defect class).
+    ///
+    /// The rules, in order:
+    /// <list type="bullet">
+    /// <item>The projected rest point is <c>origin + aim × PredictStopDistance(power)</c> (equivalently
+    /// <c>target + aim × (stop − distance)</c>). If the ball stops before or on the pitch boundary the
+    /// risk is <b>0</b> — the ball stays in play.</item>
+    /// <item>The first pitch boundary the straight roll crosses is located. If the exit is more than
+    /// <see cref="BoundaryExitPenaltyRadiusMeters"/> past the aim point the risk is <b>0</b>: the roll
+    /// leaves the pitch only after the receiver had that much room to move onto it, which is ordinary
+    /// play, not the audit's overrun.</item>
+    /// <item>Otherwise the risk ramps linearly from <b>0</b> at the radius to
+    /// <see cref="BoundaryExitMaxRisk01"/> as the exit point reaches the aim point (0 m past it); an aim
+    /// point already past the line takes the maximum.</item>
+    /// <item>An exit on a goal line <b>between the posts</b> (|coordinate| ≤ the pitch's half goal width)
+    /// is a goal, not out of play, so the risk is <b>0</b>. The ball rolls on the deck, far below the
+    /// crossbar, so the 2D goal mouth is the whole question.</item>
+    /// </list>
+    /// Non-finite origins/targets, a zero-length aim (target within 0.5 m of the origin) and a non-finite
+    /// power all return <b>0</b> deterministically — the caller's plan is not a roll in that case, and the
+    /// estimator must never produce a NaN completion. Deterministic and allocation-free: one stop-table
+    /// lookup plus a rectangle ray test, no per-call state.
+    /// </summary>
+    public float BoundaryExitRisk01(Vector2 originXZ, Vector2 targetXZ, float power01)
+    {
+        if (!SimMath.IsFinite(originXZ) || !SimMath.IsFinite(targetXZ)) return 0f;
+        if (!float.IsFinite(power01)) return 0f; // no meaningful roll to price; never produce NaN
+
+        Vector2 segment = targetXZ - originXZ;
+        float distance = segment.Length();
+        if (!float.IsFinite(distance) || distance < 0.5f) return 0f;
+        Vector2 aim = segment / distance;
+
+        float stopDistance = PredictStopDistance(power01);
+        if (!(stopDistance > distance)) return 0f; // the ball stops at or before its aim point
+
+        float exitDistance = FirstPitchExitDistance(originXZ, aim, out bool goalLineExit, out float perpendicular);
+        if (!(exitDistance < stopDistance)) return 0f; // the projected rest point is inside the pitch
+
+        if (goalLineExit && MathF.Abs(perpendicular) <= _pitch.HalfGoalWidth) return 0f; // a goal, not out
+
+        float pastAim = MathF.Max(0f, exitDistance - distance);
+        if (pastAim >= BoundaryExitPenaltyRadiusMeters) return 0f;
+
+        float risk = BoundaryExitMaxRisk01 * (1f - pastAim / BoundaryExitPenaltyRadiusMeters);
+        return Math.Clamp(risk, 0f, BoundaryExitMaxRisk01);
+    }
+
+    /// <summary>
+    /// AUD-P7: distance along <paramref name="direction"/> (from a point inside the pitch) to the first
+    /// pitch line crossed, or <see cref="float.PositiveInfinity"/> when the ray never leaves the rectangle.
+    /// Reports whether that line is a goal line and the perpendicular coordinate at the crossing (z for a
+    /// goal line, x for a touchline) so <see cref="BoundaryExitRisk01"/> can exempt the goal mouth.
+    /// A rectangle is convex, so one crossing is the whole story. Allocation-free, no allocation in the
+    /// per-pass path.
+    /// </summary>
+    private float FirstPitchExitDistance(
+        Vector2 originXZ,
+        Vector2 directionXZ,
+        out bool goalLineExit,
+        out float perpendicularAtExit)
+    {
+        goalLineExit = false;
+        perpendicularAtExit = 0f;
+        float exitDistance = float.PositiveInfinity;
+
+        if (MathF.Abs(directionXZ.X) > 1e-6f)
         {
-            int mid = (lo + hi) / 2;
-            if (!TryGetFlightTimeAt(mid, distanceMeters, out float midTime)) { hi = mid; continue; }
-            if (midTime > wantedSeconds) lo = mid;
-            else hi = mid;
+            float goalLineX = directionXZ.X > 0f ? _pitch.HalfLength : -_pitch.HalfLength;
+            float t = (goalLineX - originXZ.X) / directionXZ.X;
+            if (t >= 0f)
+            {
+                float z = originXZ.Y + directionXZ.Y * t;
+                if (z >= -_pitch.HalfWidth && z <= _pitch.HalfWidth && t < exitDistance)
+                {
+                    exitDistance = t;
+                    goalLineExit = true;
+                    perpendicularAtExit = z;
+                }
+            }
         }
 
-        if (!TryGetFlightTimeAt(lo, distanceMeters, out float flightLo)) return false;
-
-        bestIndex = lo;
-        bestFlight = flightLo;
-        if (hi != lo && TryGetFlightTimeAt(hi, distanceMeters, out float flightHi) &&
-            MathF.Abs(flightHi - wantedSeconds) < MathF.Abs(flightLo - wantedSeconds) - TimedArrivalTieSeconds)
+        if (MathF.Abs(directionXZ.Y) > 1e-6f)
         {
-            bestIndex = hi;
-            bestFlight = flightHi;
+            float touchLineZ = directionXZ.Y > 0f ? _pitch.HalfWidth : -_pitch.HalfWidth;
+            float t = (touchLineZ - originXZ.Y) / directionXZ.Y;
+            if (t >= 0f)
+            {
+                float x = originXZ.X + directionXZ.X * t;
+                if (x >= -_pitch.HalfLength && x <= _pitch.HalfLength && t < exitDistance)
+                {
+                    exitDistance = t;
+                    goalLineExit = false;
+                    perpendicularAtExit = x;
+                }
+            }
         }
 
-        return true;
+        return exitDistance;
     }
 
     /// <summary>
@@ -604,43 +592,6 @@ public sealed class PassPlanner
             : _calibration.StopDistance[index];
     }
 
-    /// <summary>
-    /// AUD-P7 / fix 4.3: true when the ball's projected final stop point stays inside the pitch through the
-    /// boundary (or boundaries) the <paramref name="targetXZ"/> is near. The projected stop point is
-    /// <c>target + aimDirection × (stopDistance − distance)</c>, i.e. where the ball would come to rest if the
-    /// receiver never touched it. The check only applies to a target within
-    /// <see cref="BoundaryTargetMarginMeters"/> of a goal line or touchline and only to the direction the ball
-    /// is actually travelling: a pass aimed back inside from the line, or a central pass, is never touched.
-    /// This is the referee-vision version of the audit's "aimed 1.0 m inside a boundary" case: an overhit
-    /// there is simply out of play, so the planner caps its pace instead of pretending the ball stops.
-    /// </summary>
-    private bool ProjectedStopStaysInside(
-        Vector2 targetXZ,
-        Vector2 aimDirectionXZ,
-        float distanceMeters,
-        int powerIndex)
-    {
-        bool nearPositiveX = _pitch.HalfLength - targetXZ.X <= BoundaryTargetMarginMeters;
-        bool nearNegativeX = targetXZ.X + _pitch.HalfLength <= BoundaryTargetMarginMeters;
-        bool nearPositiveZ = _pitch.HalfWidth - targetXZ.Y <= BoundaryTargetMarginMeters;
-        bool nearNegativeZ = targetXZ.Y + _pitch.HalfWidth <= BoundaryTargetMarginMeters;
-        if (!nearPositiveX && !nearNegativeX && !nearPositiveZ && !nearNegativeZ) return true;
-
-        float stopDistance = StopDistanceForIndex(powerIndex);
-        float beyondTarget = stopDistance - distanceMeters;
-        if (beyondTarget <= 0f) return true; // the ball stops at or before the target: no overrun
-
-        Vector2 projected = targetXZ + aimDirectionXZ * beyondTarget;
-        float insideX = _pitch.HalfLength + BoundaryStopMarginMeters;
-        float insideZ = _pitch.HalfWidth + BoundaryStopMarginMeters;
-
-        if (nearPositiveX && aimDirectionXZ.X > 0f && projected.X > insideX) return false;
-        if (nearNegativeX && aimDirectionXZ.X < 0f && projected.X < -insideX) return false;
-        if (nearPositiveZ && aimDirectionXZ.Y > 0f && projected.Y > insideZ) return false;
-        if (nearNegativeZ && aimDirectionXZ.Y < 0f && projected.Y < -insideZ) return false;
-        return true;
-    }
-
     /// <summary>Lowest power index at which a ground pass covers <paramref name="distanceMeters"/>.</summary>
     private bool TryFirstPowerThatReaches(float distanceMeters, int minIndex, out int powerIndex)
     {
@@ -705,7 +656,9 @@ public sealed class PassPlanner
     /// at that pace. AUD-P5 fix 4.2 proposed lowering the pace to 7.0 m/s, which would have grown these
     /// ranges (the full-power crisp range from ~22.6 m to ~28.3 m); that change was reversed on
     /// measurement (see <see cref="CrispArrivalSpeed"/>), so the ranges are the 9.0 m/s ones and reach is
-    /// unchanged. The overhit AUD-P5 measured is handled by the AUD-P7 stop cap instead.
+    /// unchanged. The overhit AUD-P5 measured is priced as the AUD-P7 boundary-exit risk in
+    /// <see cref="AI.PassSuccessModel.Estimate"/> (see <see cref="BoundaryExitRisk01"/>), not by capping
+    /// the power here.
     /// </summary>
     public float CrispRangeFor(float power01)
     {
@@ -884,12 +837,13 @@ public sealed class PassPlanner
     /// travelled at each 60 Hz sample. One-time, isolated from the live simulation.
     ///
     /// AUD-P7 extends the same roll past the eight-second flight table to find the ball's <b>final resting
-    /// distance</b>: the overrun check asks where the ball would come to rest, and the eight-second table
-    /// cannot answer it (the slowest balls are still creeping at 8 s). The roll continues until the solver
-    /// stops the ball or it reaches <see cref="MaxStopCalibrationDistance"/>, short of the goal net. The
-    /// distance/time table itself keeps its original 45 m cap so the planning path is unchanged, and a row
-    /// still rolling at the stop cap is flagged as saturated (reported as
-    /// <see cref="FarStopDistanceMeters"/>), so that cap cannot hide a real overrun.
+    /// distance</b>: the boundary-exit risk asks where the ball would come to rest, and the eight-second
+    /// table cannot answer it (the slowest balls are still creeping at 8 s). The roll continues until the
+    /// solver stops the ball or it reaches <see cref="MaxStopCalibrationDistance"/>, short of the goal net.
+    /// The distance/time table itself keeps its original 45 m cap so the planning path is unchanged, and a
+    /// row still rolling at the stop cap is flagged as saturated (reported as
+    /// <see cref="FarStopDistanceMeters"/> by <see cref="PredictStopDistance"/>), so that cap cannot hide a
+    /// real overrun.
     /// </summary>
     private static Calibration Calibrate()
     {

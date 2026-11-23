@@ -1,0 +1,10 @@
+﻿=== Phase 6 & 9 Multi-Seed Tactical Differentiation Batch (Possession vs Direct Counter) ===
+Simulation version: ai57-rs1
+AI configuration  : commit(bonus 0.10, job 0.45s, react 0.18s) switch(abs 0.02, rel 0.04) cadence(p4 c6 o10 l6) reserved(s6 b12 t20 r60) sched(off) caps(off 12, carrier 20, passTargets 8, runs 4) scan(on turn 100deg rate 600deg/s hold 0.20s range 18m) calls(on delay 18t) reception(on) cognitive(on) archetypes(on) combinations(on) search(on) switchrec(on) traps(on) routines(on) cover(on) restdef(on) percept(on) orient(on) commit(on) runs(on) sweep(on)
+Seed 5001: FT clock 240s | Score 0-1 | Passes 70 vs 71 (completed 51 vs 55) | Shots 0 vs 4 | Width 47.5m vs 43.2m (wider; all-tick 45.4 vs 40.6) | Possession 51.2% | Played=yes
+Seed 5002: FT clock 240s | Score 1-0 | Passes 72 vs 56 (completed 62 vs 40) | Shots 6 vs 4 | Width 48.6m vs 44.3m (wider; all-tick 44.6 vs 40.6) | Possession 49.3% | Played=yes
+Seed 5003: FT clock 240s | Score 0-1 | Passes 59 vs 65 (completed 44 vs 50) | Shots 2 vs 1 | Width 47.9m vs 44.0m (wider; all-tick 44.5 vs 41.6) | Possession 49.3% | Played=yes
+Seed 5004: FT clock 240s | Score 1-2 | Passes 61 vs 76 (completed 47 vs 61) | Shots 3 vs 4 | Width 47.6m vs 43.4m (wider; all-tick 43.6 vs 41.7) | Possession 47.6% | Played=yes
+Seed 5005: FT clock 240s | Score 1-3 | Passes 68 vs 56 (completed 48 vs 43) | Shots 3 vs 10 | Width 48.1m vs 43.0m (wider; all-tick 44.4 vs 41.2) | Possession 50.6% | Played=yes
+Width separation : mean 4.35 m (with the ball), wider on 5/5 seeds (gate: at least 4/5 and mean > 0.5 m)
+GATE: PASS

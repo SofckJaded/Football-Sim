@@ -596,7 +596,7 @@ public sealed class Aib2CandidateSpaceTests
     /// (0.4, 8), receiver at (9, 4), offside line 20 m, so the far probe is clamped to (19, 4): a 19.03 m
     /// ball, the distance band where the crisp floor actually bites.
     /// <code>
-    ///   MinCrispPower01(19.03) = 0.90   (lowest grid power whose 9.0 m/s crisp range, 18.03 / 19.81 m,
+    ///   MinCrispPower01(19.03) = 0.90   (lowest grid power whose 9.0 m/s crisp range, 18.53 / 19.81 m,
     ///                                    still reaches it) -> the candidate's command power is 0.90
     ///   table flight at 0.90 for 19.03 m = 1.400 s
     ///   a slow timed ball to the same point (wanted 3.0 s, no floor) is planned at power 0.35 with a
