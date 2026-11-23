@@ -62,6 +62,16 @@ public sealed class CarrierDecisionGateTests
     /// Gate clause 3: <b>an unpressured team progresses rather than circulating indefinitely</b>. The
     /// build-up fixture starts with the ball deep in the home side's own half and no pressure on the
     /// carrier; over ten seconds the ball must move up the pitch and the home side must keep it.
+    ///
+    /// AIB-12b re-baseline (2026-11-23, audit finding 5): the carrier now sprints into open space instead of
+    /// dropping to a jog the moment a chaser comes within five metres (the audit's own "8.4 m/s presser
+    /// against a 6.3 m/s carrier"). In this fixture that is the difference between a slow circulation that
+    /// keeps the ball for the whole ten seconds and one sustained 36 m carry that ends in an execution tackle
+    /// (measured: home possession 554/600 → 260/600 ticks, ball furthest 25.6 m from its start). The clause
+    /// is about progressing rather than circulating, so the progression bar is <b>raised</b> (+10 m → +20 m)
+    /// and the possession guard is lowered to 40 % with a new positive assertion that the home side still held
+    /// the ball for a sustained spell (&gt; 200 of 600 live ticks). This is not a claim that possession does
+    /// not matter: the reference 11v11 match's home possession rose 48.7 % → 52.4 % under the same change.
     /// </summary>
     [Fact]
     public void AnUnpressuredTeam_ProgressesUpThePitch()
@@ -83,11 +93,14 @@ public sealed class CarrierDecisionGateTests
         homeTicks = run.Analytics.HomePossessionTicks;
         liveTicks = run.Analytics.HomePossessionTicks + run.Analytics.AwayPossessionTicks;
 
-        Assert.True(furthest > startX + 10f,
-            $"the ball never advanced more than 10 m from its start ({startX:F1} -> {furthest:F1})");
+        Assert.True(furthest > startX + 20f,
+            $"the ball never advanced more than 20 m from its start ({startX:F1} -> {furthest:F1}); " +
+            "the AIB-12b drive must take it into the away half");
         Assert.True(finalX > startX + 5f,
             $"after ten seconds the ball was back at {finalX:F1} m from a start of {startX:F1} m");
-        Assert.True(liveTicks > 0 && homeTicks > liveTicks * 0.6f,
+        Assert.True(homeTicks > 200,
+            $"the home side must still hold the ball for a sustained spell; it held it for {homeTicks}/{liveTicks}");
+        Assert.True(liveTicks > 0 && homeTicks > liveTicks * 0.4f,
             $"the home side held the ball for {homeTicks}/{liveTicks} live ticks");
         Assert.False(run.Contacts.Any(c => c.Intent is KickIntentType.Shot && c.Team != TeamId.Home), "no own shot");
     }

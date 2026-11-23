@@ -142,6 +142,13 @@ public sealed class PassSuccessModel
     /// interceptions on a thirty-minute segment (eight within two metres of the passer to one) but also
     /// flagged stationary defenders 1.5 m off the lane, and the A/B did not improve completion, so the
     /// number stays and A6's press policy owns it.
+    ///
+    /// <para>AIB-08 (audit 2026-11-23): this is no longer the radius of the <i>moving-run</i> intercept —
+    /// a body that is already moving into the ball plays it at the real receiving/dribbling reach
+    /// (<see cref="LaneStepInReachMeters"/> / the capability's reach radius), and the sampled run uses
+    /// that. This margin survives as the true-contact distance for the segment-band edge, the
+    /// already-there fast path and the airborne corridor, where a smaller, strictly geometric "is he on
+    /// the line" question is the right one.</para>
     /// </summary>
     public const float LaneContactReachMeters = 0.9f;
 
@@ -161,8 +168,54 @@ public sealed class PassSuccessModel
     /// receive reach. The reach
     /// model already owns acceleration, turn cost, current velocity and contact reach (its own doc: "one
     /// reach model"), so the second estimate is gone rather than re-tuned.
+    ///
+    /// <para>AIB-08 (audit 2026-11-23): this is the reach that decides whether a <i>moving</i> defender's
+    /// sampled run plays the ball, not only whether he can step in. The sampled run used
+    /// <see cref="LaneContactReachMeters"/> (0.90 m) while execution lets a receiving/dribbling body play a
+    /// ball at <c>ReachRadius × 1.65 ≈ 1.24 m</c>, so a defender crossing the corridor 0.95–1.22 m from the
+    /// ball was invisible to the test that is supposed to see him.</para>
     /// </summary>
     public const float LaneStepInReachMeters = 1.22f;
+
+    /// <summary>
+    /// AIB-08 (audit 2026-11-23, finding 3): the largest share of a remembered defender's
+    /// <c>PositionUncertaintyMeters</c> that widens the <i>moving-run</i> intercept reach. The step-in test
+    /// has always charged the uncertainty against the arrival (AUD-06), but the sampled run did not, so a
+    /// stale sighting of a defender crossing the corridor was treated as exact while the same defender's
+    /// step-in was widened. The doubt is capped here rather than added raw: a badly remembered picture
+    /// must not silently widen the lane into rejecting every pass, and 0.25 m is roughly one stride of
+    /// positional doubt — a fifth of the 1.24 m contact reach, and well inside the gap between the old
+    /// 0.90 m margin and the real reach. Deterministic, allocation-free constant.
+    /// </summary>
+    public const float LaneReachUncertaintyCapMeters = 0.25f;
+
+    /// <summary>
+    /// AIB-08: speed, in m/s, at which a defender counts as <b>already closing into the corridor</b>. Above
+    /// it the step-in does not charge the full <see cref="OpponentReactionSeconds"/>: a defender who is
+    /// already moving into the lane has done the noticing the reaction models, and charging it again is the
+    /// same duplicate penalty the standing brief forbids. 1.0 m/s is the audit's own threshold — below it
+    /// the movement into the lane is drift, not a decision, and the full reaction stands.
+    /// </summary>
+    public const float ClosingIntoReactionSpeedMetersPerSecond = 1.0f;
+
+    /// <summary>
+    /// AIB-08: share of <see cref="OpponentReactionSeconds"/> still charged when the defender is already
+    /// closing into the corridor (0.40 × 0.25 s = 0.10 s). The remainder is the part of the reaction that is
+    /// genuinely still to come — noticing the ball has been struck — while the time to start moving is
+    /// already in the reach model's own acceleration ramp. 0.40 is a third of the full delay: enough to keep
+    /// charging a defender who happens to be drifting lane-ward, not enough to excuse one already stepping in.
+    /// </summary>
+    public const float ClosingIntoReactionScale = 0.40f;
+
+    /// <summary>
+    /// AIB-08: number of extra lane points the step-in test tries, beyond the perpendicular foot projection,
+    /// when the defender is running down the lane. The audit asks for "2–3 lookahead points"; two is the
+    /// bound that catches the diagonal runner (the foot is the earliest, hardest point for him) without
+    /// turning the hot lane test into a per-opponent search. Each point is a bounded
+    /// <see cref="TimeToReachModel"/> query, guarded first by the same sprint/time floor the foot point uses,
+    /// and the whole loop is capped at three reach queries per defender.
+    /// </summary>
+    public const int LaneLookaheadSamples = 2;
 
     /// <summary>
     /// Largest gap the ball may travel between two lane samples, in metres. The lane test asks "does the
@@ -421,13 +474,22 @@ public sealed class PassSuccessModel
         float receiverMargin = flight - receiverArrival;
 
         // 2. Can an opponent beat the ball to the same point? The earliest one decides.
+        //
+        // AIB-10 (audit 2026-11-23, finding 4): the contest is measured against the moment the ball can
+        // actually be played — the later of the ball's own flight and the receiver's real arrival — not
+        // against the flight alone. Pre-fix `defenderMargin = effective - flight`, so a promised/timed ball
+        // whose receiver arrives after the ball (a driven or floored timed pass) let a defender who arrives
+        // between the two score a full defender term: the ball is there, but nobody can play it and the
+        // defender simply waits. A defender who arrives after both is still untouched (margin positive).
+        float contestSeconds = MathF.Max(flight, receiverArrival);
         float defenderMargin = float.PositiveInfinity;
         float defenderArrival = float.PositiveInfinity;
         float defenderUncertainty = 0f;
-        float horizon = Math.Clamp(flight + DefenderHorizonSlackSeconds, 1f, 3.5f);
+        float horizon = Math.Clamp(contestSeconds + DefenderHorizonSlackSeconds, 1f, 3.5f);
         // AIB-02b: the arrival window a defender has to overlap to be crowding the reception, not just
-        // losing the race for it: one arrival scale after the ball.
-        float congestionWindow = flight + DefenderMarginScaleSeconds;
+        // losing the race for it: one arrival scale after the ball (AIB-10: and after the receiver's
+        // arrival, the same "when can the ball be played" moment the defender term uses).
+        float congestionWindow = contestSeconds + DefenderMarginScaleSeconds;
         int contestingDefenders = 0;
 
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
@@ -446,7 +508,7 @@ public sealed class PassSuccessModel
             if (effective < defenderArrival)
             {
                 defenderArrival = effective;
-                defenderMargin = effective - flight;
+                defenderMargin = effective - contestSeconds;
                 defenderUncertainty = uncertainty;
             }
 
@@ -456,7 +518,7 @@ public sealed class PassSuccessModel
         if (!float.IsFinite(defenderArrival))
         {
             defenderArrival = horizon + OpponentReactionSeconds;
-            defenderMargin = defenderArrival - flight;
+            defenderMargin = defenderArrival - contestSeconds;
         }
 
         // 3. The three sides of the estimate, each clamped to a probability. The receiver side was already
@@ -589,6 +651,12 @@ public sealed class PassSuccessModel
     /// bounded skip/roll after the landing — and a delivery that overshoots is already priced by that landing
     /// band and by the receiver's arrival term. Charging a ground-roll exit model to a ball that is never on
     /// the ground past its landing would double-count a risk the raised estimate does not have.
+    ///
+    /// <b>AIB-10 (audit 2026-11-23, finding 4): the defender contest is measured against
+    /// <c>max(flight, receiverArrival)</c></b> — the moment the landed ball can actually be played — not
+    /// against the ball's flight alone, consistently with <see cref="Estimate"/>. A defender who can reach
+    /// the landing after the ball but before the receiver can no longer score a full defender term, and the
+    /// congestion window is counted from the same instant so a late contestor is charged once, not excused.
     /// </summary>
     public LoftedPassTerms EstimateRaised(
         in FootballerObservation obs,
@@ -629,14 +697,16 @@ public sealed class PassSuccessModel
         Vector2 landing = selfXZ + aim * range;
 
         float receiverTerm;
+        float receiverArrival;
         if (profile == RaisedPassProfile.Driven)
         {
             // Solved from the promised arrival: what is left to price is the runner's own confidence and
             // how well the ball's flight matched the moment he said he would be there.
+            receiverArrival = Math.Clamp(promise.ArrivalSeconds, 0f, 6f);
             float tolerance = Math.Clamp(
                 MathF.Abs(promise.MeetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
                 MinPromisedArrivalToleranceSeconds, MaxPromisedArrivalToleranceSeconds);
-            float mistiming = MathF.Max(0f, MathF.Abs(flight - Math.Clamp(promise.ArrivalSeconds, 0f, 6f)) - tolerance);
+            float mistiming = MathF.Max(0f, MathF.Abs(flight - receiverArrival) - tolerance);
             float timingTerm = Math.Clamp(1f - mistiming / ReceiverMarginScaleSeconds, 0f, 1f);
             receiverTerm = Math.Clamp(promise.Confidence01, 0f, 1f) * timingTerm;
         }
@@ -644,19 +714,25 @@ public sealed class PassSuccessModel
         {
             ReachEstimate receiverReach = TimeToReachModel.ToPoint(
                 ReachKinematics.FromEntity(receiver), landing, MathF.Max(flight, 1f));
-            float receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
+            receiverArrival = receiverReach.Reachable ? receiverReach.Seconds : flight + 1f;
             receiverTerm = Math.Clamp(0.5f + (flight - receiverArrival) / ReceiverMarginScaleSeconds, 0f, 1f);
         }
 
+        // AIB-10 (audit 2026-11-23, finding 4): the landing contest is measured against the moment the ball
+        // can actually be played — the later of the ball's flight and the receiver's arrival — exactly as the
+        // ground estimate now measures it. Pre-fix the term used `flight` alone, so a landed ball nobody can
+        // reach yet (the receiver is still running to it) read as an uncontested landing, and a defender who
+        // arrives between the two scored a full defender term.
+        float contestSeconds = MathF.Max(flight, receiverArrival);
         float defenderTerm = 1f;
         float defenderUncertaintySeconds = 0f;
-        float horizon = MathF.Max(flight + DefenderHorizonSlackSeconds, 1f);
+        float horizon = MathF.Max(contestSeconds + DefenderHorizonSlackSeconds, 1f);
         float defenderScale = profile == RaisedPassProfile.Driven
             ? DefenderMarginScaleSeconds
             : DefenderMarginScaleSeconds * AirborneContestScale;
         // AIB-02b: the same crowd window the arrival scale uses — a landing scale for a lofted ball, the
-        // ground scale for a driven one.
-        float congestionWindow = flight + defenderScale;
+        // ground scale for a driven one (AIB-10: counted from the same "when can it be played" instant).
+        float congestionWindow = contestSeconds + defenderScale;
         int contestingDefenders = 0;
         foreach (PerceivedEntity entity in obs.VisiblePlayers)
         {
@@ -673,7 +749,7 @@ public sealed class PassSuccessModel
                 entity.PositionUncertaintyMeters * UncertaintyArrivalSecondsPerMeter, 0f, MaxUncertaintySeconds);
             float effective = arrival - uncertainty;
 
-            float term = Math.Clamp(0.5f + (effective - flight) / defenderScale, 0f, 1f);
+            float term = Math.Clamp(0.5f + (effective - contestSeconds) / defenderScale, 0f, 1f);
             if (term < defenderTerm)
             {
                 defenderTerm = term;
@@ -939,12 +1015,20 @@ public sealed class PassSuccessModel
             // 0.5 × 6.8 × 0.75² = 1.91 m of acceleration plus the same reach.
             ReachKinematics opponentKinematics = ReachKinematics.FromEntity(opponent);
 
-            // Cheap reachability bound before the dense sampling and before the reach query: nobody covers
+            // AIB-08 (audit 2026-11-23, finding 3): both lane tests use this reach. It is the reach a body
+            // actually plays the ball with — the receiving/dribbling contact reach, floored at the
+            // step-in's stated 1.22 m — plus the bounded positional doubt of the sighting. Pre-fix the
+            // moving-run sample used the bare 0.90 m true-contact margin, so a defender passing 0.95–1.22 m
+            // from the ball's line escaped the test that exists to catch him.
+            float interceptReach = MathF.Max(LaneStepInReachMeters, opponentKinematics.ReachRadius);
+            float sightDoubt = Math.Clamp(
+                opponent.PositionUncertaintyMeters, 0f, LaneReachUncertaintyCapMeters);
+
+            // Cheap reachability bound before the dense sampling and before the reach queries: nobody covers
             // more ground than a full sprint (plus whatever closing speed he already carries) plus his own
             // contact reach, so a defender beyond that cannot be on the ball in time. The bound is
             // deliberately generous — it never skips a defender either test below could have found.
-            float interceptReach = MathF.Max(LaneStepInReachMeters, opponentKinematics.ReachRadius);
-            float reachable = interceptReach + OpponentSprintSpeed * flight;
+            float reachable = interceptReach + sightDoubt + OpponentSprintSpeed * flight;
             if (perpendicular > reachable) continue;
 
             // 1. Their current run, sampled against the ball's own flight: if the two ever come
@@ -956,29 +1040,61 @@ public sealed class PassSuccessModel
             for (int sample = 0; sample <= samples; sample++)
             {
                 float t = flight * sample / samples;
-                if (Vector2.Distance(opponentXZ + runVelocity * t, ballPath[sample]) <= LaneContactReachMeters)
+                if (Vector2.Distance(opponentXZ + runVelocity * t, ballPath[sample]) <= interceptReach + sightDoubt)
                     return true;
             }
 
             // 2. They can also see the pass and step into the lane. Compare what the step actually needs with
             //    how long the ball takes to the nearest point of the *segment*, so a defender who could only
             //    reach the line behind the passer or beyond the receiver is not counted.
-            float projection = Math.Clamp(projectionRaw, 0f, length);
-            Vector2 pointOnLane = fromXZ + direction * projection;
-            float distanceToLanePoint = Vector2.Distance(opponentXZ, pointOnLane);
-            if (distanceToLanePoint <= LaneContactReachMeters) return true;
+            //
+            //    AIB-08: the foot point is the earliest (hardest) point of the lane, which is the wrong
+            //    question for a defender already running along the corridor — his shortest intercept is
+            //    metres further down the lane, where the ball arrives later. Up to
+            //    LaneLookaheadSamples lookahead points along the segment, in the direction of his own run,
+            //    are tested too; each is guarded by the same cheap sprint/time floor before its reach query,
+            //    so the extra cost is bounded at three queries per relevant defender.
+            float alongRun = Vector2.Dot(runVelocity, direction);
+            float closingInto = -MathF.Sign(signedPerpendicular) *
+                                Vector2.Dot(runVelocity, normal);
+            float reaction = closingInto >= ClosingIntoReactionSpeedMetersPerSecond
+                ? OpponentReactionSeconds * ClosingIntoReactionScale
+                : OpponentReactionSeconds;
 
-            float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
-            float available = timeToPoint - OpponentReactionSeconds;
-            if (available <= 0f) continue;
+            for (int look = 0; look <= LaneLookaheadSamples; look++)
+            {
+                float projectionCandidate;
+                if (look == 0)
+                {
+                    projectionCandidate = projectionRaw;
+                }
+                else
+                {
+                    // Lookahead only makes sense when the run carries him down the lane; a defender running
+                    // back toward the passer is already covered by the foot point.
+                    if (alongRun <= 0f) break;
+                    float lookaheadSeconds = flight * look / (LaneLookaheadSamples + 1f);
+                    projectionCandidate = projectionRaw + alongRun * lookaheadSeconds;
+                }
 
-            // Another cheap floor: even at a dead sprint from his current momentum nobody covers the gap
-            // faster than (current speed + sprint cap) × available, so skip the reach query when he cannot.
-            float mustRun = distanceToLanePoint - interceptReach;
-            if (mustRun > (speed + OpponentSprintSpeed) * available) continue;
+                float projection = Math.Clamp(projectionCandidate, 0f, length);
+                Vector2 pointOnLane = fromXZ + direction * projection;
+                float distanceToLanePoint = Vector2.Distance(opponentXZ, pointOnLane);
+                if (look == 0 && distanceToLanePoint <= LaneContactReachMeters) return true;
 
-            ReachEstimate stepIn = TimeToReachModel.ToPoint(opponentKinematics, pointOnLane, available);
-            if (stepIn.Reachable && stepIn.Seconds <= available) return true;
+                float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
+                float available = timeToPoint - reaction;
+                if (available <= 0f) continue;
+
+                // Another cheap floor: even at a dead sprint from his current momentum nobody covers the
+                // gap faster than (current speed + sprint cap) × available, so skip the reach query when he
+                // cannot.
+                float mustRun = distanceToLanePoint - interceptReach;
+                if (mustRun > (speed + OpponentSprintSpeed) * available) continue;
+
+                ReachEstimate stepIn = TimeToReachModel.ToPoint(opponentKinematics, pointOnLane, available);
+                if (stepIn.Reachable && stepIn.Seconds <= available) return true;
+            }
         }
 
         return false;

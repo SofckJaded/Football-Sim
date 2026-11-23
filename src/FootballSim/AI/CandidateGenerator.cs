@@ -156,6 +156,46 @@ public sealed class CandidateGenerator : IAiStateResettable
     internal const float ClosingSpeedThresholdMetersPerSecond = 0.75f;
 
     // ---------------------------------------------------------------------------------------------
+    // AIB-12b (audit 2026-11-23, finding 5) — the carrier's sprint gate.
+    //
+    // `bool sprint = bestSpace > 0.70f && nearestOppDist > 5.0f` dropped the carrier to a jog the instant
+    // any opponent came within 5 m, while the presser closing him sprints unconditionally: the audit
+    // measured an 8.4 m/s presser against a 6.3 m/s carrier and the ball being caught. The gate below
+    // instead asks whether the *path ahead* is open: a chaser behind or beside the carrier does not stop
+    // the sprint, a body standing in the corridor the carrier is about to run through does, and a body
+    // already inside tackle reach plus a step is a contact, not a sprint. This changes locomotion only
+    // (sprint is 1.0 × MaxSprintSpeed and a longer dribble lead; see FootballerLocomotion) — the shield,
+    // tackle and contact rules are untouched.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Free-space reading the carry's probe needs before the carrier sprints into it (AIB-12b). The audit's
+    /// own threshold; below it the direction is a jostle, not open grass.
+    /// </summary>
+    public const float SprintGateSpaceThreshold01 = 0.55f;
+
+    /// <summary>
+    /// Nearest-opponent distance, in metres, below which the carrier does not sprint (AIB-12b): tackle
+    /// reach plus a step, so a body this close is a contact the sprint has to stop for anyway.
+    /// </summary>
+    public const float SprintGateContactFloorMeters = 2.40f;
+
+    /// <summary>How far ahead of the carrier the sprint path is checked for a blocking body, in metres (AIB-12b).</summary>
+    public const float SprintPathHorizonMeters = 6.0f;
+
+    /// <summary>
+    /// Half-width, in metres, of the corridor a sprinting carrier would run through (AIB-12b). Narrower than
+    /// a passing lane on purpose: a body 2.2 m off the chosen direction is not in the way of a dribble.
+    /// </summary>
+    public const float SprintPathHalfWidthMeters = 2.2f;
+
+    /// <summary>
+    /// Speed, in m/s, at which an opponent is already running out of the sprint path, so he does not block
+    /// it (AIB-12b): his believed velocity has at least this component opposite the carry direction.
+    /// </summary>
+    public const float SprintPathEscapeSpeedMetersPerSecond = 1.0f;
+
+    // ---------------------------------------------------------------------------------------------
     // AIB audit 2026-11-22 — pass cleanliness: multi-defender corridor congestion, no reward for a
     // crowded lane, bounded leads, the delivery floors and the driven ball's origin.
     // ---------------------------------------------------------------------------------------------
@@ -178,6 +218,27 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     /// <summary>AIB-02a: most the corridor congestion may subtract, so the metric stays monotone and bounded.</summary>
     internal const float LaneCongestionMax01 = 0.60f;
+
+    /// <summary>
+    /// AIB-08 (audit 2026-11-23, finding 3): look-ahead used by <see cref="EvaluateLaneClearance"/>, in
+    /// seconds. The corridor metric was 100 % static — a defender closing into the pass lane before the ball
+    /// was scored exactly like the same defender standing still — which is the audit's "looked clear at kick
+    /// time". Each opponent is therefore scored at the worse of his current position and the position his own
+    /// believed velocity reaches in this horizon. 0.35 s is the audit's figure: about a third of a typical
+    /// crisp flight, so it is the window in which a defender can take the one or two strides that change the
+    /// lane without inventing a second, long-range intercept model (the pass model's own
+    /// <c>IsLaneBlocked</c> owns the hard rejection).
+    /// </summary>
+    public const float LaneProjectionHorizonSeconds = 0.35f;
+
+    /// <summary>
+    /// AIB-08: speed, in m/s, below which an opponent's projected position is not evaluated separately in
+    /// <see cref="EvaluateLaneClearance"/>: at this pace 0.35 s moves him under 18 cm, which cannot change the
+    /// corridor ratio and only duplicates the current-position sample. The threshold keeps a stationary
+    /// defender's clearance value bit-for-bit what it was before the projection.
+    /// </summary>
+    public const float LaneProjectionMinSpeedMetersPerSecond = 0.5f;
+
 
     /// <summary>
     /// AIB-02b: preference penalty a fully crowded lane (<c>laneClearance01 = 0</c>) costs a player of
@@ -469,6 +530,13 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     public const string RejectionSpaceRaceLost = "space-race-lost";
 
+    /// <summary>
+    /// AIB-10 (audit 2026-11-23, finding 4): reason text for a space probe whose ball has already rolled out
+    /// of the promised region by the time the receiver can get there — the audit's "ball 0.80 s vs receiver
+    /// 1.72 s, stopped 29.2 m past" impossible pass. The promise's arrival is the ball's flight by design, so
+    /// this is the one place the receiver's real arrival is checked against where the ball actually is.
+    /// </summary>
+    public const string RejectionSpaceRolledPast = "space-rolled-past";
     // ---------------------------------------------------------------------------------------------
     // A8.1 — bounded combinations. The numbers are the hand-set calibration of the trigger, the two
     // preference bonuses and the return run's utility; the contract's own lifecycle (delay, arrival,
@@ -689,6 +757,25 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// tolerance scales with it (<c>radius x 0.5 / PromisedRegionCrossSpeed</c> = 0.31 s here).
     /// </summary>
     public const float SpacePromiseRadiusMeters = 4f;
+
+    /// <summary>
+    /// AIB-10 (audit 2026-11-23, finding 4): how far past the aim point the rolling ball may be when the
+    /// receiver actually gets there before the promise is a fiction, in metres. The space promise's
+    /// <c>ArrivalSeconds</c> is deliberately the ball's own flight (AUD-P3: the timing term is exactly 1 and
+    /// the lead is not double-charged), so the pass model cannot see that a ball struck well before the
+    /// receiver's arrival has already rolled out of the region. This is the measured version of that check:
+    /// the ball must still be within the promise region <b>plus one receiving reach</b> at the receiver's own
+    /// arrival, or the probe is refused. The reach is the pass model's own intercept-reach floor
+    /// (<see cref="PassSuccessModel.LaneStepInReachMeters"/>, 1.22 m; execution plays the ball at
+    /// ~1.24 m), because the promise names the region the receiver will be in, not the exact point: a ball
+    /// just past the region's edge is still a ball the man in it can touch. Measured: a legitimate 21.8 m
+    /// space ball sits 4.1 m past its aim point when the receiver arrives (inside the 5.22 m bound), while
+    /// the audit's impossible ball is ~16 m past. The audit's blunt alternative
+    /// (<c>receiverArrival &gt; flight + 0.35 s</c>) was not used: the roll-out is the quantity the promise
+    /// is actually about, and 0.35 s is a 4–6 m lag at a crisp ball's arrival speed.
+    /// </summary>
+    public const float SpacePromiseCatchRadiusMeters =
+        SpacePromiseRadiusMeters + PassSuccessModel.LaneStepInReachMeters;
 
     /// <summary>
     /// AUD-P3: base confidence of a space promise. The confidence is derived from the measured race
@@ -1060,9 +1147,20 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// shot now has to beat a team-mate in a better position, which is the A4.4 condition for removing it.
     ///
     /// AIB-05: the finish is chosen from three goal targets (near post, centre, far post) and the keeper is
-    /// not an outfield lane blocker. The old code struck at one fixed corner and charged the keeper's body
-    /// against the lane on top of the save chance the conversion curve already prices, so an open central
-    /// goal was worth less than a covered corner and a clear in-box chance lost to a 96 % backward recycle.
+    /// not an outfield lane blocker — the old code charged the keeper's body against the lane on top of the
+    /// chance the conversion curve already prices, so an open central goal was worth less than a covered
+    /// corner and a clear in-box chance lost to a 96 % backward recycle.
+    ///
+    /// AIB-07a (audit 2026-11-23, finding 1): keeping the keeper out of the <i>outfield lane</i> left the
+    /// three targets scoring exactly the same whenever that lane was equally clear, so strict <c>&gt;</c>
+    /// always kept index 0 = <c>-cornerZ</c> and the shot went straight at the side the keeper was covering
+    /// (audit images 1–2). Each target now also pays one keeper-coverage term — the share of the target the
+    /// keeper's believed lateral reach covers over the ball's flight (<see
+    /// cref="ActionValueScale.KeeperCoveragePenalty"/>). It is a single term, not a second save model, and it
+    /// is an expected-value reduction: it lands inside <c>bestShotValue</c>, i.e. the candidate's
+    /// <see cref="ValueTerms.Gain"/>, so the trace still satisfies <c>utility = gain + preference</c> exactly
+    /// (probability 1, loss 0). The keeper is read from perception only — believed position, its uncertainty
+    /// and the scouted sprint band; his velocity is deliberately not read as a dive intent.
     /// </summary>
     private void AddShotCandidate(in FootballerObservation obs, float distToGoal, Vector3 oppGoalCenter)
     {
@@ -1079,22 +1177,70 @@ public sealed class CandidateGenerator : IAiStateResettable
         // cannot know this geometry, so the value must.
         float goalMouthAngle = GoalMouthAngleDegrees(selfXZ, oppGoalCenter);
 
+        // AIB-07a: find the one perceived goalkeeper the finish is measured against. One index loop, nearest
+        // to the goal centre, lowest player id on an exact tie so the choice cannot depend on the perception
+        // list's order. This is perception data only: the believed position's Z, the sighting's uncertainty
+        // and the scouted sprint band. Nothing reads the live attributes or treats velocity as a dive.
+        bool keeperVisible = false;
+        int keeperId = int.MaxValue;
+        float keeperZ = 0f;
+        float keeperReach = 0f;
+        float nearestKeeperGoalDistance = float.PositiveInfinity;
+        Vector2 goalCentreXZ = new(oppGoalCenter.X, oppGoalCenter.Z);
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[index];
+            if (entity.Team == obs.SelfTeam) continue;
+            if (entity.Role != TacticalRole.Goalkeeper) continue;
+
+            Vector2 keeperXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
+            float goalDistance = Vector2.Distance(keeperXZ, goalCentreXZ);
+            if (keeperVisible && (goalDistance > nearestKeeperGoalDistance ||
+                                  (goalDistance == nearestKeeperGoalDistance && entity.PlayerId > keeperId)))
+            {
+                continue;
+            }
+
+            keeperVisible = true;
+            keeperId = entity.PlayerId;
+            nearestKeeperGoalDistance = goalDistance;
+            keeperZ = keeperXZ.Y;
+
+            // Flight of a placed shot to the goal line, the keeper's scouted sprint band converted to lateral
+            // dive distance over that flight (capped), plus the bounded doubt in where the sighting puts him.
+            float flightSeconds = distToGoal / ActionValueScale.KeeperShotTravelMetersPerSecond;
+            float lateralReach = MathF.Min(
+                entity.Capability.MaxSprintSpeed * ActionValueScale.KeeperLateralDiveShare * flightSeconds,
+                ActionValueScale.KeeperLateralDiveMaxMeters);
+            float uncertainty = MathF.Max(0f, entity.PositionUncertaintyMeters);
+            keeperReach = lateralReach + MathF.Min(uncertainty, ActionValueScale.KeeperUncertaintyCapMeters);
+        }
+
         // AIB-05: evaluate all three finishes and keep the clearest. The lane is measured on outfield
-        // players only: the keeper's save risk is already inside ShotConversion, so counting him again as a
-        // lane blocker is a duplicate penalty (rule: no duplicate penalties).
+        // players only: the keeper is the AIB-07a coverage term below, and the conversion curve's own save
+        // risk is not priced here, so counting him as an outfield lane blocker too would be a duplicate.
         float cornerZ = _pitch.HalfGoalWidth - ShotCornerInsetMeters;
+        // AIB-07a: the tie-break order prefers the far post on (near-)ties — the corner on the opposite side
+        // of the goal from the shooter. With index 0 first and a strict `>`, an exact tie (no keeper in the
+        // picture, or two equally covered corners) keeps the far post; a central carrier (selfZ == 0) keeps
+        // -cornerZ, the old deterministic default. That is also why a short-flight shot picks the far corner
+        // without a distance constant: over a few metres of flight the keeper cannot cover either corner, so
+        // the tie resolves to the far one.
+        float farPostZ = selfXZ.Y >= 0f ? -cornerZ : cornerZ;
         float bestShotValue = float.NegativeInfinity;
         Vector3 shotTarget = new(oppGoalCenter.X, 1.0f, 0f);
         for (int index = 0; index < 3; index++)
         {
-            float targetZ = index switch { 0 => -cornerZ, 1 => 0f, _ => cornerZ };
+            float targetZ = index switch { 0 => farPostZ, 1 => 0f, _ => -farPostZ };
             Vector3 target = new(oppGoalCenter.X, 1.0f, targetZ);
             float laneClearance = EvaluateLaneClearance(
                 selfXZ, new Vector2(target.X, target.Z), obs.VisiblePlayers, obs.SelfTeam,
                 excludeGoalkeeper: true);
             float value = ActionValueScale.ShotValue(distToGoal, laneClearance, goalMouthAngle);
-            // Strict `>` keeps the earlier option on a tie: near post, then centre, then far post — the set
-            // is deterministic and independent of iteration order over the perception list.
+            // AIB-07a: one keeper term, paid once and inside the gain — the expected-value reduction for the
+            // share of this target the keeper's reach covers.
+            if (keeperVisible)
+                value -= ActionValueScale.KeeperCoveragePenalty * KeeperCoverage01(targetZ, keeperZ, keeperReach);
             if (value > bestShotValue)
             {
                 bestShotValue = value;
@@ -1128,8 +1274,23 @@ public sealed class CandidateGenerator : IAiStateResettable
         {
             TargetXZ = shotTarget,
             Key = new CandidateKey(CandidateKind.Shot, TargetTag: "goal"),
+            // AIB-07a: the keeper-coverage reduction is inside the gain (it is an expected-value reduction),
+            // so the trace stays utility = gain + preference exactly.
             Terms = new ValueTerms(1f, bestShotValue, 0f, shotPreference)
         });
+    }
+
+    /// <summary>
+    /// AIB-07a: share of one goal target the keeper's believed reach covers, 0–1. A target inside the reach
+    /// is fully covered (1); outside it coverage falls linearly to 0 over
+    /// <see cref="ActionValueScale.KeeperCoverageFalloffMeters"/>. Deterministic, allocation-free, and used
+    /// only to order the three goal targets in <see cref="AddShotCandidate"/>.
+    /// </summary>
+    private static float KeeperCoverage01(float targetZ, float keeperZ, float keeperReach)
+    {
+        float gap = MathF.Abs(targetZ - keeperZ) - keeperReach;
+        if (gap <= 0f) return 1f;
+        return Math.Clamp(1f - gap / ActionValueScale.KeeperCoverageFalloffMeters, 0f, 1f);
     }
 
     /// <summary>
@@ -1470,6 +1631,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// into space entirely. What it no longer is: a full <see cref="ThroughLeadMeters"/> push on top of the
     /// velocity x flight lead, up to <see cref="RunPassMaxLeadMeters"/> (25 m), for a man who promised
     /// nothing.
+    ///
+    /// <b>AIB-11 (audit 2026-11-23, finding 6): every path is struck with the crisp-ball floor.</b> Pre-fix
+    /// all three variants passed <c>MinPower01: 0f</c>, so the <i>promised</i> variant — whose plan is the
+    /// timed-region planner — could only be as firm as the meeting time demanded: an advertised run 2 s away
+    /// produced a 0.25–0.35-power roller whose flight the lane test then hard-rejected, exactly the audit's
+    /// "still fires slow rollers and gets blocked" finding. The floor is <see cref="PassPlanner.MinCrispPower01"/>
+    /// measured to the ball's actual known target (the advertised region, the one-two return region) and, for
+    /// the uncommitted variant, to the furthest point the planner's own lead bound can legally aim at (his
+    /// current distance + <see cref="UncommittedThroughLeadMeters"/> + <see cref="PassPlanner.UncommittedLeadMaxMeters"/>),
+    /// because that variant has no planned target before the planner solves one. The price is stated honestly:
+    /// the firmer ball arrives <b>early</b>, and the pass model's promise timing term charges the mistiming
+    /// (AUD-P5's trade) — the ball is still a ball the runner can attack, which the roller was not. The floor
+    /// is never below the old 0 and never removes the lead hedge, the offside gate or the promise.
     /// </summary>
     private bool TryBuildRunPassOption(
         in FootballerObservation obs,
@@ -1478,6 +1652,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         out PassOption option)
     {
         option = default;
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
 
         if (_communication is not null &&
             _communication.Runs.TryGetAdvertisement(obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advert) &&
@@ -1488,7 +1663,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
                 MaxLeadMeters: RunPassMaxLeadMeters,
-                MinPower01: 0f,
+                MinPower01: _passPlanner.MinCrispPower01(Vector2.Distance(ballXZ, advert.MeetXZ)),
                 PassType: KickIntentType.ThroughPass,
                 Tag: RunPassTag,
                 HumanCaller: false,
@@ -1517,7 +1692,8 @@ public sealed class CandidateGenerator : IAiStateResettable
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
                 MaxLeadMeters: RunPassMaxLeadMeters,
-                MinPower01: 0f,
+                MinPower01: _passPlanner.MinCrispPower01(
+                    Vector2.Distance(ballXZ, obs.Combination.ReturnXZ)),
                 PassType: KickIntentType.ThroughPass,
                 Tag: RunPassTag,
                 HumanCaller: false,
@@ -1533,6 +1709,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         if (!RunsIntoSpace(obs, mate, offsideLineProjX)) return false;
 
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
         // AIB-02c: a ball into space needs a man actually sprinting into it when nobody has promised the run.
         // RunsIntoSpace's floor (1.5 m/s) is a jog; a lead that assumes a jog keeps going for a whole flight
@@ -1543,7 +1720,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             LeadDirection: Vector2.Normalize(mateVelocityXZ),
             LeadMeters: UncommittedThroughLeadMeters,
             MaxLeadMeters: PassPlanner.UncommittedLeadMaxMeters,
-            MinPower01: 0f,
+            // AIB-11: this variant has no target before `PlanGroundPass` solves the meeting, so the floor is
+            // measured at the furthest legal meeting — the receiver's current distance plus the two stated
+            // lead bounds — rather than at his feet (which would under-floor a ball led four metres).
+            MinPower01: _passPlanner.MinCrispPower01(
+                Vector2.Distance(ballXZ, mateXZ) +
+                UncommittedThroughLeadMeters +
+                PassPlanner.UncommittedLeadMaxMeters),
             PassType: KickIntentType.ThroughPass,
             Tag: RunPassTag,
             HumanCaller: false,
@@ -1593,6 +1776,16 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <see cref="TryAddGroundPass"/> replans the ball from the promise itself, which returns the same plan
     /// (same fixed target, same crisp floor, same wanted flight), and prices it with
     /// <see cref="PassSuccessModel.Estimate"/> and the shared <c>PassPreference</c> on the aim point.
+    ///
+    /// <b>AIB-10 (audit 2026-11-23, finding 4): the promise is only allowed if the ball is still in it.</b>
+    /// Keeping <c>ArrivalSeconds</c> as the ball's flight blinds the pass model to a ball that has rolled far
+    /// past the aim point before the receiver can get there, so the builder measures the ball's own calibrated
+    /// roll-out at the receiver's real arrival and refuses the probe once it exceeds
+    /// <see cref="SpacePromiseCatchRadiusMeters"/> (the promise region plus one receiving reach). That is
+    /// the measured form of
+    /// the audit's "ball 0.80 s vs receiver 1.72 s, stopped 29.2 m past" finding; writing
+    /// <c>receiverReach.Seconds</c> into the promise was rejected because it re-introduces AUD-P3's lead
+    /// double-charge. The pace floor, offside clamp, crowd gate and race margin are all untouched.
     /// </summary>
     private bool TryBuildSpacePassOption(
         in FootballerObservation obs,
@@ -1712,6 +1905,23 @@ public sealed class CandidateGenerator : IAiStateResettable
             if (!probePlan.Feasible)
             {
                 Reject(mate.PlayerId, RejectionUnplannable);
+                continue;
+            }
+
+            // AIB-10 (audit 2026-11-23, finding 4): the promise is the ball's own flight, on purpose — the
+            // pass model's promise timing term is then exactly 1 and the lead is not double-charged (AUD-P3).
+            // The cost of that convention is that the model cannot see the audit's impossible ball: struck
+            // 0.80 s before the receiver can get there, it is 29.2 m past the promised grass by 1.72 s, yet
+            // every model term still reads 1. The physical question is asked here instead, on the planner's
+            // own calibrated roll: at the receiver's real arrival, how far past the aim point is the ball?
+            // If it is outside the promised region (<see cref="SpacePromiseCatchRadiusMeters"/>) the meeting
+            // is a fiction and the probe is refused rather than promised.
+            float ballDistanceAtReceiverArrival = _passPlanner.BallDistanceAtTime(
+                probePlan.Power01, receiverReach.Seconds);
+            float rolledPastMeters = ballDistanceAtReceiverArrival - probeDistanceMeters;
+            if (rolledPastMeters > SpacePromiseCatchRadiusMeters)
+            {
+                Reject(mate.PlayerId, RejectionSpaceRolledPast);
                 continue;
             }
 
@@ -3239,6 +3449,11 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>
     /// Chooses the carry direction: forward first, then the ring of directions around it, holding the
     /// direction already chosen unless another is clearly better (A2.4 pressure plus boundary safety).
+    ///
+    /// AIB-07b (audit 2026-11-23, finding 1) adds the advance prospect: the value of the better shot the
+    /// carry's own target would produce, paid in the gain only while that ground is open. AIB-12b (finding 5)
+    /// decides the sprint from the path ahead (see <see cref="IsCarryPathBlocked"/>) instead of from the
+    /// static nearest-opponent ring, so a chaser behind the carrier no longer forces a jog.
     /// </summary>
     /// <param name="nearestOppDist">Nearest believed opponent, in metres (the static pressure floor).</param>
     /// <param name="opponentArrivalSeconds">
@@ -3344,6 +3559,38 @@ public sealed class CandidateGenerator : IAiStateResettable
             _pitch.HalfWidth - MathF.Abs(ballXZ.Y));
         float linePressure = Math.Clamp(1f - lineMargin / 3.0f, 0f, 1f);
 
+        // AIB-07b (audit 2026-11-23, finding 1): the ground ahead is worth more than the ground underfoot.
+        // The term is the *change in shot value* the carry's own 4.5 m target would produce, paid once in the
+        // gain and only while that ground is actually open — nobody can arrive at the carrier inside the
+        // contact window, and nobody can reach the target inside CarryAdvancePathArrivalSeconds. Closed
+        // ground pays exactly zero: the contact risk below stays the only pressure deduction, so this is a
+        // prospect that does not exist under pressure, never a second discount of the same risk. It is not
+        // in ScoreCarryDirection on purpose — the direction fixtures and the sprint decision are about the
+        // physical space, and the advance is about what the space is worth.
+        float advanceProspect = 0f;
+        float distanceToGoalNow = Vector2.Distance(selfXZ, goalXZ);
+        if (distanceToGoalNow < ActionValueScale.ShotRangeMeters &&
+            bestSpace >= ActionValueScale.CarryAdvanceMinSpace01 &&
+            (opponentArrivalSeconds < 0f ||
+             opponentArrivalSeconds >= ActionValueScale.ContactRiskArrivalSeconds))
+        {
+            float targetArrival = _pressure.Read(carryTarget, out _).OpponentArrivalSeconds;
+            if (targetArrival < 0f || targetArrival >= ActionValueScale.CarryAdvancePathArrivalSeconds)
+            {
+                // The prospect is priced on a clean lane (1.0) and the pitch's real goal geometry: it asks
+                // "what would this ground be worth", not "what would this shot do", so it must not re-price
+                // the shot's lane or keeper a second time.
+                float shotValueGain = ActionValueScale.ShotValue(
+                        Vector2.Distance(carryTarget, goalXZ), 1f,
+                        GoalMouthAngleDegrees(carryTarget, oppGoalCenter))
+                    - ActionValueScale.ShotValue(
+                        distanceToGoalNow, 1f,
+                        GoalMouthAngleDegrees(selfXZ, oppGoalCenter));
+                advanceProspect = ActionValueScale.CarryAdvanceValue * Math.Clamp(
+                    shotValueGain / ActionValueScale.CarryAdvanceReferenceUnits, 0f, 1f);
+            }
+        }
+
         // A4.4: the carry's value lives in ActionValueScale with the unit documented. See the block
         // comment there for why this stays a heuristic curve rather than the probability-weighted shape a
         // pass uses — measured, not assumed.
@@ -3359,6 +3606,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         // was only 0.27). Only an actual closing run withdraws it: a stationary defender inside the contact
         // window is priced by the arrival-based contact risk and keeps the tempo bonus, because driving past a
         // player who is standing still is exactly what the bonus is for.
+        //
+        // AIB-12a (audit 2026-11-23, finding 5): the bonus fell 0.25 → 0.10 and the window 0.70 s → 0.35 s
+        // (ActionValueScale carries the corrected arithmetic — the audit's own 1.37 decomposition drops to
+        // ≈1.22, not to the 0.95–1.05 the audit quoted, and the remaining ordering is meant to be decided by
+        // AIB-07b's advance term and by the re-priced pass set, not by a nominal total).
         bool opponentClosing = IsOpponentClosingOnCarrier(obs, selfXZ, opponentArrivalSeconds);
         float carryBonus = _timeOnBall < ActionValueScale.CarryEarlySeconds && !opponentClosing
             ? ActionValueScale.CarryEarlyBonus
@@ -3366,6 +3618,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         float carryGain = ActionValueScale.CarryBaseValue
                           + ActionValueScale.CarrySpaceBonus * bestSpace
                           + carryBonus
+                          // AIB-07b: what the open ground ahead is worth, exactly zero when closed.
+                          + advanceProspect
                           - ActionValueScale.CarryLinePenalty * linePressure
                           // A9.6a: carrying into a closing defender costs the ball, so it costs value.
                           - contactRisk;
@@ -3382,7 +3636,15 @@ public sealed class CandidateGenerator : IAiStateResettable
             carryPreference += ActionValueScale.CallTurnCarryBonus;
 
         float utility = carryGain + carryPreference;
-        bool sprint = bestSpace > 0.70f && nearestOppDist > 5.0f;
+        // AIB-12b (audit 2026-11-23, finding 5): the old gate was `bestSpace > 0.70 && nearestOppDist > 5.0`,
+        // so a chaser 5 m behind forced a jog while he sprinted (audit: 8.4 m/s against 6.3 m/s, caught in
+        // images 6–7). Sprinting is now about the path ahead, not about how close the nearest body is on any
+        // side: the grass must still be open (0.55), no body may be inside tackle reach plus a step (2.40),
+        // and the 6 m × 2.2 m corridor the carrier would run through must be clear of anyone who is still
+        // there when he arrives.
+        bool sprint = bestSpace > SprintGateSpaceThreshold01 &&
+                      nearestOppDist > SprintGateContactFloorMeters &&
+                      !IsCarryPathBlocked(obs, selfXZ, bestDir);
 
         return new CarryChoice(
             bestDir, carryTarget, utility, bestSpace, sprint, new ValueTerms(1f, carryGain, 0f, carryPreference));
@@ -3426,6 +3688,41 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
 
         return fastestClose >= ClosingSpeedThresholdMetersPerSecond;
+    }
+
+    /// <summary>
+    /// AIB-12b: true when a believed opponent stands in the corridor a sprinting carrier would run through —
+    /// up to <see cref="SprintPathHorizonMeters"/> ahead of him and within
+    /// <see cref="SprintPathHalfWidthMeters"/> of the chosen direction. Deterministic index loop over the
+    /// perceived picture, no allocation.
+    ///
+    /// The exemptions are the point of the helper: an opponent behind or beside the path
+    /// (<c>dot(rel, dir) &lt;= 0</c>), one further than the horizon, one wider than the half-width, and one
+    /// already running out of the path at <see cref="SprintPathEscapeSpeedMetersPerSecond"/> do not stop the
+    /// sprint. That is what lets the carrier keep the ball moving at a chaser's own pace instead of dropping
+    /// to a jog the moment anyone comes within five metres.
+    /// </summary>
+    private static bool IsCarryPathBlocked(in FootballerObservation obs, Vector2 selfXZ, Vector2 direction)
+    {
+        Vector2 perpendicular = new(-direction.Y, direction.X);
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity opponent = obs.VisiblePlayers[index];
+            if (opponent.Team == obs.SelfTeam) continue;
+
+            Vector2 relative = new(opponent.EstimatedPosition.X - selfXZ.X,
+                opponent.EstimatedPosition.Z - selfXZ.Y);
+            float ahead = Vector2.Dot(relative, direction);
+            if (ahead <= 0f) continue;
+            if (relative.Length() > SprintPathHorizonMeters) continue;
+            if (MathF.Abs(Vector2.Dot(relative, perpendicular)) > SprintPathHalfWidthMeters) continue;
+
+            Vector2 velocityXZ = new(opponent.EstimatedVelocity.X, opponent.EstimatedVelocity.Z);
+            if (Vector2.Dot(velocityXZ, direction) <= -SprintPathEscapeSpeedMetersPerSecond) continue;
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>Action: carry the ball into the chosen space.</summary>
@@ -4564,12 +4861,21 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// Turns one job anchor into one or two reachable movement candidates: the anchor itself and a
-    /// variant stepped out of the nearest opponent's cover shadow (audit F04). Utility combines the
-    /// job value with passing-lane visibility, opponent separation and travel cost.
+    /// Turns one job anchor into this duty's movement candidates: the anchor itself and, for the duties
+    /// that support an attack, a variant stepped out of the nearest opponent's cover shadow (audit F04).
+    /// Utility combines the job value with the duty's own position terms and travel cost.
+    ///
+    /// AIB-09: the two families of duty are classified once (<see cref="IsDefensiveJob"/>) and are scored
+    /// on different terms. An attacking duty is asked to be findable and in space; a defensive duty is
+    /// asked to sit goal-side of the danger and block the ball/runner lane. Running the attacking path
+    /// for a defender was the defect the audit reported: <see cref="StepOutOfCoverShadow"/> pushed a
+    /// <c>COVER_GAP</c> protector (and a marker, a cover defender, a line defender) up to six metres away
+    /// from the man he was there to cover, and the opened-space reward paid him for the empty grass he
+    /// stepped into — so the attacker could run in behind his back.
     /// </summary>
     private void AddJobCandidates(in FootballerObservation obs, Vector2 jobTargetXZ, float offsideLineProjX)
     {
+        bool defensiveJob = IsDefensiveJob(obs.TacticalJob);
         bool attackingJob = obs.TacticalJob is TacticalJob.NearOutlet or TacticalJob.ThirdPlayerOption
             or TacticalJob.FarSideWidth or TacticalJob.DepthRun or TacticalJob.Overlap;
         // A5.4: the margin applies before release. A player the ball is already travelling to may work
@@ -4586,17 +4892,23 @@ public sealed class CandidateGenerator : IAiStateResettable
             Math.Clamp(jobTargetXZ.X, -_pitch.HalfLength + 3.5f, _pitch.HalfLength - 3.5f),
             Math.Clamp(jobTargetXZ.Y, -_pitch.HalfWidth + 2.5f, _pitch.HalfWidth - 2.5f));
 
-        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
-        Vector2 alternativeXZ = StepOutOfCoverShadow(obs, jobTargetXZ, selfXZ);
+        // AIB-09: a defensive duty's target may never sit forward of the live last line. The allocator's
+        // own anchors already live inside the band, but a duty kept from an earlier pass or a fixture
+        // that places its own anchor can be forward of it, and the movement point is what the feet obey.
+        if (defensiveJob) jobTargetXZ = ClampDefensiveJobDepth(obs, jobTargetXZ);
 
         float baseUtility = JobBaseUtility(obs.TacticalJob);
         // A9.3 part 2: the names are cached by job, not interpolated per candidate per decision.
         AddJobCandidate(obs, adjusted: false, jobTargetXZ, baseUtility);
 
-        // The defensive line's target is the allocator's band, not a support point: stepping it out of
-        // a cover shadow locally would reopen the depth disagreement A6.3 removed.
-        if (obs.TacticalJob != TacticalJob.DefensiveLine &&
-            Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
+        // AIB-09: no stepped-out variant for a defensive duty. Its target is the allocator's goal-side
+        // position (the band for the line, the region a line player's slot protects, the standoff beside
+        // the marked man); moving that point away from the opponent is the exact failure being fixed.
+        if (defensiveJob) return;
+
+        Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+        Vector2 alternativeXZ = StepOutOfCoverShadow(obs, jobTargetXZ, selfXZ);
+        if (Vector2.Distance(jobTargetXZ, alternativeXZ) > 1.5f)
             AddJobCandidate(obs, adjusted: true, alternativeXZ, baseUtility - 0.03f);
     }
 
@@ -4618,14 +4930,34 @@ public sealed class CandidateGenerator : IAiStateResettable
             ? distance > 4.0f
             : distance > 10.0f;
 
-        float space = EvaluateSpaceFreedom(targetXZ, obs.VisiblePlayers, obs.SelfTeam);
-        Vector2 carrierXZ = TryGetCarrierXZ(obs);
-        float lane = EvaluateLaneClearance(carrierXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam);
+        // AIB-09: one scale, two rules. Both families score the job's own usefulness in [0, 0.60] on top
+        // of the 0.90–1.00 job base and pay the same travel cost, so a defensive duty still competes with
+        // the shape candidate and with the defensive acts on the scale the rest of the decision uses.
+        float travelCost = MathF.Min(distance, 40f) / 30f;
+        float utility;
+        if (IsDefensiveJob(obs.TacticalJob))
+        {
+            // AIB-09: goal-side of the man he covers, and standing on a lane that leads to this goal. Each
+            // term keeps half credit at the 0.5 "cannot say" neutral, so the score judges how well the
+            // assigned position is defended — up to the same 0.60 the attacking terms offered — instead of
+            // letting a mediocre but legal position make the player abandon the duty for his shape.
+            float goalSide = DefensiveHalfCredit01(EvaluateDefensiveGoalSide01(obs, targetXZ));
+            float screen = DefensiveHalfCredit01(EvaluateDefensiveScreen01(obs, targetXZ));
+            utility = baseUtility
+                      + DefensivePositionWeight * (goalSide + screen)
+                      - travelCost;
+        }
+        else
+        {
+            float space = EvaluateSpaceFreedom(targetXZ, obs.VisiblePlayers, obs.SelfTeam);
+            Vector2 carrierXZ = TryGetCarrierXZ(obs);
+            float lane = EvaluateLaneClearance(carrierXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam);
 
-        float utility = baseUtility
+            utility = baseUtility
                       + 0.30f * lane
                       + 0.30f * space
-                      - MathF.Min(distance, 40f) / 30f;
+                      - travelCost;
+        }
 
         Vector2 faceDir = SimMath.SafeNormalize(ballXZ - selfXZ, obs.SelfFacingXZ);
         var command = new FootballerCommand(
@@ -4700,6 +5032,209 @@ public sealed class CandidateGenerator : IAiStateResettable
         _ => 0.90f
     };
 
+    // ---------------------------------------------------------------------------------------------
+    // AIB-09: defensive jobs are asked to defend, not to support.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// AIB-09: the jobs whose point is to stop the opponent, so their movement target must be scored on
+    /// goal-side position and lane blocking rather than on being findable and in space.
+    ///
+    /// <para><see cref="TacticalJob.DefensiveCover"/> is the in-possession rest-defence cover, so it is
+    /// listed with the out-of-possession duties the audit named (<see cref="TacticalJob.ProtectGap"/>,
+    /// <see cref="TacticalJob.CoverDefender"/>, <see cref="TacticalJob.Marker"/>): its whole purpose is to
+    /// be behind the ball if possession turns over, and an open-space reward is the same mistake for it.
+    /// <see cref="TacticalJob.DefensiveLine"/> is here too because it was already special-cased in
+    /// <see cref="AddJobCandidates"/> for the same reason — its target is the allocator's band, not a
+    /// support point. Classifying the line here as well keeps one table instead of a per-consumer list,
+    /// which is how the line kept the special case while the cover duties did not.</para>
+    ///
+    /// <para><see cref="TacticalJob.Presser"/> is deliberately <b>not</b> in the set. A presser's act is
+    /// produced by <see cref="PressPolicy"/> (always a primary act when there is a carrier, so this path is
+    /// not reached); the residual loose-ball case is a movement toward the ball, not a cover position, and
+    /// has no meaning to score goal-side. Nothing is added to the set without evidence.</para>
+    ///
+    /// Public and pure so a regression test can pin the classification table itself; no decision path
+    /// iterates or allocates.
+    /// </summary>
+    public static bool IsDefensiveJob(TacticalJob job) => job is
+        TacticalJob.ProtectGap or TacticalJob.CoverDefender or TacticalJob.Marker
+        or TacticalJob.DefensiveCover or TacticalJob.DefensiveLine;
+
+    /// <summary>
+    /// AIB-09: maps a 0–1 defensive metric onto the half-credit scale the defensive score sums. The duty
+    /// itself is the allocator's decision (<see cref="JobBaseUtility"/> already sits above the 0.88 shape
+    /// candidate), so these terms judge <i>how well</i> the assigned position is defended; a neutral 0.5
+    /// metric still earns half the term, and a genuinely wrong position (the wrong side of the man, off the
+    /// lane) loses the other half. The floor is bounded and never pays for emptiness more than for a correct
+    /// position — goal-side and on-lane still earn twice the neutral credit — but it keeps a legal duty
+    /// target competitive: without it a far-but-legal assignment could score below the shape candidate on
+    /// travel alone and the player would abandon the duty for his formation anchor.
+    /// </summary>
+    private static float DefensiveHalfCredit01(float metric01) => 0.5f + 0.5f * metric01;
+
+    /// <summary>
+    /// AIB-09: how much each defensive position term is worth, on the same scale as the two 0.30 attacking
+    /// terms it replaces for these duties. With each term's half-credit floor the pair contributes between
+    /// 0.30 and 0.60 on top of the 0.90–1.00 job base and pays the same travel cost, so the total stays in
+    /// the range <see cref="JobBaseUtility"/> already uses and no new scale enters the decision.
+    /// </summary>
+    public const float DefensivePositionWeight = 0.30f;
+
+    /// <summary>
+    /// AIB-09: attack-relative metres of goal-side margin at which the goal-side term saturates. It sets
+    /// the slope of <see cref="EvaluateDefensiveGoalSide01"/> only: one metre behind the man scores
+    /// 0.625, two metres 0.75, four or more 1.0; the same numbers apply the other way round, so a target a
+    /// metre ball-side scores 0.375 and one four metres ball-side scores 0.
+    /// </summary>
+    public const float DefensiveGoalSideSaturationMeters = 4f;
+
+    /// <summary>
+    /// AIB-09: metres off a lane to this goal at which the screening term reaches zero. Inside it the term
+    /// is linear, so a body on the ball→goal or runner→goal line scores 1.0 and one four metres wide of it
+    /// scores 0. Four metres is roughly two body widths plus the reach a pass needs to pass a man; wider
+    /// than that and the duty is not screening that lane at all.
+    /// </summary>
+    public const float DefensiveScreenLaneMeters = 4f;
+
+    /// <summary>
+    /// AIB-09: how far from the target a visible outfield opponent still counts as "the man this duty is
+    /// against". Beyond it there is nobody to be goal-side of and the goal-side term reads the neutral
+    /// 0.5 — the same "cannot say" value <see cref="DefensiveLineModel.PasserPressure01"/> uses — instead
+    /// of paying the duty for empty space.
+    /// </summary>
+    private const float DefensiveThreatRangeMeters = 16f;
+
+    /// <summary>
+    /// AIB-09: bounds a defensive duty's movement target at the live line's ceiling, in attack-relative
+    /// projection. A <see cref="TacticalJob.ProtectGap"/> or <see cref="TacticalJob.Marker"/> target
+    /// forward of <see cref="DefensiveLineBand.MaxProjX"/> is forward of the last line the team is
+    /// defending, i.e. in front of the man it is there to cover — the audit's <c>COVER_GAP</c> running
+    /// past <c>THIRD_OPTION</c>. The band's ceiling already contains the credible-runner cap
+    /// (<see cref="DefensiveLineModel.LineToRunnerMeters"/> goal-side of the deepest believed run) and the
+    /// keeper cap, so one projection covers "at or goal-side of the last line and of nearby last-line
+    /// runners" without a second model.
+    ///
+    /// With no valid band (<see cref="FootballerObservation.TeamLineBand"/> defaults to "unknown") the
+    /// target is returned unchanged: a standalone controller must not invent a depth it was never given,
+    /// which is also what keeps a fixture or a legacy observation on the pre-AIB-09 behaviour.
+    /// </summary>
+    private static Vector2 ClampDefensiveJobDepth(in FootballerObservation obs, Vector2 targetXZ)
+    {
+        DefensiveLineBand band = obs.TeamLineBand;
+        if (!band.IsValid) return targetXZ;
+
+        float targetProj = targetXZ.X * obs.AttackingDirectionX;
+        if (targetProj <= band.MaxProjX) return targetXZ;
+
+        targetXZ.X = obs.AttackingDirectionX * band.MaxProjX;
+        return targetXZ;
+    }
+
+    /// <summary>
+    /// AIB-09: how goal-side of the man he covers a defensive target stands, 0–1, with 0.5 meaning level.
+    ///
+    /// Goal-side is the attack-relative projection comparison the line model and the offside line already
+    /// use: smaller projection = nearer this team's own goal. The nearest visible outfield opponent to
+    /// the target is the man the duty is against; the margin saturates at
+    /// <see cref="DefensiveGoalSideSaturationMeters"/>, so the term is bounded and being one metre behind
+    /// him is worth less than being four, which is what makes "step in front of him" score badly instead
+    /// of well.
+    ///
+    /// The opponent scan is over <see cref="FootballerObservation.VisiblePlayers"/> only — perception is
+    /// the knowledge boundary — and index-looped with no allocation, like the rest of the off-ball path.
+    /// </summary>
+    private static float EvaluateDefensiveGoalSide01(in FootballerObservation obs, Vector2 targetXZ)
+    {
+        float attackDirX = obs.AttackingDirectionX;
+        float targetProj = targetXZ.X * attackDirX;
+
+        float nearestDistance = DefensiveThreatRangeMeters;
+        float nearestProj = 0f;
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[index];
+            if (entity.Team == obs.SelfTeam) continue;
+            if (entity.Role == TacticalRole.Goalkeeper) continue;
+
+            Vector2 opponentXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
+            if (!SimMath.IsFinite(opponentXZ)) continue;
+
+            float distance = Vector2.Distance(targetXZ, opponentXZ);
+            if (distance >= nearestDistance) continue;
+            nearestDistance = distance;
+            nearestProj = opponentXZ.X * attackDirX;
+        }
+
+        // No opponent in range: the duty is standing in space, which is neither goal-side nor ball-side.
+        if (nearestDistance >= DefensiveThreatRangeMeters) return 0.5f;
+
+        float margin = nearestProj - targetProj;
+        return Math.Clamp(
+            0.5f + margin / (2f * DefensiveGoalSideSaturationMeters), 0f, 1f);
+    }
+
+    /// <summary>
+    /// AIB-09: whether a defensive target sits on a lane that matters to this goal, 0–1: the ball's own
+    /// lane to our goal (the pass the block exists to stop) or the nearest threat's lane to it (the
+    /// runner's path the duty exists to cover), whichever the target does better on.
+    ///
+    /// This replaces the attacking lane term for defensive duties. That term asked whether the carrier
+    /// could find the target — the opposite question to whether the target is standing where the ball
+    /// would go — so a defender who stepped into passing space scored better the further he abandoned the
+    /// man he was marking. The reference geometry is this team's own goal centre, which is a fixed fact of
+    /// the pitch and the attacking direction, not hidden state; the ball and the threat come from the
+    /// observation, and the two candidates are only the endpoints of a segment.
+    /// </summary>
+    private float EvaluateDefensiveScreen01(in FootballerObservation obs, Vector2 targetXZ)
+    {
+        Vector2 ownGoalXZ = new(-obs.AttackingDirectionX * _pitch.HalfLength, 0f);
+        Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        float best = ScreenOnLane01(targetXZ, ballXZ, ownGoalXZ);
+
+        float nearestDistance = DefensiveThreatRangeMeters;
+        Vector2 nearestThreatXZ = Vector2.Zero;
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[index];
+            if (entity.Team == obs.SelfTeam) continue;
+            if (entity.Role == TacticalRole.Goalkeeper) continue;
+
+            Vector2 opponentXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
+            if (!SimMath.IsFinite(opponentXZ)) continue;
+
+            float distance = Vector2.Distance(targetXZ, opponentXZ);
+            if (distance >= nearestDistance) continue;
+            nearestDistance = distance;
+            nearestThreatXZ = opponentXZ;
+        }
+
+        if (nearestDistance < DefensiveThreatRangeMeters)
+            best = MathF.Max(best, ScreenOnLane01(targetXZ, nearestThreatXZ, ownGoalXZ));
+
+        return best;
+    }
+
+    /// <summary>
+    /// AIB-09: 1 when <paramref name="targetXZ"/> lies on the straight segment from
+    /// <paramref name="fromXZ"/> to <paramref name="toXZ"/>, falling linearly to 0 at
+    /// <see cref="DefensiveScreenLaneMeters"/> off it. The projection is clamped to the segment, so a body
+    /// behind the reference point or past the goal is scored as off the lane rather than as on an infinite
+    /// line; allocates nothing.
+    /// </summary>
+    private static float ScreenOnLane01(Vector2 targetXZ, Vector2 fromXZ, Vector2 toXZ)
+    {
+        Vector2 segment = toXZ - fromXZ;
+        float length = segment.Length();
+        if (length < 1e-3f) return 0f;
+
+        Vector2 direction = segment / length;
+        Vector2 offset = targetXZ - fromXZ;
+        float projection = Math.Clamp(Vector2.Dot(offset, direction), 0f, length);
+        float perpendicular = Vector2.Distance(targetXZ, fromXZ + direction * projection);
+        return Math.Clamp(1f - perpendicular / DefensiveScreenLaneMeters, 0f, 1f);
+    }
+
     public static float EvaluateLaneClearance(
         Vector2 fromXZ,
         Vector2 toXZ,
@@ -4744,6 +5279,13 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// step into the ball's path is corridor congestion here and may never reach the arrival point. The two
     /// geometries are composed by the pass model's own weights; this metric deliberately does not attempt to
     /// price the arrival contest itself.
+    ///
+    /// <para><b>AIB-08 (audit 2026-11-23, finding 3): the corridor is no longer static.</b> Each opponent is
+    /// scored at the worse of his believed position and the position his own believed velocity reaches in
+    /// <see cref="LaneProjectionHorizonSeconds"/>, so a defender closing into the lane before the ball is
+    /// scored as the threat he is instead of as a bystander. The projection uses the same cap convention as
+    /// the pass model (<see cref="PassSuccessModel.OpponentSprintSpeed"/>), contributes one body once, and
+    /// leaves a stationary defender's value bit-for-bit unchanged.</para>
     /// </summary>
     internal static float EvaluateLaneClearance(
         Vector2 fromXZ,
@@ -4769,16 +5311,43 @@ public sealed class CandidateGenerator : IAiStateResettable
             // AIB-05: the keeper is a save risk, not an outfield lane blocker (see the public overload).
             if (excludeGoalkeeper && p.Role == TacticalRole.Goalkeeper) continue;
             Vector2 oppXZ = new(p.EstimatedPosition.X, p.EstimatedPosition.Z);
+            Vector2 oppVelocityXZ = new(p.EstimatedVelocity.X, p.EstimatedVelocity.Z);
+
+            // AIB-08 (audit 2026-11-23, finding 3): the corridor was scored 100 % statically, so a defender
+            // closing into the lane before the ball was scored exactly like one standing still. Score the
+            // worse of where he is and where his own believed velocity puts him one short horizon later; the
+            // speed is capped at the pass model's own sprint convention so a bad velocity cannot project a
+            // defender across the whole pitch. One body contributes one ratio (the minimum), never two
+            // congestion charges. The current-position band gate is kept, so the projection cannot resurrect
+            // a body behind the passer that this metric deliberately ignores.
             Vector2 rel = oppXZ - fromXZ;
             float proj = Vector2.Dot(rel, segDir);
             if (proj <= 0.4f || proj >= segLen - 0.3f) continue;
 
-            Vector2 closest = fromXZ + segDir * proj;
-            float perpDist = Vector2.Distance(oppXZ, closest);
-            if (chargeUncertainty && p.PositionUncertaintyMeters > 0f)
-                perpDist = MathF.Max(0f, perpDist - p.PositionUncertaintyMeters);
-            float interceptRadius = 1.1f + (proj / segLen) * 2.4f;
-            float ratio = Math.Clamp(perpDist / interceptRadius, 0f, 1f);
+            float speed = oppVelocityXZ.Length();
+            if (speed > PassSuccessModel.OpponentSprintSpeed)
+                oppVelocityXZ *= PassSuccessModel.OpponentSprintSpeed / speed;
+            int positions = speed >= LaneProjectionMinSpeedMetersPerSecond ? 2 : 1;
+
+            float ratio = 1f;
+            for (int position = 0; position < positions; position++)
+            {
+                Vector2 pointXZ = position == 0
+                    ? oppXZ
+                    : oppXZ + oppVelocityXZ * LaneProjectionHorizonSeconds;
+                Vector2 sampleRel = pointXZ - fromXZ;
+                float sampleProj = Vector2.Dot(sampleRel, segDir);
+                if (sampleProj <= 0.4f || sampleProj >= segLen - 0.3f) continue;
+
+                Vector2 closest = fromXZ + segDir * sampleProj;
+                float perpDist = Vector2.Distance(pointXZ, closest);
+                if (chargeUncertainty && p.PositionUncertaintyMeters > 0f)
+                    perpDist = MathF.Max(0f, perpDist - p.PositionUncertaintyMeters);
+                float interceptRadius = 1.1f + (sampleProj / segLen) * 2.4f;
+                float sampleRatio = Math.Clamp(perpDist / interceptRadius, 0f, 1f);
+                if (sampleRatio < ratio) ratio = sampleRatio;
+            }
+
             if (ratio < minClearanceRatio)
                 minClearanceRatio = ratio;
 

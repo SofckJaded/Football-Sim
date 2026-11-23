@@ -67,6 +67,13 @@ public sealed class A9IndividualAblationTests
     /// it starts at the reaction window when the choice is committed, pays the documented bonus while it is
     /// live, and expires after that many live ticks. A fixture whose second-best candidate is a different
     /// action proves the hold is a choice between competing actions, not a single-candidate "decision".
+    ///
+    /// AIB-12a re-baseline (2026-11-23, finding 5): the pressure fixture's clean 8 m pass is now the better
+    /// action (measured 1.0839 against the carry's 0.9862), because the early-carry bonus fell 0.25 → 0.10.
+    /// That is the ordering finding 5 asked for, and the commitment mechanism is action-agnostic, so the
+    /// committed action is now the pass. The positive assertion added with the re-baseline: the committed
+    /// action is the raw winner and the carry is still a real runner-up, so the window is protecting a real
+    /// choice rather than a lone candidate.
     /// </summary>
     [Fact]
     public void DefaultCommitment_HoldsTheChosenActionForANonzeroWindow_AndTheBonusExpiresWithIt()
@@ -76,11 +83,16 @@ public sealed class A9IndividualAblationTests
 
         controller.Decide(observation, Dt);
 
-        // The choice is committed, and there was a real alternative: the pressure fixture offers a pass too.
+        // The choice is committed, and there was a real alternative: the pressure fixture offers a carry too.
         Assert.NotNull(controller.LastRunnerUp);
         Assert.NotEqual(controller.LastSelected.Identity, controller.LastRunnerUp!.Value.Identity);
         Assert.False(controller.LastSelected.Key.IsNone);
-        Assert.Equal(CandidateKind.Carry, controller.LastSelected.Key.Kind);
+        Assert.Equal(CandidateKind.Pass, controller.LastSelected.Key.Kind);
+        Assert.True(RawUtility(controller.LastCandidates, controller.LastSelected.Key) >
+                    RawUtility(controller.LastCandidates, controller.LastRunnerUp.Value.Key),
+            "the committed pass must be the raw winner in this fixture (AIB-12a made the clean pass beat " +
+            "the routine carry)");
+        Assert.Equal(CandidateKind.Carry, controller.LastRunnerUp.Value.Key.Kind);
 
         float window = controller.RuntimeConfig.ReactionCommitmentSeconds;
         Assert.True(window > 0f);
@@ -141,12 +153,20 @@ public sealed class A9IndividualAblationTests
     /// default build holds the carry (the live bonus raises the score it must beat), while the off build takes
     /// the pass — for which the A4.5 switch margin alone is not enough. The reported scores are checked against
     /// the raw candidate table, so the difference is measured, not assumed.
+    ///
+    /// AIB-12a fixture recalibration (2026-11-23, finding 5): the first observation has no pass available
+    /// (<see cref="PressureObservationWithoutMate"/>), because the lowered early-carry bonus makes the clean
+    /// 8 m pass the better action and the first committed action must be a different candidate from the
+    /// competing pass for this test to have a switch to observe at all. The competing observation is the pass
+    /// that is the raw winner and clears the A4.5 margin (measured 1.0839 against the carry's 0.9862, margin
+    /// 0.02 + 0.04 x 0.9862 = 0.059) while the live bonus still makes the held carry survive
+    /// (0.9862 + 0.10 = 1.0862 &gt; 1.0839), which is the precondition the test states.
     /// </summary>
     [Fact]
     public void TheCommitmentBonus_ChangesTheChosenAction_AndTheOffBuildTakesTheBetterAction()
     {
-        FootballerObservation first = PressureObservation(mateDistance: 8f);
-        FootballerObservation competing = PressureObservation(mateDistance: 15.5f);
+        FootballerObservation first = PressureObservationWithoutMate();
+        FootballerObservation competing = PressureObservation(mateDistance: 8f);
 
         var on = new TacticalUtilityAiController(Pitch);
         var off = new TacticalUtilityAiController(Pitch, ai: CommitmentOff);
@@ -458,6 +478,44 @@ public sealed class A9IndividualAblationTests
                 new Vector3(mateDistance, 0f, 3f), Vector3.Zero, 0.9f),
             new(12, TeamId.Away, TacticalRole.CenterBack,
                 new Vector3(0f, 0f, 2.4f), Vector3.Zero, 0.9f)
+        },
+        TeamProfile = TeamTacticalProfile.PossessionControl,
+        SelfTendencies = new PlayerTendencies(),
+        SelfAttributes = new PlayerAttributes()
+    };
+
+    /// <summary>
+    /// The pressure fixture with no team-mate visible. The only opposition is the same planted defender, so the
+    /// carrier's action set is the carry, a take-on and a shield — which is what a commitment fixture needs
+    /// when the clean pass is (post AIB-12a) the better action and the committed action must differ from the
+    /// competing pass.
+    /// </summary>
+    private static FootballerObservation PressureObservationWithoutMate() => new()
+    {
+        SelfId = 8,
+        SelfTeam = TeamId.Home,
+        SelfRole = TacticalRole.CentralMidfielder,
+        SelfPosition = Vector3.Zero,
+        SelfVelocity = Vector3.Zero,
+        SelfFacingXZ = new Vector2(1f, 0f),
+        Stamina01 = 1f,
+        AvailableToKick = true,
+        ControlQuality01 = 1f,
+        PerceivedBallPosition = new Vector3(0.4f, 0f, 0f),
+        PerceivedBallVelocity = Vector3.Zero,
+        PossessingTeam = TeamId.Home,
+        BallLastTouchedByPlayerId = 8,
+        BallLastTouchedByTeam = TeamId.Home,
+        BallControlState = BallControlState.Controlled,
+        BallControllingPlayerId = 8,
+        TacticalAnchorPosition = Vector3.Zero,
+        AttackingDirectionX = 1f,
+        MatchTimeSeconds = 0f,
+        CurrentMatchPhase = MatchPhase.FirstHalf,
+        IsSetPieceTaker = false,
+        VisiblePlayers = new List<PerceivedEntity>
+        {
+            new(12, TeamId.Away, TacticalRole.CenterBack, new Vector3(0f, 0f, 2.4f), Vector3.Zero, 0.9f)
         },
         TeamProfile = TeamTacticalProfile.PossessionControl,
         SelfTendencies = new PlayerTendencies(),

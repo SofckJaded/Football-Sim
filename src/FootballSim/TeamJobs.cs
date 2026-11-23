@@ -1073,6 +1073,13 @@ public sealed class TeamJobCoordinator : IAiStateResettable
     /// terms the side is playing with — a high line is not a vacancy. *What must be protected* is the
     /// slot he owns, because that is the region of the formation that is now empty and it does not move
     /// while the ball does.
+    ///
+    /// AIB-09: the protected region's <b>depth</b> is not the static slot's, though — see
+    /// <see cref="ClampVacancyDepth"/>. The slot is a formation coordinate, so with the ball deep in this
+    /// team's half a kickoff-relative slot can sit well forward of the line the side is actually
+    /// defending, and the teammate sent to protect it would then stand in front of the attacker instead of
+    /// goal-side of him. Selection, ordering and tie-breaks are unchanged: the clamp applies only to the
+    /// region of the gap that was already chosen.
     /// </summary>
     private Vacancy? FindVacancy(
         TeamId team,
@@ -1103,10 +1110,39 @@ public sealed class TeamJobCoordinator : IAiStateResettable
 
             if (slotToBall >= bestSlotToBall) continue;
             bestSlotToBall = slotToBall;
-            best = new Vacancy(player.Id, region);
+            best = new Vacancy(player.Id, ClampVacancyDepth(team, region, attackDirX));
         }
 
         return best;
+    }
+
+    /// <summary>
+    /// AIB-09: bounds a vacated slot's depth at the live defensive line's ceiling, in attack-relative
+    /// projection.
+    ///
+    /// <see cref="TeamFormation.TryGetWorldAnchor"/> answers with the team's nominal slot — a kickoff-relative
+    /// coordinate that does not know where the side is actually defending. That slot is also what the next
+    /// teammate is sent to protect as a <see cref="TacticalJob.ProtectGap"/> duty, so protecting it
+    /// unclamped sent the protector in front of the team's last line and therefore in front of the
+    /// attacker he was supposed to be goal-side of: the audit's <c>COVER_GAP</c> running past
+    /// <c>THIRD_OPTION</c>. <see cref="DefensiveLineBand.MaxProjX"/> already carries the ball cap, the
+    /// credible-runner cap and the keeper cap, so clamping to it inherits all three and does not add a
+    /// second depth model. Only the depth changes; the slot's lateral position is untouched, because its
+    /// lane is not what was wrong with it.
+    ///
+    /// The band is written by <see cref="AssignTeam"/> earlier in the same pass, so this reads the live
+    /// band rather than last pass's. With no valid band (a passage in which the team has no line at all,
+    /// or a fixture that never evaluated one) the slot is returned exactly as before: an allocator must not
+    /// invent a depth it was not given.
+    /// </summary>
+    private Vector3 ClampVacancyDepth(TeamId team, Vector3 region, float attackDirX)
+    {
+        DefensiveLineBand band = LineBandOf(team);
+        if (!band.IsValid) return region;
+        if (region.X * attackDirX <= band.MaxProjX) return region;
+
+        region.X = attackDirX * band.MaxProjX;
+        return region;
     }
 
     /// <summary>
@@ -1503,6 +1539,15 @@ public sealed class TeamJobCoordinator : IAiStateResettable
     /// attacking one). Two rings are deliberate: the scoring penalises stacking on a teammate, and a
     /// single ring cannot always pay the separation back, so the search has to be able to reach the
     /// next channel. Fixed probe order and a required margin keep it deterministic and stable.
+    ///
+    /// AIB-09: a defensive duty is <b>not</b> refined. The probe is scored with the attacking region score
+    /// (<see cref="JobRegionScoring"/>'s space, connection and staggering terms), which can slide a cover or
+    /// marker target into empty grass: in the A4 build-up fixture the in-possession
+    /// <see cref="TacticalJob.DefensiveCover"/> target was moved eight metres wide of the ball-to-goal lane,
+    /// where the defensive candidate scoring (AIB-09) correctly refuses to pay for it — and the player then
+    /// oscillates between the duty and his shape by the travel cost alone. The nominal defensive point is
+    /// the one the duty actually wants (behind the press, behind the ball); it is the candidate score's job
+    /// to judge that position, not a space-driven probe's.
     /// </summary>
     private Vector2 RefineJobRegion(
         TacticalJob job,
@@ -1514,6 +1559,10 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         float offsideLineProj,
         float attackingWidth01)
     {
+        // AIB-09: one classification for all of these decisions; see the method's doc comment for why a
+        // defensive target is never slid around by an attacking region score.
+        if (CandidateGenerator.IsDefensiveJob(job)) return nominal;
+
         bool attackingJob = IsAttackingJob(job);
         float lateral = job is TacticalJob.FarSideWidth or TacticalJob.Overlap ? 6f : 4f;
         float depth = job is TacticalJob.DepthRun or TacticalJob.Overlap ? 6f : 4f;

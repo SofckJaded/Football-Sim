@@ -26,6 +26,25 @@ public sealed class SwitchScenarioTests
     private const int NearMateId = 107;
     private const int FarWingerId = 109;
 
+    /// <summary>
+    /// The carrier's tendency profile. The role preset, with one difference: the dribble preference is the
+    /// winger-level 0.85 instead of the central midfielder's 0.52. AIB-12a (audit 2026-11-23, finding 5)
+    /// removed 0.15 of early-carry value, and this fixture's discriminating margin was 0.04 (carry 1.00
+    /// against the far-side pass 0.96), so the neutral carrier now passes without the recognition and the
+    /// A8.3 engine A/B this scenario exists for would no longer separate. Keeping the carrier's other
+    /// tendencies at the role preset means the recognition's own preference is still the only difference
+    /// between the on/off builds.
+    /// </summary>
+    private static readonly PlayerTendencies CarrierTendencies = new()
+    {
+        ShootingAppetite01 = 0.55f,
+        DirectPassPreference01 = 0.62f,
+        RiskTolerance01 = 0.60f,
+        DribblePreference01 = 0.85f,
+        PositionalDiscipline01 = 0.72f,
+        PressingAggression01 = 0.62f
+    };
+
     // ---------------------------------------------------------------------------------------------
     // The preference on the existing pass (the switch is a choice, not a capability).
     // ---------------------------------------------------------------------------------------------
@@ -346,7 +365,8 @@ public sealed class SwitchScenarioTests
                     new Vector3(-8f, 0f, -5f), 6)
                 .WithController(hold))
             .Add(MatchScenario.Player(CarrierId, TeamId.Home, TacticalRole.CentralMidfielder,
-                new Vector3(0f, 0f, 0f), 8))
+                    new Vector3(0f, 0f, 0f), 8)
+                .WithTendencies(CarrierTendencies))
             // A backward near-side outlet: playable, but not the release the pressed carrier needs.
             .Add(MatchScenario.Player(NearMateId, TeamId.Home, TacticalRole.CentralMidfielder,
                     new Vector3(2f, 0f, -10f), 7)

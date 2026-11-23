@@ -674,12 +674,39 @@ public enum TeamId
 /// byte-identical plans to the pre-AUD-P7 planner for every input. The diagnostic rejection buffer also grows
 /// 8 -&gt; 16 so space-probe refusals cannot hide lane/completion reasons. Trajectories differ from version 56
 /// wherever a near-line pass was priced.</item>
+/// <item><c>AiBehaviour 58</c> — the 2026-11-23 rendered-behaviour review of version 57
+/// (<c>docs/Bug_Fixes_2026-11-23_AI57Review.md</c>), AIB-07 to AIB-12. (1) <b>A shot does not aim through the
+/// goalkeeper</b>: the three goal targets are priced minus a bounded keeper-coverage penalty read from the
+/// perceived keeper (-Z keeper covers the -Z corner), and near-ties keep the far post so a short-flight finish
+/// goes away from him; the keeper stays out of the outfield lane ray, so this is the one keeper term and not a
+/// second save model. (2) <b>A carrier drives into the box instead of shooting from 20 m</b>: the carry pays a
+/// bounded advance prospect — the improvement in shot value the ground it would gain is worth — gated on real
+/// space ahead and no opponent able to arrive, so an unpressed 1v1 drives to the ~15 m crossover and a pressed
+/// carrier still releases. (3) <b>A moving defender can intercept a pass</b>: the lane test's sampled run uses
+/// the real receiving reach (0.90 -&gt; the 1.24 m intercept reach plus bounded positional doubt) instead of the
+/// true-contact margin, the step-in test adds lane look-ahead points for a defender running along the corridor
+/// and charges less reaction once he is already closing into it, and the clearance metric scores a defender at
+/// the worse of where he is and where his own velocity reaches in 0.35 s. (4) <b>A space promise must be a ball
+/// the receiver can reach</b>: the pass model's defender contest is measured against
+/// <c>max(flight, receiverArrival)</c> (ground and raised), not the ball's flight, and a space probe is refused
+/// when the planner's own calibrated roll leaves the promised region by more than its radius plus a receiving
+/// reach at the receiver's real arrival. (5) <b>An announced run gets a firm ball</b>: every <c>ToRun</c> path
+/// carries the planner's crisp-ball power floor instead of 0, so an advertised through ball is a struck ball
+/// rather than a 2 s roller the lane test rejects. (6) <b>A carrier sprints into open space and releases
+/// sooner</b>: the early-carry bonus falls 0.25 -&gt; 0.10 and its window 0.70 -&gt; 0.35 s, and the sprint gate
+/// fires on an open forward cone unless an opponent is inside 2.40 m or standing in the 6 m x 2.2 m carry
+/// corridor — a chaser behind or beside no longer throttles the carrier to a jog. (7) <b>A defensive duty is
+/// scored as defending</b>: <c>ProtectGap</c>, <c>CoverDefender</c>, <c>Marker</c>, <c>DefensiveCover</c> and
+/// <c>DefensiveLine</c> no longer take the attacking space/lane reward or the stepped-out-of-cover-shadow
+/// variant; they score goal-side position and lane screening, are clamped at the live line band's ceiling, and
+/// the allocator's vacated-gap depth is clamped to the same band. Trajectories differ from version 57 wherever a
+/// carrier, shooter, passer, receiver, or off-ball defender decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 57;
+    public const int AiBehaviour = 58;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

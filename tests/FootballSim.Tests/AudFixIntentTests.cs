@@ -190,6 +190,12 @@ public sealed class AudFixIntentTests
     /// is the raw winner but only marginally (the A4.5 margin is not cleared). Pre-fix the off build kept the
     /// carry because <c>ShouldSwitch</c> still ran; the fix switches to the raw winner immediately, while the
     /// shipped default (<c>true</c>) still holds the carry.
+    ///
+    /// AIB-12a fixture recalibration (2026-11-23, finding 5): the first observation has no pass available,
+    /// because the lowered early-carry bonus makes the clean 8 m pass the better action and the committed
+    /// action must differ from the competing pass. The competing observation is the nearest pass that is
+    /// better by less than the A4.5 margin (measured 0.9924 against the carry's 0.9862; the margin is
+    /// 0.02 + 0.04 x 0.9862 = 0.059), which is the precondition the test states.
     /// </summary>
     [Fact]
     public void CommitmentOff_SwitchesOnAMarginalImprovement_WhileCommitmentOnHolds()
@@ -197,13 +203,13 @@ public sealed class AudFixIntentTests
         var on = new TacticalUtilityAiController(Pitch);
         var off = new TacticalUtilityAiController(Pitch, ai: CommitmentOff);
 
-        on.Decide(PressureObservation(8f), Dt);
-        off.Decide(PressureObservation(8f), Dt);
+        on.Decide(PressureObservationWithoutMate(), Dt);
+        off.Decide(PressureObservationWithoutMate(), Dt);
         Assert.Equal(CandidateKind.Carry, on.LastSelected.Key.Kind);
         Assert.Equal(CandidateKind.Carry, off.LastSelected.Key.Kind);
 
-        on.Decide(PressureObservation(12f), Dt);
-        off.Decide(PressureObservation(12f), Dt);
+        on.Decide(PressureObservation(4.5f), Dt);
+        off.Decide(PressureObservation(4.5f), Dt);
 
         // Fixture precondition: the pass is the raw winner, but inside the A4.5 switch margin.
         float passRaw = RawUtility(off.LastCandidates, CandidateKind.Pass);
@@ -392,6 +398,43 @@ public sealed class AudFixIntentTests
         VisiblePlayers = new List<PerceivedEntity>
         {
             new(9, TeamId.Home, TacticalRole.Striker, new Vector3(mateDistance, 0f, 3f), Vector3.Zero, 0.9f),
+            new(12, TeamId.Away, TacticalRole.CenterBack, new Vector3(0f, 0f, 2.4f), Vector3.Zero, 0.9f)
+        },
+        TeamProfile = TeamTacticalProfile.PossessionControl,
+        SelfTendencies = new PlayerTendencies(),
+        SelfAttributes = new PlayerAttributes()
+    };
+
+    /// <summary>
+    /// The commitment fixture with no team-mate visible: the carrier's action set is the carry, a take-on and a
+    /// shield. AIB-12a lowered the early-carry bonus below the clean pass's value, so a committed carry needs a
+    /// picture without the pass for the AUD-10 ablation to have a switch to test.
+    /// </summary>
+    private static FootballerObservation PressureObservationWithoutMate() => new()
+    {
+        SelfId = 8,
+        SelfTeam = TeamId.Home,
+        SelfRole = TacticalRole.CentralMidfielder,
+        SelfPosition = Vector3.Zero,
+        SelfVelocity = Vector3.Zero,
+        SelfFacingXZ = new Vector2(1f, 0f),
+        Stamina01 = 1f,
+        AvailableToKick = true,
+        ControlQuality01 = 1f,
+        PerceivedBallPosition = new Vector3(0.4f, 0f, 0f),
+        PerceivedBallVelocity = Vector3.Zero,
+        PossessingTeam = TeamId.Home,
+        BallLastTouchedByPlayerId = 8,
+        BallLastTouchedByTeam = TeamId.Home,
+        BallControlState = BallControlState.Controlled,
+        BallControllingPlayerId = 8,
+        TacticalAnchorPosition = Vector3.Zero,
+        AttackingDirectionX = 1f,
+        MatchTimeSeconds = 0f,
+        CurrentMatchPhase = MatchPhase.FirstHalf,
+        IsSetPieceTaker = false,
+        VisiblePlayers = new List<PerceivedEntity>
+        {
             new(12, TeamId.Away, TacticalRole.CenterBack, new Vector3(0f, 0f, 2.4f), Vector3.Zero, 0.9f)
         },
         TeamProfile = TeamTacticalProfile.PossessionControl,

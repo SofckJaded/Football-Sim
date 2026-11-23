@@ -304,14 +304,30 @@ public sealed class AudFixCallOrderTests
     /// review correction (the near-line power cap replaced by a priced boundary-exit risk). The shipped 18-tick
     /// delay means no same-tick call was ever usable, so the fix must reproduce the same path *for the same
     /// AI*; the fingerprint is a drift guard over positions, analytics and the call/combination counters.
+    ///
+    /// <para><b>AIB-07..AIB-12 re-capture (the whole 2026-11-23 ai57-review batch):</b> six behaviour groups
+    /// move the shipped path in this match, so the constant is re-captured once at <c>ai58-rs1</c> rather than
+    /// exempted. (1) Defensive duties no longer take the attacking space/lane reward or a stepped-out variant;
+    /// they score goal-side position and lane screening, are clamped at the live line band's ceiling, and the
+    /// vacated-gap depth is clamped to the same band. (2) The lane test sees a moving defender at his real
+    /// intercept reach plus bounded doubt, with lookahead step-in points and a reduced reaction once he is
+    /// already closing in, and the corridor metric prices his projected position. (3) A space promise is refused
+    /// when the planner's calibrated roll leaves the promised region before the receiver arrives, and
+    /// promised/timed receptions price defenders against <c>max(flight, receiverArrival)</c>. (4) Every
+    /// advertised <c>ToRun</c> ball carries the crisp power floor. (5) The finish aims away from the perceived
+    /// keeper instead of always at the -Z corner, an open carry gains the shot-value improvement of the ground
+    /// ahead, the early-carry bonus is 0.10 over 0.35 s instead of 0.25 over 0.70 s, and the carrier's sprint
+    /// follows the path ahead rather than the nearest body. The AUD-13c property this constant guards is still
+    /// pinned by the zero-delay tests above; this remains a bit-for-bit tripwire for the shipped path. The
+    /// fix report is <c>docs/Bug_Fixes_2026-11-23_AI57Review.md</c>.</para>
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=20.993334,-11.877624|players=1:-48.419292,-1.0424956;2:-10.467587,20.892015;" +
-        "3:-7.643568,-23.321465;4:-12.888739,6.594845;5:-12.613922,-9.653878;6:9.6677685,-10.243951;" +
-        "7:24.9785,19.81547;8:14.669028,-1.5895516;9:20.887981,-12.391231;10:17.48829,-11.871004;" +
-        "11:24.981127,-20.435291;12:46.55118,-2.0004814;13:27.826225,18.954184;14:25.03882,-18.430696;" +
-        "15:25.899319,3.0480578;16:24.437826,-22.266811;17:38.337223,-7.825693;18:3.2360249,19.31883;" +
-        "19:25.253723,-11.181127;20:-2.3199544,-1.8124101;21:35.307102,-10.732671;22:1.5693433,-18.130646;" +
-        "|analytics=1147,353,583,94,11,3,10,1,0,0,0,0|calls=193,4302,187,0|" +
-        "combinations=4,1,0,0,1,1,0";
+        "tick=1500|ball=25.410631,-2.1975613|players=1:-42.194885,0.3770221;2:-3.1655076,22.901018;" +
+        "3:-3.178184,-22.388035;4:-4.280119,8.421136;5:-1.5305407,-7.879037;6:22.218895,5.2114253;" +
+        "7:27.723888,16.586868;8:31.308298,-2.9804173;9:32.800915,7.1537285;10:15.883882,6.045819;" +
+        "11:33.90525,-9.922281;12:46.09563,-0.16977553;13:33.94625,5.006924;14:32.18089,-16.564205;" +
+        "15:38.196766,3.8839614;16:35.573605,2.6175425;17:24.953438,-2.4453704;18:3.2416544,16.73855;" +
+        "19:12.738086,7.840615;20:-3.5772285,0.4861916;21:18.709148,-4.0493474;22:3.6922414,-18.390163;" +
+        "|analytics=982,518,411,259,13,4,10,2,0,0,0,0|calls=212,4455,198,0|" +
+        "combinations=3,0,0,0,2,0,1";
 }

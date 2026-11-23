@@ -121,13 +121,96 @@ public static class ActionValueScale
     public const float CarrySpaceBonus = 0.40f;
 
     /// <summary>Bonus for carrying early in a touch (before the side settles into passing).</summary>
-    public const float CarryEarlyBonus = 0.25f;
+    /// <remarks>
+    /// AIB-12a (audit 2026-11-23, finding 5): lowered 0.25 → 0.10 and the window 0.70 s → 0.35 s. The audit
+    /// measured the carrier holding the ball at <c>DriveWithBall = 1.37</c> for 0.70 s — above every forward
+    /// pass — and recommended 0.10–0.12 / 0.35–0.40 s.
+    ///
+    /// <para>The audit's claim that this alone puts the carry at 0.95–1.05 is <b>arithmetically wrong for its
+    /// own decomposition</b>, and the corrected arithmetic is the reason the constants are the low end rather
+    /// than a tuned total: the cut removes exactly 0.15, so the same full-space early carry is
+    /// <c>0.50 base + 0.40 space + 0.10 early + ~0.08 progress + ~0.14 dribble ≈ 1.22</c> (a neutral player
+    /// with no tendency preference ≈ 1.08), not ≈ 1.00. The fix is therefore an <i>ordering</i> fix against a
+    /// clean pass after AIB-08/AIB-10/AIB-11 re-priced the pass set, plus AIB-07b's advance term when the
+    /// grass ahead is open; the measured early/settled gap is exactly this constant (regression
+    /// <c>Aib3CarryShotTests.AIB12a_TheEarlyCarryBonus_IsBoundedAndExpires</c>).</para>
+    /// </remarks>
+    public const float CarryEarlyBonus = 0.10f;
 
     /// <summary>Seconds on the ball after which the early-carry bonus stops applying.</summary>
-    public const float CarryEarlySeconds = 0.70f;
+    /// <remarks>
+    /// AIB-12a: shortened 0.70 s → 0.35 s. The audit's defect was not only the bonus size but its duration:
+    /// for 0.70 s no midfield pass could outbid the carry, so the first touch was locked into dribbling
+    /// whatever the picture. 0.35 s is the audit's low end — about two 0.18 s reaction commitments, long
+    /// enough for the tempo trait to show, short enough that a clean forward pass can win once the first
+    /// touch has settled.
+    /// </remarks>
+    public const float CarryEarlySeconds = 0.35f;
 
     /// <summary>Penalty for carrying the ball into a touchline or goal line.</summary>
     public const float CarryLinePenalty = 0.30f;
+
+    // ---------------------------------------------------------------------------------------------
+    // AIB-07b (audit 2026-11-23, finding 1) — the advance prospect.
+    //
+    // The carry kept its pre-A4 heuristic shape (see the block comment above), so it had no idea that the
+    // ground it gains is worth more than the ground it stands on: at 20 m an unpressed 1v1 striker valued
+    // the carry at ≈0.90 and shot from outside the box instead of driving into it (audit images 1–2). The
+    // term below is the *change in shot value* the carry's own 4.5 m target would produce —
+    // (GoalValue + ShotMissCost) × ΔConversion — normalized to one reference probe and capped. It is paid
+    // once, in the carry's gain, only while the grass the carry would take is actually open, and it is
+    // withdrawn (exactly 0) the moment an opponent can arrive at the carrier or at the target inside the
+    // stated windows. The existing contact-risk deduction stays the only pressure penalty: this is a
+    // prospect that does not exist when closed, never a second discount of the same risk.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The most an open carry's forward ground can add to its value, in scale units (AIB-07b).
+    /// </summary>
+    /// <remarks>
+    /// The audit's own unit: with the shipped curve a clean shot from 20 m is worth
+    /// <see cref="ShotValue"/>(20, 1, 21°) ≈ 0.98 and the same shot from 15.5 m — one 4.5 m carry target
+    /// closer — ≈ 1.60, so a full reference probe is worth ≈ 0.62. 0.65 is the stated cap: large enough that
+    /// an open 20 m drive beats a keeper-aware 0.95 shot and a 1.0–1.1 pass (measured: open 1v1 carry 1.63
+    /// vs shot 0.95), small enough that a clean pass plus the better shot still wins from ~14 m inside the
+    /// box (measured crossover ≈ 15.1 m; regression <c>Aib3CarryShotTests.AIB07b_AnOpenOneOnOneAtTwentyMetres_DrivesInsteadOfShooting</c>).
+    /// </remarks>
+    public const float CarryAdvanceValue = 0.65f;
+
+    /// <summary>
+    /// Shot-value improvement that counts as one full reference probe, in scale units (AIB-07b).
+    /// </summary>
+    /// <remarks>
+    /// <c>ShotValue(d − 4.5) − ShotValue(d)</c> is ≈ 0.6156 at d = 20 m on the shipped curve, so 0.60 makes
+    /// the term saturate at the reference distance and stay saturated nearer the box (the conversion slope
+    /// flattens there). It normalises the prospect onto <see cref="CarryAdvanceValue"/>; it is not a second
+    /// tuning knob.
+    /// </remarks>
+    public const float CarryAdvanceReferenceUnits = 0.60f;
+
+    /// <summary>
+    /// Room the carry's own probe must have (the same space unit <c>ScoreCarryDirection</c> reports) before
+    /// the advance prospect is paid (AIB-07b).
+    /// </summary>
+    /// <remarks>
+    /// Below this the direction is not "open grass": with an opponent within ~5 m of the probe the carry is a
+    /// challenge rather than an advance, and the contact-risk term prices it. Equal to the sprint gate's own
+    /// free-space threshold so "open enough to run into" and "open enough to be worth running into" are the
+    /// same statement.
+    /// </remarks>
+    public const float CarryAdvanceMinSpace01 = 0.55f;
+
+    /// <summary>
+    /// Opponent arrival time at the carry's <i>target</i>, in seconds, beyond which the target is open ground
+    /// for the advance prospect (AIB-07b).
+    /// </summary>
+    /// <remarks>
+    /// The target is 4.5 m ahead of the carrier, so a presser who is 0.5 s from the carrier's feet (the
+    /// contact window) is still behind the ground the carry takes. 0.60 s is the stated line at which even
+    /// the target is contested; inside it the prospect is exactly zero rather than reduced, because the
+    /// contact risk already charges the threat against the carrier.
+    /// </remarks>
+    public const float CarryAdvancePathArrivalSeconds = 0.60f;
 
     // ---------------------------------------------------------------------------------------------
     // A9.6a — the contact risk a carry has always ignored (rendered-review finding 1).
@@ -301,6 +384,75 @@ public static class ActionValueScale
     /// <summary>The shot's value on the documented scale: conversion × goal − (1 − conversion) × miss cost.</summary>
     public static float ShotValue(float distanceMeters, float laneClearance01, float goalMouthAngleDegrees = 180f) =>
         ExpectedValue(ShotConversion(distanceMeters, laneClearance01, goalMouthAngleDegrees), GoalValue, ShotMissCost);
+
+    // ---------------------------------------------------------------------------------------------
+    // AIB-07a (audit 2026-11-23, finding 1) — the keeper-aware finish.
+    //
+    // AddShotCandidate scores the three goal targets with an outfield-only lane (AIB-05), and
+    // ShotConversion is a distance/lane/angle curve with no keeper in it. When the outfield lane was equally
+    // clear for all three targets every target scored exactly the same, so strict `>` always kept index 0 =
+    // -cornerZ whatever the keeper was doing — the audit's striker shooting straight at the man covering that
+    // side (images 1–2). The constants below are the one keeper term: each target loses a bounded share of
+    // its value for the part of the goal the keeper's believed lateral reach covers before the ball arrives.
+    // It is not a second save model: it is an expected-value reduction, applied inside the shot's gain.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Speed the ball is assumed to travel from shooter to goal line in the keeper-coverage model, m/s
+    /// (AIB-07a).
+    /// </summary>
+    /// <remarks>
+    /// 18 m/s is a placed shot in the shipped 0.45–0.70 power band's typical arrival speed. The model is a
+    /// coverage window, not a physics solve: it decides whether the keeper's lateral reach can reach the
+    /// target's side of the goal before the ball does.
+    /// </remarks>
+    public const float KeeperShotTravelMetersPerSecond = 18f;
+
+    /// <summary>
+    /// Share of the keeper's scouted sprint band that can become lateral dive distance in the available
+    /// flight (AIB-07a).
+    /// </summary>
+    /// <remarks>
+    /// A keeper does not translate laterally like an outfielder under sprint, so 0.35 ×
+    /// <see cref="PerceivedEntity.Capability"/>'s <c>MaxSprintSpeed</c> is the stated conversion from a
+    /// straight-line speed band to a dive's lateral reach. It is a heuristic bound used only to order the
+    /// three goal targets; A9.2/A10 own the measured keeper model.
+    /// </remarks>
+    public const float KeeperLateralDiveShare = 0.35f;
+
+    /// <summary>Hard cap on the keeper's lateral reach in the coverage model, in metres (AIB-07a).</summary>
+    /// <remarks>
+    /// 2.40 m: a full-stretch dive reaches roughly a third of the goal and no further. Without the cap a
+    /// long flight (&gt;1.5 s) would let the model "cover" every target in the goal and delete the open far
+    /// post from a shot that is genuinely on.
+    /// </remarks>
+    public const float KeeperLateralDiveMaxMeters = 2.40f;
+
+    /// <summary>Most positional uncertainty, in metres, the keeper-coverage model charges (AIB-07a).</summary>
+    /// <remarks>
+    /// A stale sighting is widened, not treated as exact: the keeper may be up to the sighting's
+    /// <c>PositionUncertaintyMeters</c> from his predicted position, so his reach grows by exactly that
+    /// doubt, capped here so a very old sighting cannot cover the whole mouth with a fiction.
+    /// </remarks>
+    public const float KeeperUncertaintyCapMeters = 1.0f;
+
+    /// <summary>Gap, in metres, past the keeper's reach at which the coverage term falls to zero (AIB-07a).</summary>
+    /// <remarks>
+    /// 0.60 m: a target just outside the reach is still a covered one (body and arm span are wide compared
+    /// with the goal), and a target two metres clear is not. The linear falloff keeps the three-target
+    /// ordering stable as the keeper drifts rather than flipping on a hard ring.
+    /// </remarks>
+    public const float KeeperCoverageFalloffMeters = 0.60f;
+
+    /// <summary>What a fully covered goal target loses, in scale units (AIB-07a).</summary>
+    /// <remarks>
+    /// 0.22: enough to move the chosen finish from a covered corner to an open one at the ≈0.98 value of a
+    /// 20 m shot (the audit's image 2), and small enough that an otherwise clear chance still beats a
+    /// 0.9–1.1 pass. The term is an expected-value reduction, so it lands in the shot's gain
+    /// (<see cref="ValueTerms.Gain"/>), never in its preference — the trace stays
+    /// <c>utility = gain + preference</c>.
+    /// </remarks>
+    public const float KeeperCoveragePenalty = 0.22f;
 
     /// <summary>
     /// How much one unit of forward progress is worth as a <i>preference</i>, in scale units, on top of what

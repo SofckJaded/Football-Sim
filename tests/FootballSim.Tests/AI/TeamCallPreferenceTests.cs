@@ -66,6 +66,15 @@ public sealed class TeamCallPreferenceTests
         CandidateGenerator control = Generate(quiet);
         CandidateGenerator treated = Generate(warned);
 
+        // AIB-08 re-baseline guard: the fixture's pass must be genuinely open. The corrected sampled-run
+        // test now hard-blocks a body inside the ~1.24 m receiving reach of the lane, and this test needs the
+        // ground pass to exist before it can measure the call's preference on it.
+        float lane = CandidateGenerator.EvaluateLaneClearance(
+            new Vector2(0.4f, 8f), new Vector2(14f, 16f), quiet.VisiblePlayers, TeamId.Home);
+        Assert.True(lane > 0.95f,
+            $"the man-on fixture must offer a clean pass lane for the call to raise (lane {lane:F2})");
+        Assert.True(HasPassTo(control, MateId), "the quiet picture must offer the ground pass to #9");
+
         Assert.Equal(
             ActionValueScale.CallBouncePassBonus,
             UtilityOf(treated, $"Pass({KickIntentType.GroundPass})To#{MateId}") -
@@ -205,13 +214,24 @@ public sealed class TeamCallPreferenceTests
     // Helpers.
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>A carrier with a visible opponent on him, time on the ball, and one team-mate available.</summary>
+    /// <summary>
+    /// A carrier with a visible opponent on him, time on the ball, and one team-mate available.
+    ///
+    /// <para><b>AIB-08 re-baseline (2026-11-23 audit, finding 3).</b> The opponent used to stand at (2.5, 8),
+    /// which is 1.06 m off the ball-to-mate lane: inside the real ~1.24 m receiving reach the corrected
+    /// sampled-run test (AIB-08 Step 1) now charges — the pre-fix test compared 0.90 m and called the lane
+    /// open, so the ball was only "available" because the model under-read the moving/reaching body. A
+    /// stationary body within 1.06 m of a grounded pass is a blocked lane, and the fixture's own purpose is a
+    /// clean pass the call can raise, so the defender is moved 2.2 m off the lane (to a still-pressing
+    /// 2.7 m from the carrier). The test now asserts the lane is genuinely open, so it cannot silently turn
+    /// into a blocked-pass fixture again.</para>
+    /// </summary>
     private static FootballerObservation CarrierObservation(TeamCallContext calls = default) => Obs(
         selfXZ: new Vector2(0f, 8f),
         calls: calls,
         visible:
         [
-            Opponent(201, 2.5f, 8f),
+            Opponent(201, 2.2f, 6.5f),
             Mate(MateId, 14f, 16f),
             Opponent(205, 26f, -14f)
         ]);

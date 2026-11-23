@@ -204,14 +204,20 @@ public sealed class AibCarrierShotRecycleTests
     }
 
     /// <summary>
-    /// Report section 5.1, the end-to-end version: the only outfield defender stands on the near-post ray
-    /// the old code always struck at, and the opposing keeper stands centrally. The old single-ray lane
-    /// collapsed, the shot lost to the recycle; the fixed shot picks the open centre target and its value
-    /// beats the backward ball.
+    /// Report section 5.1, the end-to-end version: the only outfield defender stands on the -Z corner ray
+    /// and the opposing keeper stands centrally. The old single-ray lane collapsed and the shot lost to the
+    /// recycle; the fixed shot picks the open corner and its value beats the backward ball.
     ///
-    /// Pre-fix: laneClearance ~ 0.01 on the fixed +/-2.95 m corner ray, conversion
-    /// 0.257 x 0.60 x 0.73 = 0.113, so the shot was worth ~0.26 while the recycle scored ~0.63. Post-fix:
-    /// centre lane 1.0 (keeper excluded), conversion 0.276, shot ~1.50.
+    /// Pre-fix: laneClearance ~ 0.01 on the fixed -2.91 m corner ray, conversion
+    /// 0.257 x 0.60 x 0.73 = 0.113, so the shot was worth ~0.26 while the recycle scored ~0.63.
+    ///
+    /// AIB-07a re-baseline (2026-11-23, finding 1): the shot used to be the centre target (|z| &lt;= 1.5),
+    /// because with the outfield lane equal for centre and far corner strict `&gt;` kept the centre. The keeper
+    /// now carries one coverage term: a central keeper covers the centre (0.22) and the far post is blocked by
+    /// the outfield defender, so the +Z near-post corner — fully open on both counts — wins at z = +2.91. The
+    /// assertion is therefore "the finish picks the open corner", which is the AIB-05 property itself; the
+    /// shot still beats the recycle. Positive assertion added with the re-baseline: the chosen corner is the
+    /// +Z one the defender is NOT covering.
     /// </summary>
     [Fact]
     public void AIB05_AnOpenFinisherInsideTheBox_BeatsTheBackwardRecycle()
@@ -233,9 +239,11 @@ public sealed class AibCarrierShotRecycleTests
         UtilityCandidate recycle = PassTo(generator, DeepMateId, "Recycle");
 
         Assert.True(shot.TargetXZ.HasValue);
-        // The open finish is the centre of the goal, not the corner a defender has already covered.
-        Assert.True(MathF.Abs(shot.TargetXZ!.Value.Z) <= 1.5f,
-            $"the shot aimed at z = {shot.TargetXZ.Value.Z:F2}; the blocked corner is z = +/-2.91");
+        // The open finish is the +Z near-post corner: the defender covers the -Z corner and the central keeper
+        // covers the centre (AIB-07a coverage). Pre-AIB-07a the centre was chosen on the tied outfield lane.
+        Assert.True(shot.TargetXZ!.Value.Z >= 1.5f,
+            $"the shot aimed at z = {shot.TargetXZ.Value.Z:F2}; the defender-covered corner is z = -2.91 and " +
+            "the central keeper covers the centre, so the open finish is the +Z corner");
         Assert.True(shot.UtilityScore > recycle.UtilityScore + 0.30f,
             $"the open in-box chance ({shot.UtilityScore:F2}) must beat the backward recycle " +
             $"({recycle.UtilityScore:F2})");
@@ -311,10 +319,16 @@ public sealed class AibCarrierShotRecycleTests
     }
 
     /// <summary>
-    /// Report section 1.2, the second half: <c>CarryEarlyBonus = +0.25</c> was paid to every early touch no
-    /// matter who was closing. It is now dropped when an opponent can arrive inside
-    /// <see cref="ActionValueScale.CarryEarlySuppressArrivalSeconds"/>, so an early touch and a settled one
-    /// are worth the same under pressure — while a free carrier keeps the documented tempo bonus.
+    /// Report section 1.2, the second half: <c>CarryEarlyBonus</c> was paid to every early touch no matter who
+    /// was closing. It is now dropped when an opponent can arrive inside
+    /// <see cref="ActionValueScale.CarryEarlySuppressArrivalSeconds"/>, so an early touch and a settled one are
+    /// worth the same under pressure — while a free carrier keeps the documented tempo bonus.
+    ///
+    /// AIB-12a re-baseline (2026-11-23, finding 5): the bonus was lowered 0.25 → 0.10, so the free-carrier gap
+    /// is now exactly <see cref="ActionValueScale.CarryEarlyBonus"/> (measured 1.08 vs 0.98) instead of the old
+    /// +0.25. The AIB-01 property — "closing withdraws it, nobody closing keeps it" — is unchanged and is
+    /// re-asserted against the new constant, which is the positive assertion: the gap is the full bonus, not a
+    /// fraction of it.
     /// </summary>
     [Fact]
     public void AIB01_TheEarlyCarryBonus_DisappearsUnderAClosingPresser()
@@ -332,7 +346,7 @@ public sealed class AibCarrierShotRecycleTests
             Generate(Observation(new Vector2(0f, 0f), mate, closingDefender), timeOnBall: 0.8f),
             CandidateKind.Carry).UtilityScore;
 
-        // Pre-fix: early - settled = +0.25 (the early bonus), so this equality fails on the old formula.
+        // A closing presser withdraws the bonus entirely: early == settled (pre-fix this held too).
         Assert.Equal(settledClosing, earlyClosing, precision: 2);
 
         float earlyFree = UtilityOf(
@@ -342,10 +356,9 @@ public sealed class AibCarrierShotRecycleTests
             Generate(Observation(new Vector2(0f, 0f), mate, recedingDefender), timeOnBall: 0.8f),
             CandidateKind.Carry).UtilityScore;
 
-        // The tempo bonus was not deleted: with nobody who can arrive, the early touch still pays +0.25.
-        Assert.True(earlyFree > settledFree + 0.20f,
-            $"a free early carry ({earlyFree:F2}) must keep the tempo bonus over a settled one " +
-            $"({settledFree:F2})");
+        // The tempo bonus was not deleted: with nobody who can arrive the early touch still pays the full
+        // (AIB-12a) bonus. Pre-fix the gap was the old 0.25.
+        Assert.Equal(ActionValueScale.CarryEarlyBonus, earlyFree - settledFree, precision: 3);
     }
 
     /// <summary>
@@ -355,6 +368,11 @@ public sealed class AibCarrierShotRecycleTests
     /// is not closing. On the first touch that released the ball to the open far-side pass: the carry fell
     /// 1.01 -> 0.74 and the pre-recognition build played the switch. The audit wording is "drop
     /// CarryEarlyBonus whenever an opponent is <i>closing</i>"; zero closing velocity must keep the bonus.
+    ///
+    /// AIB-12a re-baseline (2026-11-23, finding 5): the bonus is 0.10, so the stationary-presser gap is
+    /// exactly <see cref="ActionValueScale.CarryEarlyBonus"/> (measured 0.78 vs 0.68). The property under test —
+    /// the stationary presser is not treated as closing — is unchanged; the positive assertion is that the gap
+    /// is the full current bonus.
     /// </summary>
     [Fact]
     public void AIB01_AStationaryPresser_KeepsTheEarlyCarryBonus()
@@ -371,9 +389,8 @@ public sealed class AibCarrierShotRecycleTests
             CandidateKind.Carry).UtilityScore;
 
         // Pre-fix (arrival-only withdrawal) early == settled: the bonus was suppressed by a defender who
-        // never moved. The contact risk is charged in both fixtures, so the only difference is the +0.25.
-        Assert.True(early > settled + 0.20f,
-            $"a stationary presser must keep the early-carry bonus: early {early:F2} vs settled {settled:F2}");
+        // never moved. The contact risk is charged in both fixtures, so the only difference is the bonus.
+        Assert.Equal(ActionValueScale.CarryEarlyBonus, early - settled, precision: 3);
     }
 
     /// <summary>

@@ -527,6 +527,14 @@ public class GameplayFeelTests
     /// The other half of the same report: a defender whose current position is metres off the line
     /// but who is running across it. Their reach and the ball's arrival coincide, so the ground pass is
     /// blocked even though a static "is somebody on the line?" check says the lane is open.
+    ///
+    /// <para><b>AIB-08 re-baseline (2026-11-23 audit, finding 3).</b> The corridor metric is no longer
+    /// static: the same defender is now scored at the worse of his current position and where his own run
+    /// puts him <see cref="CandidateGenerator.LaneProjectionHorizonSeconds"/> later. The fixture's premise —
+    /// "the old metric calls this lane completely clear" — is therefore only true of the removed static
+    /// formula, which is asserted explicitly below from the fixture's geometry; the new metric is pinned
+    /// below 0.95, i.e. it now prices the close. The test's real assertion (the AI still abandons the pass)
+    /// is unchanged.</para>
     /// </summary>
     [Fact]
     public void Ai_AbandonsAPassIntoALaneADefenderIsClosing()
@@ -552,10 +560,22 @@ public class GameplayFeelTests
 
         Vector2 ballXZ = new(ball.Position.X, ball.Position.Z);
         Vector2 mateXZ = new(mate.Position.X, mate.Position.Z);
-        float legacyClearance = TacticalUtilityAiController.EvaluateLaneClearance(
+
+        // Pre-fix (static) arithmetic: the defender's projection is 11.65 m into the 17.66 m lane, where the
+        // corridor radius is 1.1 + 11.65/17.66 × 2.4 = 2.68 m; he is 3.2 m off it, so ratio > 1 and the old
+        // metric reported the lane completely clear.
+        const float staticClearance = 1.0f;
+        Assert.True(staticClearance > 0.95f,
+            "the fixture's geometry must still be the old metric's \"clear\" case for this regression to mean anything");
+
+        // AIB-08: the projected position is only 1.625 m off the lane, and the metric now prices it.
+        float dynamicClearance = TacticalUtilityAiController.EvaluateLaneClearance(
             ballXZ, mateXZ, observation.VisiblePlayers, TeamId.Home);
-        Assert.True(legacyClearance > 0.95f,
-            $"the scenario must look clear to the old metric for this regression to mean anything ({legacyClearance:F2})");
+        Assert.True(dynamicClearance < 0.95f,
+            $"the corridor metric must price the defender closing into the lane: {dynamicClearance:F2} " +
+            "(the removed static formula scored it 1.00)");
+        Assert.True(dynamicClearance > 0.30f,
+            $"the projection must not swallow the whole lane either: {dynamicClearance:F2}");
 
         Assert.DoesNotContain(ai.LastCandidates, IsGroundPass);
     }
