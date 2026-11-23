@@ -654,11 +654,12 @@ public enum TeamId
 /// routine tempo lockout, which itself is unchanged. (4) <b>A receiver meets the ball on its path</b>: the
 /// reception planner's open-body and escape offsets drop to 0.40 / 0.50 m and every body-offset plan is clamped
 /// to 0.55 m of the ball's predicted trajectory (the old 1.1 / 1.3 m offsets already exceeded the 1.24 m
-/// execution reach), and the approach deadband tightens 0.45 -&gt; 0.15 m. (5) <b>A ground pass stays in play
-/// and arrives firm</b>: both planners project the calibrated stop point and cap the power when a near-line
-/// target would roll out of the pitch (that cap was reworked in version 57 — see below), and a timed-region pass
-/// can be floored to a minimum arrival pace; the crisp arrival pace itself stays at 9.0 m/s because a measured
-/// 7.0 m/s experiment lengthened flights and increased lane blocking. (6) <b>The attack uses the middle</b>:
+/// execution reach), and the approach deadband tightens 0.45 -&gt; 0.15 m. (5) <b>A ground pass arrives firm and
+/// near-line overruns are addressed</b>: a timed-region pass can be floored to a minimum arrival pace, and both
+/// planners project the calibrated stop point and cap the power when a near-line target would roll out of the
+/// pitch (that cap shipped at this version but was replaced in 57 — see below — because it could only work by
+/// turning the ball into a roller); the crisp arrival pace itself stays at 9.0 m/s because a measured 7.0 m/s
+/// experiment lengthened flights and increased lane blocking. (6) <b>The attack uses the middle</b>:
 /// midfield carries value goalward penetration from -10 m, the line-break target floor drops 12 -&gt; 4 m, and
 /// the width -&gt; central-threat reception blend moves from +17.5/+25.5 m to +5/+18 m. Trajectories differ from
 /// version 55 wherever a carrier, passer, receiver, runner or off-ball anchor decided.</item>
