@@ -214,8 +214,28 @@ public static class RunScoring
     /// </summary>
     public const float MaxPlausibleSprintMetersPerSecond = 11f;
 
-    /// <summary>Distance at which the arrival race stops caring about a defender.</summary>
+    /// <summary>
+    /// Arrival advantage when <b>no opponent is visible at all</b> (AUD-P1): the player genuinely cannot
+    /// say whether the space is contested, so the race is priced neutral rather than as a won one. This is
+    /// the "no evidence" value; it must not be returned when opponents <i>are</i> visible and none can
+    /// reach the region — see <see cref="UncontestedArrivalAdvantage"/>.
+    /// </summary>
     public const float NeutralArrivalAdvantage = 0.5f;
+
+    /// <summary>
+    /// AUD-P1: arrival advantage when opponents <b>are</b> visible but none can plausibly reach the meeting
+    /// region inside the horizon — the runner wins the race by so far that it carries no doubt.
+    ///
+    /// The old scan returned <see cref="NeutralArrivalAdvantage"/> for this picture after merely failing to
+    /// find a candidate (an opponent too far to clear the
+    /// <see cref="MaxPlausibleSprintMetersPerSecond"/> plausibility filter was skipped exactly like the
+    /// absence of opponents), so a wide-open run into space was priced at 0.5 instead of 1.0. Through
+    /// <c>RunCandidateGenerator.ConfidenceFrom</c> that cost the run <b>0.55 × 0.5 = 0.275</b> confidence,
+    /// and a promised <c>ToRun</c> then entered the pass completion estimate as a receiver term a third
+    /// below a pass to feet. The distinction is the whole fix: <i>nobody known</i> stays neutral, <i>nobody
+    /// can get there</i> is a won race.
+    /// </summary>
+    public const float UncontestedArrivalAdvantage = 1f;
 
     /// <summary>Closest useful pass into a run: nearer than this is a give-and-go, not a through ball.</summary>
     public const float MinUsefulPassMeters = 6f;
@@ -382,12 +402,29 @@ public static class RunScoring
     /// against the <i>nearest</i> believed opponent to the region, through the reach model, with the
     /// look-ahead capped just past this player's own arrival — a defender who cannot get there by then
     /// has lost the race by definition.
+    ///
+    /// AUD-P1: the scan distinguishes the two absences of a contest that the old code collapsed into one
+    /// neutral answer:
+    /// <list type="bullet">
+    /// <item>no <b>other-team</b> entity is visible with a usable estimate — nothing is known, so the
+    ///   answer is <see cref="NeutralArrivalAdvantage"/> (no evidence, not a won race);</item>
+    /// <item>opponents are visible, but every one is either too far to clear the
+    ///   <see cref="MaxPlausibleSprintMetersPerSecond"/> plausibility filter or still unreachable through
+    ///   the reach model inside the horizon — nobody can get there, so the answer is
+    ///   <see cref="UncontestedArrivalAdvantage"/>.</item>
+    /// </list>
+    /// The evidence flag is set <b>after</b> the own-team skip and <b>after</b> the finite-estimate check:
+    /// a team-mate is not an opponent, and an opponent whose estimated position is not finite is no
+    /// evidence either — the estimate cannot be placed on the pitch, so it neither contests the run nor
+    /// proves that a defender exists near it. Allocation-free: the single existing pass over the
+    /// observation's visible list now also carries the flag.
     /// </summary>
     public static float ArrivalAdvantage(in FootballerObservation obs, Vector2 meetXZ, float mySeconds)
     {
         float horizon = MathF.Min(mySeconds + ArrivalAdvantageScaleSeconds, ArrivalHorizonSeconds + ArrivalAdvantageScaleSeconds);
         float closestStraight = float.PositiveInfinity;
         int candidateIndex = -1;
+        bool opponentVisible = false;
 
         IReadOnlyList<PerceivedEntity> visible = obs.VisiblePlayers;
         for (int i = 0; i < visible.Count; i++)
@@ -398,6 +435,10 @@ public static class RunScoring
             Vector2 entityXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
             if (!SimMath.IsFinite(entityXZ)) continue;
 
+            // AUD-P1: from here on an opponent is in the picture, even if he is too far away to contest
+            // this region — "nobody can get there" is a won race, not unknown ground.
+            opponentVisible = true;
+
             float straight = Vector2.Distance(entityXZ, meetXZ);
             if (straight > horizon * MaxPlausibleSprintMetersPerSecond) continue;
             if (straight >= closestStraight) continue;
@@ -406,7 +447,8 @@ public static class RunScoring
             candidateIndex = i;
         }
 
-        if (candidateIndex < 0) return NeutralArrivalAdvantage;
+        if (candidateIndex < 0)
+            return opponentVisible ? UncontestedArrivalAdvantage : NeutralArrivalAdvantage;
 
         ReachEstimate theirs = TimeToReachModel.ToPoint(
             ReachKinematics.FromEntity(visible[candidateIndex]), meetXZ, horizon);

@@ -186,14 +186,50 @@ public sealed class ReceptionPlanner
     // Geometry of each touch.
     // ---------------------------------------------------------------------------------------------
 
-    /// <summary>How far to the side of the ball the body meets it to open up, in metres.</summary>
-    public const float OpenBodyOffsetMeters = 1.1f;
+    /// <summary>
+    /// How far to the side of the ball's predicted path the body meets it to open up, in metres.
+    ///
+    /// AUD-P4: this is a <i>body</i> offset, so it has to stay inside the reach execution will actually
+    /// apply. Execution's planar receiving reach is <c>0.75 × 1.65 = 1.24 m</c>
+    /// (<see cref="BallContactRules.ReachRadius"/>), and the candidate's approach command parks the body
+    /// within ~0.15 m of the planned point, so the meeting point has to stay well inside that reach.
+    /// 0.40 m leaves ~0.69 m for the approach error and the ball's own movement, where the pre-fix 1.1 m
+    /// was already outside the 1.24 m reach before the body even stopped moving (audit Capture 3: the
+    /// pass rolled ~1.1 m past the receiver and out of bounds).
+    /// </summary>
+    public const float OpenBodyOffsetMeters = 0.40f;
 
     /// <summary>How far ahead of the meeting point a stride touch meets the ball, in metres.</summary>
     public const float StrideLeadMeters = 0.8f;
 
-    /// <summary>How far a touch away from the presser carries the meeting point, in metres.</summary>
-    public const float EscapeOffsetMeters = 1.3f;
+    /// <summary>
+    /// How far a touch away from the presser carries the meeting point, in metres.
+    ///
+    /// AUD-P4: the escape offset is a body offset too, with the same arithmetic as
+    /// <see cref="OpenBodyOffsetMeters"/>: execution's planar receiving reach is <c>0.75 × 1.65 = 1.24 m</c>
+    /// (<see cref="BallContactRules.ReachRadius"/>) and the candidate's approach deadband parks the body
+    /// inside ~0.15 m of the planned point. 0.50 m leaves ~0.59 m for the body's approach error, where the
+    /// pre-fix 1.3 m put the touch point beyond the reach and let a firm pass roll past it.
+    /// </summary>
+    public const float EscapeOffsetMeters = 0.50f;
+
+    /// <summary>
+    /// AUD-P4 invariant: a body-offset touch (<see cref="ReceptionTouchKind.OpenBody"/>,
+    /// <see cref="ReceptionTouchKind.EscapePressure"/>) may plan its meeting point at most this far from
+    /// the ball's predicted trajectory sample at <see cref="ReceptionPlan.ArrivalSeconds"/>, in metres.
+    ///
+    /// Execution's planar receiving reach is <c>0.75 × 1.65 = 1.24 m</c>
+    /// (<see cref="BallContactRules.ReachRadius"/>) and the candidate's approach command parks the body
+    /// inside ~0.15 m of the planned point, so a planned point further than this from the trajectory can
+    /// leave a firm pass rolling past the body (audit Capture 3). <c>0.55 + 0.15 = 0.70 m</c> stays
+    /// <c>0.54 m</c> inside the reach, with margin for the body's own approach; both offset constants are
+    /// below it, and <see cref="TryPlan"/> clamps every produced plan to it so a later tuning change
+    /// cannot silently re-break the contact geometry. <see cref="ReceptionTouchKind.Kill"/> and
+    /// <see cref="ReceptionTouchKind.Shield"/> meet the sample exactly;
+    /// <see cref="ReceptionTouchKind.StrideTouch"/> is documented beside its use as a forward touch on the
+    /// path rather than a body offset.
+    /// </summary>
+    public const float MaxTrajectoryOffsetMeters = 0.55f;
 
     /// <summary>How much of the escape direction leans up the pitch instead of straight away, 0..1.</summary>
     public const float EscapeUpfieldBias = 0.75f;
@@ -299,6 +335,13 @@ public sealed class ReceptionPlanner
 
     // The common half of every option this decision: what the ball does and what the receiver believes.
     private float _arrivalSeconds;
+
+    /// <summary>
+    /// AUD-P4: the ball's predicted trajectory sample this decision meets, in the ground plane. It is the
+    /// anchor of the trajectory-tube invariant: every body-offset meeting point must stay within
+    /// <see cref="MaxTrajectoryOffsetMeters"/> of it (see <see cref="ClampToTrajectory"/>).
+    /// </summary>
+    private Vector2 _meetingSampleXZ;
     private float _pressure;
     private float _uncertainty;
     private bool _pressureKnown;
@@ -416,6 +459,7 @@ public sealed class ReceptionPlanner
         Vector2 attackXZ = AttackVector(obs);
 
         _arrivalSeconds = meetSeconds;
+        _meetingSampleXZ = meetXZ;
         _pressure = pressure;
         _uncertainty = uncertainty;
         _pressureKnown = pressureKnown;
@@ -434,6 +478,14 @@ public sealed class ReceptionPlanner
             sprint: false, shield: false, space01: 0f, pace01: 0f);
 
         // 3. Stride touch: keep running and touch the ball into the space ahead of the run.
+        //    The lead is NOT part of the AUD-P4 body-offset invariant: it is a forward touch on the ball's
+        //    own path, not a step to one side of it, so it carries the contact point ahead of the meeting
+        //    sample instead of beside it. It cannot escape the same reach argument either: the predicted
+        //    path passes through the meeting sample, so a touch point one StrideLeadMeters (0.8 m) from
+        //    that sample is at most 0.8 m from the path where the ball is, and even with the candidate's
+        //    ~0.15 m approach deadband the body still ends up < 0.95 m from the ball — inside the 1.24 m
+        //    receiving reach (BallContactRules.ReachRadius). That is why the lead keeps its value: it makes
+        //    the touch forward rather than a stop-and-trap.
         Vector2 runXZ = SafeNormalize(new Vector2(obs.SelfVelocity.X, obs.SelfVelocity.Z), actionFacing);
         Vector2 stridePoint = meetXZ + runXZ * StrideLeadMeters;
         float strideClearance = NearestOpponentDistance(obs, stridePoint + runXZ * StrideLeadMeters, out _);
@@ -511,6 +563,10 @@ public sealed class ReceptionPlanner
         float pace01)
     {
         meetingPointXZ = ClampToPitch(meetingPointXZ);
+        // AUD-P4: a body-offset touch may not carry the contact point further from the ball's predicted
+        // path than the receiving reach tolerates. The clamp happens on the draft, before the reach and
+        // value tests, so feasibility and score are judged on the point the command will really use.
+        meetingPointXZ = ClampToTrajectory(kind, meetingPointXZ);
         facingXZ = SafeNormalize(facingXZ, AttackVector(obs));
 
         // Feasible means the body can physically be at the meeting point by the time the ball is there:
@@ -583,9 +639,17 @@ public sealed class ReceptionPlanner
         for (int i = 0; i < _optionCount; i++)
         {
             Draft draft = _drafts[i];
+
+            // AUD-P4: the invariant is re-applied to the plan that actually becomes the command. The
+            // draft was already clamped in AddOption; this second gate is what guarantees that no plan
+            // path added later can emit a body-offset meeting point the body cannot reach the ball from.
+            Vector2 meetingPointXZ = draft.Feasible
+                ? ClampToTrajectory(draft.Kind, draft.MeetingPointXZ)
+                : default;
+
             _plans[i] = draft.Feasible
                 ? new ReceptionPlan(
-                    draft.Kind, _nextAction, draft.MeetingPointXZ, draft.FacingXZ,
+                    draft.Kind, _nextAction, meetingPointXZ, draft.FacingXZ,
                     draft.Sprint, draft.Shield, arrivalSeconds, pressure, uncertainty, pressureKnown,
                     draft.NextActionValue, draft.Score, tick)
                 : ReceptionPlan.None;
@@ -828,6 +892,28 @@ public sealed class ReceptionPlanner
     private Vector2 ClampToPitch(Vector2 point) => new(
         Math.Clamp(point.X, -_pitch.HalfLength + 1f, _pitch.HalfLength - 1f),
         Math.Clamp(point.Y, -_pitch.HalfWidth + 1f, _pitch.HalfWidth - 1f));
+
+    /// <summary>
+    /// AUD-P4: bounds a body-offset meeting point to <see cref="MaxTrajectoryOffsetMeters"/> from the
+    /// ball's predicted trajectory sample (<see cref="_meetingSampleXZ"/>), clamping the offset along its
+    /// own direction so the touch keeps its side/escape intent while the contact point stays inside the
+    /// receiving reach. The arithmetic behind the bound is documented on
+    /// <see cref="MaxTrajectoryOffsetMeters"/>.
+    ///
+    /// <para>Kill and Shield meet the sample itself, so the clamp is a no-op for them (and keeps that
+    /// exactness if a later option is given a tiny offset). StrideTouch is exempt on purpose: its lead is
+    /// a forward touch on the ball's own path, bounded by <see cref="StrideLeadMeters"/> instead.</para>
+    /// </summary>
+    private Vector2 ClampToTrajectory(ReceptionTouchKind kind, Vector2 meetingPointXZ)
+    {
+        if (kind == ReceptionTouchKind.StrideTouch) return meetingPointXZ;
+
+        Vector2 offset = meetingPointXZ - _meetingSampleXZ;
+        float length = offset.Length();
+        if (!float.IsFinite(length) || length <= MaxTrajectoryOffsetMeters) return meetingPointXZ;
+
+        return _meetingSampleXZ + offset * (MaxTrajectoryOffsetMeters / length);
+    }
 
     private static Vector2 AttackVector(in FootballerObservation obs) => new(obs.AttackingDirectionX, 0f);
 

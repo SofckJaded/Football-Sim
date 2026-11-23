@@ -64,11 +64,19 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     /// <summary>
     /// AIB-04a: attack-relative projection, in metres, from which the goalward carry term starts to ramp in.
-    /// A build-up carry needs room more than it needs the goal line — the reported drift to the empty flank
-    /// is a middle- and final-third defect — and a flat goal term in the own third walked carriers into the
-    /// press that the build-up gate pins against. Ten metres past the halfway line is the attacking half.
+    /// A build-up carry needs room more than it needs the goal line, and a flat goal term in the own third
+    /// walked carriers into the press that the build-up gate pins against. Ten metres past the halfway line
+    /// was the original start.
+    ///
+    /// AUD-P6 / Fix 5.3 (2026-11-23): the start moved from <c>+10 m</c> to <c>−10 m</c>. The audit's capture
+    /// found a carrier near the centre circle drifting to the empty flank because the old start made the
+    /// weight exactly <c>0.0</c> for every projection below <c>+10 m</c>, leaving
+    /// <c>0.55 x space + 0.45 x boundarySafety</c> as pure empty-space seeking. The ramp is now
+    /// <c>0.26 x clamp((proj − (−10)) / (20 − (−10)), 0, 1)</c> = <c>0.26 x clamp((proj + 10) / 30, 0, 1)</c>:
+    /// exactly <c>0.0</c> at and below −10 m, so the own-third build-up behaviour this gate pins is
+    /// untouched; ≈0.087 on the halfway line; ≈0.156 at +8 m; and full weight from +20 m, exactly as before.
     /// </summary>
-    internal const float CarryGoalwardRampFromProjX = 10f;
+    internal const float CarryGoalwardRampFromProjX = -10f;
 
     /// <summary>AIB-04a: attack-relative projection, in metres, at which the goalward carry term is at full weight.</summary>
     internal const float CarryGoalwardRampToProjX = 20f;
@@ -245,8 +253,16 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>
     /// AIB-04a: attack-relative projection, in metres, the aim point must reach for a ball to be a
     /// line-breaking pass rather than a square ball (the attacking half, where lines exist to break).
+    ///
+    /// AUD-P6 / Fix 5.3 (2026-11-23): lowered from <c>12 m</c> to <c>4 m</c>. The 12 m floor rewarded central
+    /// progression only once the ball was already deep, so a line-breaking ball played in midfield or in
+    /// transition — the moment the audited attack actually needed to go forward — earned nothing while the
+    /// wide switch's own preference (A8.3) was available at every projection. The bounded
+    /// <see cref="LineBreakPreferenceMax"/> cap, the <see cref="LineBreakMinLaneClearance01"/> lane gate, the
+    /// half-space width limit and the separate <c>targetProj &gt; ballProj + 2 m</c> forward-ball gate are all
+    /// unchanged, so this only lets the same rule see earlier — not a bigger bonus.
     /// </summary>
-    public const float LineBreakMinTargetProjMeters = 12f;
+    public const float LineBreakMinTargetProjMeters = 4f;
 
     /// <summary>
     /// AIB-04a: lateral half-width, in metres, of the channel around the aim point an opponent has to stand
@@ -434,6 +450,20 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Reason text for a human caller whose request could not be planned.</summary>
     public const string RejectionUnplannable = "unplannable";
 
+    /// <summary>
+    /// AUD-P3 (audit 2026-11-23): reason text for a space probe whose grass is occupied — a believed
+    /// opponent is standing in it (<see cref="SpaceProbeCrowdRadiusMeters"/>) or the probe's
+    /// <see cref="EvaluateSpaceFreedom"/> is too low for it to be called space.
+    /// </summary>
+    public const string RejectionSpaceContested = "space-contested";
+
+    /// <summary>
+    /// AUD-P3: reason text for a space probe the receiver cannot win: either he cannot reach the point
+    /// inside the reach horizon at all, or the nearest believed opponent would also be there and the
+    /// receiver's arrival does not beat him by <see cref="SpaceRaceMarginSeconds"/>.
+    /// </summary>
+    public const string RejectionSpaceRaceLost = "space-race-lost";
+
     // ---------------------------------------------------------------------------------------------
     // A8.1 — bounded combinations. The numbers are the hand-set calibration of the trigger, the two
     // preference bonuses and the return run's utility; the contract's own lifecycle (delay, arrival,
@@ -572,6 +602,130 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// is read was never an option. The rank bonus is a bounded rescue, never the decision.
     /// </summary>
     internal const float SwitchRecognitionRankBonus = 0.35f;
+
+    // ---------------------------------------------------------------------------------------------
+    // AUD-P3 (audit 2026-11-23) — the carrier-initiated pass into space (`ToSpace`).
+    //
+    // Every space pass used to be receiver-initiated. `TryBuildRunPassOption` needs an advertised run or a
+    // team-mate already sprinting at `MinUncommittedRunSpeed`, and even then the uncommitted lead is
+    // hedged to 1.5 m on top of the planner's 2.5 m cap. A carrier could therefore not look at a
+    // team-mate with empty onside grass in front of him, play the ball into that grass, and thereby
+    // trigger the run — the audit's Capture 4. The builder below does exactly that: 1–2 bounded probes in
+    // the receiver's own lane, a physical race test over the one reach model, and a *firm* (crisp-floor)
+    // ball timed to the grass rather than a slow roller aimed at where the receiver is standing.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// AUD-P3: candidate tag of a carrier-initiated pass into empty grass ahead of a team-mate. Public
+    /// because it is a candidate identity — commitment, the claim path and the inspector recognise the
+    /// action by it. It is deliberately <b>not</b> in <see cref="IsDeliveredToRun"/>: the carrier chose
+    /// the grass, no team-mate announced that meeting, so this ball must not claim an advertisement.
+    /// </summary>
+    public const string SpacePassTag = "ToSpace";
+
+    /// <summary>
+    /// AUD-P3: the nearer of the two space probes, in metres ahead of the receiver along the attack axis.
+    /// The pair (8 m, 14 m) is the audit's own suggestion: 8 m is a ball the receiver attacks in a stride,
+    /// 14 m is the penetrative ball that actually turns him round and goes past a line.
+    /// </summary>
+    public const float SpaceProbeNearMeters = 8f;
+
+    /// <summary>
+    /// AUD-P3: the farther of the two space probes, in metres ahead of the receiver along the attack axis.
+    /// It is tried first — if the far grass is onside and won, it is the more penetrative ball; the near
+    /// probe is the bounded fallback when the far one is offside-limited or crowded. Two probes, never more.
+    /// </summary>
+    public const float SpaceProbeFarMeters = 14f;
+
+    /// <summary>
+    /// AUD-P3: smallest forward gain, in metres, a probe must still offer after the offside/pitch clamp
+    /// before it is a pass into space at all. Without it a receiver standing on the line would be "played
+    /// into space" half a metre ahead of his own feet — a duplicate of the feet pass wearing a new tag.
+    /// </summary>
+    public const float SpaceProbeMinForwardMeters = 3f;
+
+    /// <summary>
+    /// AUD-P3: margin every probe keeps from the goal line and both touchlines, in metres. The audit's own
+    /// figure (">= 3.0 m inside touchlines"): a firm ball into grass three metres from the line is a ball
+    /// the receiver can still run onto, not a ball aimed out of play.
+    /// </summary>
+    public const float SpaceProbePitchMarginMeters = 3f;
+
+    /// <summary>
+    /// AUD-P3: radius around a probe inside which a believed opponent makes the grass crowded, in metres.
+    /// Two bodies inside four metres are not "space": the arena the receiver would run into is occupied.
+    /// </summary>
+    public const float SpaceProbeCrowdRadiusMeters = 4f;
+
+    /// <summary>
+    /// AUD-P3: minimum <see cref="EvaluateSpaceFreedom"/> at the probe (0..1, saturating at
+    /// <see cref="SpaceFreedomSaturationMeters"/> = 9 m), so 0.55 is roughly five metres of room. The
+    /// hard radius above is the "nobody is standing there" test; this is the "there is grass to run into"
+    /// test, because the ball is played to a region the receiver has to attack.
+    /// </summary>
+    public const float SpaceProbeMinFreedom01 = 0.55f;
+
+    /// <summary>
+    /// AUD-P3: race margin, in seconds, by which the receiver's real arrival at the probe must beat the
+    /// nearest believed opponent's. 0.35 s is a clear stride, not a photo finish: below it the "space" is
+    /// a 50/50 and a firm ball into it is a pass into a contest.
+    /// </summary>
+    public const float SpaceRaceMarginSeconds = 0.35f;
+
+    /// <summary>
+    /// AUD-P3: horizon of the race query, in seconds. The shared reach model's own default — a race that
+    /// cannot be decided inside it is not a race the carrier can plan against.
+    /// </summary>
+    public const float SpaceRaceHorizonSeconds = TimeToReachModel.DefaultHorizonSeconds;
+
+    /// <summary>
+    /// AUD-P3: radius of the promised meeting region, in metres. The promise is the grass, not a dot: the
+    /// ball is played to arrive in a region the receiver runs into, and the pass model's promise timing
+    /// tolerance scales with it (<c>radius x 0.5 / PromisedRegionCrossSpeed</c> = 0.31 s here).
+    /// </summary>
+    public const float SpacePromiseRadiusMeters = 4f;
+
+    /// <summary>
+    /// AUD-P3: base confidence of a space promise. The confidence is derived from the measured race
+    /// margin — <c>base + weight x clamp(margin / scale, 0, 1)</c>, clamped into
+    /// <c>[floor, 1]</c> — so a receiver who wins by the minimum 0.35 s gets
+    /// <c>0.5 + 0.5 x 0.35 = 0.675</c> and one who wins by a second or more gets 1.0. It is never the
+    /// arbitrary 1.0 that would make an unraced ball look certain, and it is the only place the race
+    /// enters the pass model (the promise replaces the receiver-arrival estimate).
+    /// </summary>
+    public const float SpacePromiseConfidenceBase = 0.5f;
+
+    /// <summary>AUD-P3: how much of a full second's race margin the promise confidence carries.</summary>
+    public const float SpacePromiseConfidenceMarginWeight = 0.5f;
+
+    /// <summary>AUD-P3: race margin, in seconds, at which the confidence term saturates (a clear win).</summary>
+    public const float SpacePromiseConfidenceMarginScaleSeconds = 1f;
+
+    /// <summary>
+    /// AUD-P3: floor of the derived space-promise confidence. Unreachable with the 0.35 s race margin
+    /// (<c>base + weight x 0.35 = 0.675</c>); kept as the stated lower bound of the derivation so a later
+    /// relaxation of the margin cannot produce a zero-confidence "promise" that the pass model would
+    /// silently treat as unpromised.
+    /// </summary>
+    public const float SpacePromiseConfidenceFloor = 0.2f;
+
+    /// <summary>
+    /// AUD-P6 / Fix 5.1: the fraction of the routine pass trigger a penetrative ball gets to wait, as a
+    /// first-touch release window. The audit asked for "<b>immediately</b>, without waiting out the 0.45 s
+    /// lockout", and that was implemented first — but a zero lockout is contradicted by two recorded
+    /// invariants: AUD-F18 pins the team tempo trait ("tempo must change how quickly a carrier releases the
+    /// ball") and <c>ScheduledDecisionTests</c> pins that a scheduled decision's first scored command is a
+    /// movement command, not a kick. At a zero lockout every tempo released a pass on tick 1, deleting the
+    /// tempo ordering the trait exists for. The measured compromise is this scale: a penetrative ball waits
+    /// <c>passTriggerSeconds x 0.35</c> (0.07–0.23 s across the 0.20–0.65 s tempo band, i.e. 4–14 ticks)
+    /// instead of 0.20–0.65 s, which keeps the trait's ordering (fast &lt; slow) while releasing the
+    /// one-touch through ball well before the routine lockout. The routine, lateral and safe passes keep the
+    /// full delay.
+    /// <para>Note that the <b>unit</b> of the audit's own fix is preserved: inside the window only the
+    /// penetrative subset is built (promised/advertised run, <c>ToSpace</c>, a geometrically line-breaking
+    /// feet ball), never the routine set.</para>
+    /// </summary>
+    public const float PenetrativeReleaseScale = 0.35f;
 
     private readonly PitchDimensions _pitch;
     private readonly MatchCommunicationContext? _communication;
@@ -805,7 +959,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         // re-decided identical pass is suppressed by the board rather than restarting its delay.
         if (!_ai.EnableCombinations) return;
 
-        if (key.Kind == CandidateKind.Pass && key.TargetPlayerId > 0 &&
+        // AUD-P3: a ToSpace ball is delivered into grass ahead of the receiver, not to the feet/region the
+        // contract's return was timed from — the receiver cannot meet a one-two's return moment from a
+        // sprint onto a ball he has not reached yet. The space candidate therefore never publishes a
+        // contract, even when a proposal was formed for the same receiver by the fullest pass set. (The
+        // receiver-side abandonment below still runs: choosing the space ball over the contract ends it.)
+        bool publishesContract = !string.Equals(key.TargetTag, SpacePassTag, StringComparison.Ordinal);
+        if (publishesContract && key.Kind == CandidateKind.Pass && key.TargetPlayerId > 0 &&
             TryGetCombinationProposal(key.TargetPlayerId, out CombinationProposal proposal) &&
             _communication is not null)
         {
@@ -1003,7 +1163,14 @@ public sealed class CandidateGenerator : IAiStateResettable
         // meeting region, a promise, or a human who called for the ball. A feet pass is by definition not a
         // promise, so it plans with the planner's uncommitted hedge (PassPlanner.UncommittedLeadMaxMeters);
         // an unadvertised ToRun gets the same hedge plus its own small extra lead.
-        bool ReceiverCommittedToRun = true);
+        bool ReceiverCommittedToRun = true,
+        // AUD-P2 / Fix 1.2 (2026-11-23): which progression the pass preference is scored on. A run or
+        // through ball is played into the space the runner is heading for, so its progression is the plan's
+        // <b>aim point</b> relative to the carrier (<see cref="TryAddGroundPass"/> computes it once the plan
+        // exists). A ball to feet keeps the receiver's own ground. Both variants used to read the receiver's
+        // feet, so a through ball aimed 12 m past a runner earned exactly the same progress and directness
+        // preference as the same ball rolled to his feet — the audit's ToRun-loses-to-ToFeet inversion.
+        bool ProgressFromTarget = false);
 
     /// <summary>
     /// Every feasible pass the carrier can play (A4.1), scored with A4.2's success model.
@@ -1024,8 +1191,21 @@ public sealed class CandidateGenerator : IAiStateResettable
         bool humanCalled = _communication?.IsActiveCallFor(obs.SelfTeam) == true;
         // Tempo (team): a high-tempo side releases the ball sooner after receiving it.
         float passTriggerSeconds = Math.Clamp(0.45f - 0.30f * (obs.TeamProfile.Tempo01 - 0.55f), 0.20f, 0.65f);
-        bool readyToPass = _timeOnBall >= passTriggerSeconds || underHeavyPressure || humanCalled;
-        if (!readyToPass) return;
+        // AUD-P6 / Fix 5.1 (2026-11-23): the tempo delay is kept for routine, lateral and safe passes —
+        // it is the calibrated release lever and is neither deleted nor lowered. What changes is that a
+        // *penetrative* ball is evaluated on the first touch instead of being suppressed with everything
+        // else: a promised/advertised run, the carrier-initiated ToSpace pass (AUD-P3), and a plain pass
+        // whose geometric aim point would already be a line break (gated cheaply below, before planning).
+        // The alternative — a receiver taking a settling touch while a wide-open runner goes — is the
+        // audit's Capture 1: the first touch generated zero pass candidates while the carry bonus won.
+        //
+        // The penetrative window is *scaled*, not zero (see PenetrativeReleaseScale): a zero lockout was
+        // tried first and deleted the AUD-F18 tempo trait (every tempo released on tick 1), so a
+        // penetrative ball waits a fraction of the team's own routine trigger instead.
+        bool tempoReady = _timeOnBall >= passTriggerSeconds || underHeavyPressure || humanCalled;
+        bool penetrativeReady = _timeOnBall >= passTriggerSeconds * PenetrativeReleaseScale;
+        if (!tempoReady && !penetrativeReady) return;
+        bool penetrativeOnly = !tempoReady;
 
         RankPassTargets(obs, ballXZ, offsideLineProjX, humanCalled);
 
@@ -1033,7 +1213,12 @@ public sealed class CandidateGenerator : IAiStateResettable
         // fills the proposal table before the pass candidates are priced. Receivers it did not propose for
         // keep A8.1's heuristic trigger below, so the search is a bounded improvement on the best options
         // rather than a replacement that silences the rest of the pass set.
-        if (_ai.EnableCombinations && _ai.EnableShallowSearch)
+        //
+        // AUD-P6 / Fix 5.1: the search stays behind the tempo gate. It is the expensive branch (a bounded
+        // tree of continuations, each a fresh plan and estimate) and a first-touch release is a one-touch
+        // ball, not a combination the carrier has had time to set up; making it first-touch too would spend
+        // the A8.2 budget on a decision that is by definition taken before the touch settles.
+        if (!penetrativeOnly && _ai.EnableCombinations && _ai.EnableShallowSearch)
             RunCombinationSearch(obs, ballXZ, offsideLineProjX);
 
         int loftedBudget = MaxLoftedCandidates;
@@ -1048,11 +1233,29 @@ public sealed class CandidateGenerator : IAiStateResettable
         {
             if (!TryGetVisibleEntity(obs, _passTargetIds[index], out PerceivedEntity mate)) continue;
             AddPassesToMate(
-                obs, mate, ballXZ, selfXZ, offsideLineProjX, humanCalled, groundCompletionFloor, ref loftedBudget);
+                obs, mate, ballXZ, selfXZ, offsideLineProjX, humanCalled, groundCompletionFloor,
+                penetrativeOnly, ref loftedBudget);
         }
+
+        // M1 / AUD-P6: a settling decision still builds no *routine* pass set. The pre-rank above was
+        // filled only to choose which receivers get a penetrative probe, and the recycle filter reads this
+        // buffer as "the ordinary pass set already offered him" (WasOfferedAsPassTarget) — so restoring the
+        // empty state keeps M1's "a carrier who has just collected the ball still has his safe ball
+        // backwards" property exactly. A penetrative ball that was actually offered is a different delivery
+        // from the backward recycle (forward grass vs a ball to the man's feet), so it must not filter it.
+        if (penetrativeOnly) _passTargetCount = 0;
     }
 
-    /// <summary>Adds the feet and run-region variants for one receiver, plus its raised alternative.</summary>
+    /// <summary>
+    /// Adds the feet and run-region variants for one receiver, plus the carrier-initiated space ball
+    /// (AUD-P3) and its raised alternative.
+    ///
+    /// <paramref name="penetrativeOnly"/> is AUD-P6 / Fix 5.1's tempo answer: when the carrier is inside the
+    /// routine pass delay only the high-value penetrative balls are built (a promised/advertised run, the
+    /// new <c>ToSpace</c> probe and — cheaply pre-gated on pure geometry — a line-breaking feet ball). The
+    /// routine feet pass, the uncommitted sprint ball, the combination proposal and the raised alternative
+    /// keep waiting, which is what preserves the calibrated tempo behaviour.
+    /// </summary>
     private void AddPassesToMate(
         in FootballerObservation obs,
         in PerceivedEntity mate,
@@ -1061,6 +1264,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         float offsideLineProjX,
         bool humanCalled,
         float groundCompletionFloor,
+        bool penetrativeOnly,
         ref int loftedBudget)
     {
         bool isHumanCaller = humanCalled && mate.PlayerId == _communication!.HumanCallForPassPlayerId;
@@ -1068,7 +1272,8 @@ public sealed class CandidateGenerator : IAiStateResettable
             return;
 
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
-        float rawDistance = Vector2.Distance(ballXZ, new Vector2(mate.EstimatedPosition.X, mate.EstimatedPosition.Z));
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+        float rawDistance = Vector2.Distance(ballXZ, mateXZ);
 
         bool anyGroundPass = false;
         bool anyLaneBlocked = false;
@@ -1093,7 +1298,9 @@ public sealed class CandidateGenerator : IAiStateResettable
                 MinPower01: Math.Clamp(0.30f + rawDistance / 40f, 0.35f, 0.75f),
                 PassType: playIntoSpace ? KickIntentType.ThroughPass : KickIntentType.GroundPass,
                 Tag: playIntoSpace ? "Through" : "ToFeet",
-                HumanCaller: true);
+                HumanCaller: true,
+                // AUD-P2: a caller's through ball is a ball into space, so it is scored on where it is aimed.
+                ProgressFromTarget: playIntoSpace);
             anyGroundPass = TryAddGroundPass(
                 obs, mate, callerOption, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out anyLaneBlocked);
         }
@@ -1106,8 +1313,15 @@ public sealed class CandidateGenerator : IAiStateResettable
             // A8.2: the shallow search has already proposed for the first actions it examined; those
             // proposals are used as they stand. Every other receiver — and every receiver at all with the
             // search off — falls through to A8.1's heuristic trigger, which is unchanged.
+            //
+            // AUD-P6: on a first touch no contract is proposed. A one-two's return region and arrival are
+            // set up by a pass the carrier has already made; inside the tempo delay the ball is being
+            // released as a one-touch, penetrative act, not as the first half of a combination, and the
+            // contract machinery must not publish one from it. (A ToSpace ball never publishes a contract
+            // either — NoteDecision's winning-tag guard covers the full pass set, where a proposal may have
+            // been formed for the same receiver before the space candidate was added.)
             float combinationPreference = 0f;
-            if (_ai.EnableCombinations)
+            if (!penetrativeOnly && _ai.EnableCombinations)
             {
                 if (!TryGetCombinationProposal(mate.PlayerId, out CombinationProposal proposal) &&
                     TryBuildCombinationProposal(obs, mate, ballXZ, selfXZ, offsideLineProjX, rawDistance,
@@ -1120,23 +1334,51 @@ public sealed class CandidateGenerator : IAiStateResettable
                     combinationPreference = CombinationInitiationBonus * proposal.Confidence01;
             }
 
-            // AIB-02c: a ball to feet is not a promise. Planned with the uncommitted hedge, the receiver is
-            // frozen at FeetPassMaxLeadMeters (2.5 m) instead of the planner refusing every receiver who
-            // happens to be jogging away from the ball — the report's ball aimed metres past a man who had
-            // no reason to keep running.
-            var feet = new PassOption(
-                Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false,
-                CombinationPreference: combinationPreference, ReceiverCommittedToRun: false);
-            anyGroundPass = TryAddGroundPass(
-                obs, mate, feet, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool feetBlocked);
+            bool feetBlocked = false;
+            // AUD-P6: the routine ball to feet keeps the tempo delay. The one exception is the cheap
+            // geometric line-break gate: a feet pass whose own aim point already breaks a line is exactly
+            // the penetrative ball the fix is about, so it may be evaluated on the first touch — the check
+            // is passed to the planner and the pass model, which still price the real ball.
+            if (!penetrativeOnly || IsFirstTouchLineBreak(obs, ballXZ, mateXZ))
+            {
+                // AIB-02c: a ball to feet is not a promise. Planned with the uncommitted hedge, the receiver
+                // is frozen at FeetPassMaxLeadMeters (2.5 m) instead of the planner refusing every receiver
+                // who happens to be jogging away from the ball — the report's ball aimed metres past a man
+                // who had no reason to keep running.
+                var feet = new PassOption(
+                    Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false,
+                    CombinationPreference: combinationPreference, ReceiverCommittedToRun: false);
+                anyGroundPass = TryAddGroundPass(
+                    obs, mate, feet, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool blocked);
+                feetBlocked = blocked;
+            }
 
             if (TryBuildRunPassOption(obs, mate, offsideLineProjX, out PassOption run))
             {
-                // A8.1: the run-region variant is the same pass, so it earns the same initiation preference.
-                run = run with { CombinationPreference = combinationPreference };
-                anyGroundPass |= TryAddGroundPass(
-                    obs, mate, run, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool runBlocked);
-                feetBlocked |= runBlocked;
+                // AUD-P6: on a first touch only a *promised* run ball is released — an advertisement or a
+                // one-two region is a team-mate's commitment, which is exactly the penetrative ball the
+                // delay was suppressing. The uncommitted sprint variant hedges its lead to 1.5 m and waits
+                // for the tempo, like the feet pass it resembles.
+                if (!penetrativeOnly || run.Promise.IsPresent)
+                {
+                    // A8.1: the run-region variant is the same pass, so it earns the same initiation
+                    // preference (zero on a first touch, by the no-contract rule above).
+                    run = run with { CombinationPreference = combinationPreference };
+                    anyGroundPass |= TryAddGroundPass(
+                        obs, mate, run, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool runBlocked);
+                    feetBlocked |= runBlocked;
+                }
+            }
+
+            // AUD-P3: the carrier-initiated ball into the grass ahead of this receiver. It is a different
+            // delivery from the ball to his feet — and from the raised alternative, which is aimed at the
+            // receiver's own position — so it is offered in addition to them. It deliberately does not set
+            // anyGroundPass: that flag is the raised alternative's gate ("no ground ball to the receiver
+            // survived"), and a ball into the grass ahead does not open the route to his feet.
+            if (TryBuildSpacePassOption(obs, mate, ballXZ, offsideLineProjX, out PassOption space))
+            {
+                _ = TryAddGroundPass(
+                    obs, mate, space, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out _);
             }
 
             anyLaneBlocked = feetBlocked;
@@ -1145,9 +1387,12 @@ public sealed class CandidateGenerator : IAiStateResettable
         // The raised alternative is offered when the ground route is physically blocked and no ground
         // pass to this receiver survived. It is priced on its own flight, never on a ground flight time,
         // and it is aimed at the meeting region the runner announced when the team has heard one (A5.3).
-        if (anyLaneBlocked && !anyGroundPass && loftedBudget > 0 && !isHumanCaller)
+        //
+        // AUD-P6: it is also part of the *routine* set and keeps the tempo delay. A first-touch release is a
+        // ground ball by design (a promised run, the space probe, or a line-breaking feet pass); a lofted
+        // fallback is the settling player's alternative, not a one-touch penetrative act.
+        if (!penetrativeOnly && anyLaneBlocked && !anyGroundPass && loftedBudget > 0 && !isHumanCaller)
         {
-            Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
             Vector2 raisedTarget = mateXZ;
             RunAdvertisement advert = default;
             bool announced = false;
@@ -1246,7 +1491,9 @@ public sealed class CandidateGenerator : IAiStateResettable
                     advert.MeetXZ,
                     arriveInSeconds,
                     advert.MeetRadiusMeters,
-                    advert.Promise01(obs.Tick)));
+                    advert.Promise01(obs.Tick)),
+                // AUD-P2: a promised ball into a run is scored on the announced region, not on the feet.
+                ProgressFromTarget: true);
             return true;
         }
 
@@ -1273,7 +1520,9 @@ public sealed class CandidateGenerator : IAiStateResettable
                     obs.Combination.ReturnXZ,
                     arriveInSeconds,
                     obs.Combination.ReturnRadiusMeters,
-                    obs.Combination.Promise01(obs.Tick)));
+                    obs.Combination.Promise01(obs.Tick)),
+                // AUD-P2: the one-two's return region is a run target, so the progression follows the region.
+                ProgressFromTarget: true);
             return true;
         }
 
@@ -1293,8 +1542,230 @@ public sealed class CandidateGenerator : IAiStateResettable
             PassType: KickIntentType.ThroughPass,
             Tag: RunPassTag,
             HumanCaller: false,
-            ReceiverCommittedToRun: false);
+            ReceiverCommittedToRun: false,
+            // AUD-P2: an uncommitted run ball is still played into space ahead of the runner, so its
+            // progression is the aim point the planner selects, not the runner's current feet.
+            ProgressFromTarget: true);
         return true;
+    }
+
+    /// <summary>
+    /// AUD-P3 / Fix 2 (audit 2026-11-23): the <b>carrier-initiated</b> pass into empty onside grass ahead of
+    /// a team-mate — the missing builder behind the audit's Capture 4. Until this existed every space pass
+    /// was receiver-initiated: an advertised run (<see cref="TryBuildRunPassOption"/>'s promised variant) or
+    /// a team-mate already sprinting at <see cref="MinUncommittedRunSpeed"/> (whose uncommitted lead is
+    /// hedged to 1.5 m on top of the planner's 2.5 m cap). A carrier could therefore not play a team-mate
+    /// into the grass in front of him and trigger the run.
+    ///
+    /// <b>When.</b> The receiver must be a non-keeper in the middle or attacking third (attack-relative
+    /// projection from the team's own third boundary, <c>mateProjX &gt;= -HalfLength / 3</c>), with no
+    /// <i>live</i> run advertisement <b>or</b> not already sprinting — a live advertisement on a sprinting
+    /// runner is served by the promised <c>ToRun</c> ball, while a receiver who has stopped is exactly who
+    /// this pass is for.
+    ///
+    /// <b>Where.</b> Two probes only (14 m then 8 m ahead along the attack axis, keeping his lane), each
+    /// clamped 3 m inside every pitch line and onside to <c>offsideLineProjX - OffsideTactics.MarginMeters</c>.
+    /// A probe that is crowded (a believed opponent inside <see cref="SpaceProbeCrowdRadiusMeters"/>, or
+    /// <see cref="EvaluateSpaceFreedom"/> under <see cref="SpaceProbeMinFreedom01"/>) is refused with a stated
+    /// reason; a probe left less than <see cref="SpaceProbeMinForwardMeters"/> ahead of the receiver after the
+    /// clamp is not space at all. The farther probe is tried first because it is the more penetrative ball;
+    /// the near one is the bounded fallback.
+    ///
+    /// <b>Race.</b> The receiver's own <see cref="TimeToReachModel"/> arrival at the probe must beat the
+    /// nearest believed opponent's by <see cref="SpaceRaceMarginSeconds"/>. An unreachable estimate is not an
+    /// exception and not a NaN: an unreachable receiver refuses the probe, and an unreachable defender is
+    /// treated as the horizon itself (the conservative "nobody can be there" bound), which is deterministic.
+    ///
+    /// <b>Firm ball.</b> The plan is solved to the receiver's real arrival with
+    /// <see cref="PassPlanner.MinCrispPower01"/> as the power floor, so the ball arrives earlier than he does
+    /// and rolls into the grass in front of him — the audit's core complaint about slow timed rollers.
+    ///
+    /// <b>Promise.</b> The candidate carries a <see cref="PassArrivalPromise"/> at the probe whose
+    /// <c>ArrivalSeconds</c> is the probe plan's <i>own flight time</i>: the pass model's promise timing term
+    /// is then exactly 1 (the ball is certain to be there at its own flight time), the promise confidence
+    /// carries the race (derived from the measured margin below), and the model does not charge the lead
+    /// again — a promised arrival is never double-charged (<c>PassSuccessModel</c>'s A5.3 rule).
+    /// <see cref="TryAddGroundPass"/> replans the ball from the promise itself, which returns the same plan
+    /// (same fixed target, same crisp floor, same wanted flight), and prices it with
+    /// <see cref="PassSuccessModel.Estimate"/> and the shared <c>PassPreference</c> on the aim point.
+    /// </summary>
+    private bool TryBuildSpacePassOption(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        Vector2 ballXZ,
+        float offsideLineProjX,
+        out PassOption option)
+    {
+        option = default;
+
+        // Feasibility mirrors IsPassTargetEligible; kept explicit so a later caller cannot feed the probe an
+        // opponent or a keeper.
+        if (mate.Team != obs.SelfTeam || mate.PlayerId == obs.SelfId) return false;
+        if (mate.Role == TacticalRole.Goalkeeper) return false;
+        if (obs.AttackingDirectionX == 0f) return false;
+
+        float mateProjX = mate.EstimatedPosition.X * obs.AttackingDirectionX;
+        if (mateProjX < -_pitch.HalfLength / 3f) return false;
+
+        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
+        if (!SimMath.IsFinite(ballXZ) || !SimMath.IsFinite(mateXZ)) return false;
+
+        Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
+        bool hasLiveAdvertisement =
+            _communication is not null &&
+            _communication.Runs.TryGetAdvertisement(
+                obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advertisement) &&
+            advertisement.MeetTick > obs.Tick;
+        // A committed, already-sprinting runner is served by the promised ToRun ball; the space probe is for
+        // the receiver who has not (or has stopped), which is the audit's Capture 4 player.
+        if (hasLiveAdvertisement && mateVelocityXZ.Length() >= MinUncommittedRunSpeed) return false;
+
+        float maxOnsideProjX = MathF.Min(
+            OffsideTactics.MaxAttackingProjection(offsideLineProjX),
+            _pitch.HalfLength - SpaceProbePitchMarginMeters);
+        float laneMarginZ = _pitch.HalfWidth - SpaceProbePitchMarginMeters;
+
+        // Two probes, farthest first: the penetrative ball when the far grass is onside and won, the near
+        // fallback when it is not. Never a third probe to compensate for a refused one.
+        ReadOnlySpan<float> probes = [SpaceProbeFarMeters, SpaceProbeNearMeters];
+        foreach (float forwardMeters in probes)
+        {
+            Vector2 spaceXZ = new(
+                mate.EstimatedPosition.X + obs.AttackingDirectionX * forwardMeters,
+                Math.Clamp(mate.EstimatedPosition.Z, -laneMarginZ, laneMarginZ));
+
+            // The audit's onside clamp: a probe is never offered beyond the line the carrier keeps its
+            // own margin behind. A clamped probe can land on the line; it is played there, not past it.
+            bool clampedByOffside =
+                spaceXZ.X * obs.AttackingDirectionX > maxOnsideProjX;
+            if (clampedByOffside) spaceXZ.X = obs.AttackingDirectionX * maxOnsideProjX;
+
+            float forwardGain = (spaceXZ.X - mateXZ.X) * obs.AttackingDirectionX;
+            if (forwardGain < SpaceProbeMinForwardMeters)
+            {
+                if (clampedByOffside) Reject(mate.PlayerId, RejectionOffside);
+                continue;
+            }
+
+            // Crowded grass is not space: a body in the landing area, or too little room to attack the
+            // point, refuses the probe rather than turning this into a hopeful punt.
+            float nearestOpponentMeters = NearestOpponentDistanceTo(spaceXZ, obs.VisiblePlayers, obs.SelfTeam);
+            float freedom01 = EvaluateSpaceFreedom(spaceXZ, obs.VisiblePlayers, obs.SelfTeam);
+            if (nearestOpponentMeters < SpaceProbeCrowdRadiusMeters || freedom01 < SpaceProbeMinFreedom01)
+            {
+                Reject(mate.PlayerId, RejectionSpaceContested);
+                continue;
+            }
+
+            // The race, over the one reach model. Both estimates are measured from the same tick and the
+            // same reach horizon, so the margin is a like-for-like quantity.
+            ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+                ReachKinematics.FromEntity(mate), spaceXZ, SpaceRaceHorizonSeconds);
+            if (!receiverReach.Reachable)
+            {
+                Reject(mate.PlayerId, RejectionSpaceRaceLost);
+                continue;
+            }
+
+            float defenderArrivalSeconds = SpaceRaceHorizonSeconds;
+            for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+            {
+                PerceivedEntity opponent = obs.VisiblePlayers[index];
+                if (opponent.Team == obs.SelfTeam) continue;
+
+                ReachEstimate opponentReach = TimeToReachModel.ToPoint(
+                    ReachKinematics.FromEntity(opponent), spaceXZ, SpaceRaceHorizonSeconds);
+                // An unreachable defender is the horizon itself: nobody in the picture can be there inside
+                // the decision's own look-ahead, which is the conservative bound (not "free").
+                if (!opponentReach.Reachable) continue;
+                if (opponentReach.Seconds < defenderArrivalSeconds)
+                    defenderArrivalSeconds = opponentReach.Seconds;
+            }
+
+            float raceMarginSeconds = defenderArrivalSeconds - receiverReach.Seconds;
+            if (raceMarginSeconds < SpaceRaceMarginSeconds)
+            {
+                Reject(mate.PlayerId, RejectionSpaceRaceLost);
+                continue;
+            }
+
+            float probeDistanceMeters = Vector2.Distance(ballXZ, spaceXZ);
+            if (probeDistanceMeters < MinPassDistanceMeters || probeDistanceMeters > MaxPassDistanceMeters)
+            {
+                Reject(mate.PlayerId, RejectionOutOfRange);
+                continue;
+            }
+
+            // The audit's "firm ball, not a roller": the crisp floor is the plan's minimum power, and the
+            // ball is timed to the receiver's arrival so the floor makes it *early* — it rolls into the
+            // grass ahead of him, which is the point of the pass. A later `TryAddGroundPass` re-solves the
+            // ball from this promise's own aim and arrival (same floor, same wanted flight), so the two
+            // plans are the same plan.
+            float minPower01 = _passPlanner.MinCrispPower01(probeDistanceMeters);
+            PassPlan probePlan = _passPlanner.PlanGroundPassToRegion(
+                ballXZ, spaceXZ, receiverReach.Seconds, minPower01);
+            if (!probePlan.Feasible)
+            {
+                Reject(mate.PlayerId, RejectionUnplannable);
+                continue;
+            }
+
+            // The promise confidence is the measured race, not a nominal 1.0: a minimum-margin ball
+            // (0.35 s) promises 0.675, a full second's margin or more promises 1.0, and the stated floor
+            // never lets the derivation produce a zero-confidence "promise" later. This is the only route
+            // the race takes into the pass model (the promise replaces the receiver-arrival term).
+            float confidence01 = Math.Clamp(
+                SpacePromiseConfidenceBase + SpacePromiseConfidenceMarginWeight * Math.Clamp(
+                    raceMarginSeconds / SpacePromiseConfidenceMarginScaleSeconds, 0f, 1f),
+                SpacePromiseConfidenceFloor,
+                1f);
+
+            option = new PassOption(
+                LeadDirection: Vector2.Zero,
+                LeadMeters: 0f,
+                MaxLeadMeters: RunPassMaxLeadMeters,
+                MinPower01: minPower01,
+                PassType: KickIntentType.ThroughPass,
+                Tag: SpacePassTag,
+                HumanCaller: false,
+                // The plan's own flight time: the promise is "the ball is in this grass at the instant the
+                // plan says it is", which is exact, so the model's timing term is 1 and no lead is charged.
+                Promise: new PassArrivalPromise(
+                    spaceXZ,
+                    probePlan.FlightTimeSeconds,
+                    SpacePromiseRadiusMeters,
+                    confidence01),
+                // AUD-P2: a ball into space is scored on where it is aimed, not on the receiver's feet.
+                ProgressFromTarget: true);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// AUD-P6 / Fix 5.1: the cheap geometric half of "a plain pass to this receiver would break a line",
+    /// asked before any trajectory is planned so a first-touch decision can include that one penetrative
+    /// ball without waiting out the tempo delay. It is the same <see cref="LineBreakPreference"/> the scorer
+    /// will run — on the receiver's current position, which is where a feet pass is aimed, and with the lane
+    /// clearance the scorer's target will approximate — and completion is passed as 1 because the question
+    /// here is only geometry: the planner and the pass model price the real ball (and its real completion)
+    /// immediately afterwards, so this gate can admit a ball but can never score one.
+    /// </summary>
+    private bool IsFirstTouchLineBreak(
+        in FootballerObservation obs,
+        Vector2 ballXZ,
+        Vector2 mateXZ)
+    {
+        float lane01 = EvaluateLaneClearance(ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
+        return LineBreakPreference(
+            ballXZ,
+            mateXZ,
+            obs.AttackingDirectionX,
+            obs.VisiblePlayers,
+            obs.SelfTeam,
+            lane01,
+            completionProbability01: 1f) > 0f;
     }
 
     /// <summary>
@@ -1407,8 +1878,10 @@ public sealed class CandidateGenerator : IAiStateResettable
             // be timed to him. A modest bonus keeps him inside the bounded set, so the advertisement is never
             // pruned before it is read. It does not change who *should* get the ball: the pass model and the
             // value scale still decide that, and a crowded or useless announced run is still priced as one.
-            if (_communication is not null &&
-                _communication.Runs.TryGetAdvertisement(obs.SelfTeam, mate.PlayerId, obs.Tick, out _))
+            bool announcedRun = _communication is not null &&
+                                _communication.Runs.TryGetAdvertisement(
+                                    obs.SelfTeam, mate.PlayerId, obs.Tick, out _);
+            if (announcedRun)
             {
                 rank += AnnouncedRunRankBonus;
             }
@@ -1578,7 +2051,16 @@ public sealed class CandidateGenerator : IAiStateResettable
             return false;
         }
 
-        float score = ScorePass(obs, mate, terms, forwardMeters, targetXZ, option, out ValueTerms valueTerms);
+        // AUD-P2 / Fix 1.2 (2026-11-23): the progression a pass is scored on is the aim point relative to the
+        // carrier when it is played into a run, and the receiver's own ground for a ball to feet. The plan
+        // exists now, so the aim point is known; a feet pass is aimed at the receiver by construction (its
+        // lead is bounded at 2.5 m), so the feet-based `forwardMeters` is still its honest progression.
+        // Both variants used to read the receiver's feet, which is why a through ball 12 m beyond the runner
+        // got zero extra progress or directness preference over the ball to his feet.
+        float progressMeters = option.ProgressFromTarget
+            ? (targetXZ.X - obs.SelfPosition.X) * obs.AttackingDirectionX
+            : forwardMeters;
+        float score = ScorePass(obs, mate, terms, progressMeters, targetXZ, option, out ValueTerms valueTerms);
 
         var passCommand = new FootballerCommand(
             aimDirection, aimDirection, false, false, false, false, false, Vector3.Zero,
@@ -1606,12 +2088,17 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// risk (it rises in the passer's own third). The reception value only adds value. The remaining terms
     /// are preferences (risk tolerance, directness) — the audit requires them to be visible, and they are
     /// additive around the neutral baselines so a default player is unaffected.
+    ///
+    /// <paramref name="progressMeters"/> is the pass's progression source (AUD-P2 / Fix 1.2): the aim point
+    /// relative to the carrier for a ball played into a run, the receiver's own ground for a ball to feet.
+    /// It drives the forward preference and the man-on bounce scope; the reception value is evaluated at
+    /// <paramref name="targetXZ"/> in both cases, so a through ball's arrival is still priced where it lands.
     /// </summary>
     private float ScorePass(
         in FootballerObservation obs,
         in PerceivedEntity mate,
         in PassSuccessTerms terms,
-        float forwardMeters,
+        float progressMeters,
         Vector2 targetXZ,
         in PassOption option,
         out ValueTerms valueTerms)
@@ -1624,7 +2111,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
 
-        float preference = PassPreference(obs, forwardMeters, terms.LaneClearance01);
+        float preference = PassPreference(obs, progressMeters, terms.LaneClearance01);
         if (option.HumanCaller) preference += HumanCallPassBonus;
 
         // A7.2: a call moves the preference of the action it is about, exactly once.
@@ -1633,7 +2120,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         // AIB-06a: the bounce bonus is scoped to the short return the call is about. A 15+ m backward ball
         // is not a bounce out of pressure, it is the long backward launch report §6.4 found collecting the
         // bonus most reliably because it also has the highest completion probability.
-        if (obs.Calls.Kind == TeamCallKind.ManOn && !IsLongBackwardLaunch(obs, forwardMeters, targetXZ))
+        if (obs.Calls.Kind == TeamCallKind.ManOn && !IsLongBackwardLaunch(obs, progressMeters, targetXZ))
             preference += ActionValueScale.CallBouncePassBonus;
         if (obs.Calls.Kind == TeamCallKind.Switch && obs.Calls.NamedPlayerId == receiverId)
             preference += ActionValueScale.CallSwitchPassBonus;
@@ -3397,6 +3884,29 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
+    /// AUD-P3: distance from a spot to the nearest believed opponent, or <see cref="float.PositiveInfinity"/>
+    /// when the picture contains none. Unlike <see cref="NearestOpponent"/> this is not clamped to a tactical
+    /// default — the space probe's crowd radius is an absolute "somebody is standing in that grass" test, so
+    /// an absent opponent must read as absent rather than as 20 m.
+    /// </summary>
+    private static float NearestOpponentDistanceTo(
+        Vector2 spotXZ,
+        IReadOnlyList<PerceivedEntity> visiblePlayers,
+        TeamId selfTeam)
+    {
+        float nearest = float.PositiveInfinity;
+        for (int index = 0; index < visiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = visiblePlayers[index];
+            if (entity.Team == selfTeam) continue;
+            float distance = Vector2.Distance(spotXZ, new Vector2(
+                entity.EstimatedPosition.X, entity.EstimatedPosition.Z));
+            if (distance < nearest) nearest = distance;
+        }
+        return nearest;
+    }
+
+    /// <summary>
     /// Scores a candidate carry direction: freedom ahead, how safely it stays inside the pitch, and (AIB-04a)
     /// how much it penetrates toward the opponent goal. A direction whose 5 m probe (and the ball just ahead
     /// of the player) would leave the field scores negative, so it can never win. <paramref name="space"/>
@@ -3744,6 +4254,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
+    /// AUD-P4 / Fix 3.3 (2026-11-23): planar deadband, in metres, inside which the receiver stops steering
+    /// for the plan's meeting point and uses the near-field fallback. It used to be a bare <c>0.45f</c>.
+    ///
+    /// The other half of Fix 3.3 keeps every body-offset meeting point within <c>0.55 m</c> of the ball's
+    /// predicted path (<see cref="ReceptionPlanner"/>), against the <c>1.24 m</c> execution receiving reach
+    /// (<c>BallContactRules.ReachRadius</c>: 0.75 m x 1.65). A 0.45 m deadband could therefore leave the
+    /// receiver's body <c>0.45 + 0.55 = 1.00 m</c> off the path while the pass was still arriving — 0.24 m
+    /// inside the reach, which an 18 m/s ball covers in 13 ms — so he stood still and watched it roll past
+    /// him. At 0.15 m the worst case is <c>0.15 + 0.55 = 0.70 m</c>, 0.54 m inside the reach.
+    /// </summary>
+    internal const float ReceptionArrivalDeadbandMeters = 0.15f;
+
+    /// <summary>
     /// A7.3: turns the reception plan into this decision's candidate set. Every feasible
     /// (orientation, touch) pair becomes one candidate — the receiver's options are now the touches he
     /// could take, not a single intercept ray — and the pair's score is its utility.
@@ -3767,8 +4290,12 @@ public sealed class CandidateGenerator : IAiStateResettable
             float distance = toMeeting.Length();
 
             // The same approach rule the legacy ray used: heading for the ball, with the near-field
-            // fallback when the player is already on top of it.
-            Vector2 moveDir = distance > 0.45f ? toMeeting / distance : dirToBall * 0.35f;
+            // fallback when the player is already on top of it. AUD-P4 / Fix 3.3: the deadband is the
+            // residual approach tolerance (0.15 m), not the old 0.45 m that parked him short of a moving
+            // ball — see ReceptionArrivalDeadbandMeters for the reach arithmetic.
+            Vector2 moveDir = distance > ReceptionArrivalDeadbandMeters
+                ? toMeeting / distance
+                : dirToBall * 0.35f;
             var command = new FootballerCommand(
                 moveDir, plan.FacingXZ, plan.Sprint && distance > 1.5f, plan.Shield,
                 false, false, false, Vector3.Zero,

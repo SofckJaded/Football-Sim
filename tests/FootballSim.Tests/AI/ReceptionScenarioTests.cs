@@ -85,17 +85,27 @@ public sealed class ReceptionScenarioTests
         Assert.Equal(TeamCallKind.ManOn, afterTreated.Calls.Kind);
         Assert.Equal(999, afterTreated.Calls.CallerId);
 
-        // The call moves the plan: the same picture scores the shield option completely differently.
+        // The call moves the plan: the same picture scores the pressure-relief touches completely
+        // differently.
+        //
+        // AUD-P4 (2026-11-23) moved the expected kind from Shield to EscapePressure, with a documented
+        // reason. EscapePressure used to be refused as "unreachable in time" because its 1.3 m off-path
+        // body offset pushed the touch point beyond the arrival slack — the very defect AUD-P4 fixes — so
+        // Shield was the only pressure-relief option left and won by default. With the body offset back
+        // inside the 1.24 m receiving reach (0.50 m, clamped to 0.55 m of the ball's path) the escape is
+        // feasible, pays the relief plus its space bonus, and wins. The exit-gate property is unchanged:
+        // the shout, and only the shout, changes the touch table, and the treated plan carries the
+        // man-on pressure belief.
         Assert.NotEqual(TableOf(controlReceiver), TableOf(treatedReceiver));
-        Assert.Equal(ReceptionTouchKind.Shield, treatedReceiver.LastReceptionPlan.TouchKind);
-        Assert.NotEqual(ReceptionTouchKind.Shield, controlReceiver.LastReceptionPlan.TouchKind);
+        Assert.Equal(ReceptionTouchKind.EscapePressure, treatedReceiver.LastReceptionPlan.TouchKind);
+        Assert.NotEqual(ReceptionTouchKind.EscapePressure, controlReceiver.LastReceptionPlan.TouchKind);
         Assert.True(treatedReceiver.LastReceptionPlan.Pressure01 >= ReceptionPlanner.ManOnPressure01 - 1e-3f);
 
         // A7.4's seam: the plan the receiver decided on is recorded on the decision-side intent.
         PlayerIntent? intent = treatedReceiver.CurrentIntent;
         Assert.NotNull(intent);
         Assert.True(intent!.Value.Reception.IsPlanned);
-        Assert.Equal(ReceptionTouchKind.Shield, intent.Value.Reception.TouchKind);
+        Assert.Equal(ReceptionTouchKind.EscapePressure, intent.Value.Reception.TouchKind);
     }
 
     // ---------------------------------------------------------------------------------------------

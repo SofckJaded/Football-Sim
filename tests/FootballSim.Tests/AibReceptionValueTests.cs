@@ -102,17 +102,26 @@ public sealed class AibReceptionValueTests
     }
 
     /// <summary>
-    /// AUD-01 must not be reintroduced: below the final-third line the structure term is exactly the
-    /// shared width convention, for every profile, lateral coordinate and projection. This is the
+    /// AUD-01 must not be reintroduced: below the width → central-threat blend the structure term is exactly
+    /// the shared width convention, for every profile, lateral coordinate and projection. This is the
     /// compatibility guard on the shared API: the old expression and the new one are the same credit here.
+    ///
+    /// AUD-P6 / Fix 5.3 re-baselined the samples: the blend now starts at
+    /// <see cref="ReceptionValueModel.FinalThirdBlendStartProjMeters"/> = <b>+5 m</b> (the old window started
+    /// at the final-third line, <c>HalfLength / 3 = +17.5 m</c>), so the build-up range this fixture can
+    /// assert exactly is <c>x &lt; +5 m</c>: <c>FinalThirdBlend01(x) = (x − 5) / (18 − 5) ≤ 0 ⇒ 0</c>, and
+    /// the credit reduces to <c>AttackingWidthPreference.Score</c>. The two old samples at +12 m and +17 m
+    /// were inside the old build-up range but are now 7/13 and 12/13 through the blend, so they no longer
+    /// belong in an "unchanged" fixture; the blend at those depths is pinned by
+    /// <c>Aib2RunAndSpaceValueTests.AIB2_SpaceValue_MidfieldReception_BlendsOnlySlightly</c>.
     /// </summary>
     [Fact]
     public void AIB4b_WidthPreference_IsUnchangedForBuildUpReceptions()
     {
         float[] widths = { 0f, 0.5f, DefaultWidth01, 1f };
         float[] laterals = { 0f, 6f, 12f, 18f, 24f, 33f };
-        // Every sample is behind the final-third line (HalfLength / 3 = 17.5 m).
-        float[] projections = { -45f, -20f, 0f, 12f, 17f };
+        // Every sample is behind the AUD-P6 blend start (+5 m), where the credit is pure width again.
+        float[] projections = { -45f, -20f, 0f, 4f };
 
         foreach (float projection in projections)
         {

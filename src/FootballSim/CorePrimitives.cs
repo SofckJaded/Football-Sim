@@ -640,12 +640,34 @@ public enum TeamId
 /// backward recycle. (6) The man-on bounce bonus is scoped to short support passes instead of rewarding a
 /// long backward launch. Trajectories differ from version 54 wherever a carrier, passer, receiver, runner,
 /// shooter or off-ball anchor decided.</item>
+/// <item><c>AiBehaviour 56</c> — the 2026-11-23 passing, space and wing-bias audit
+/// (<c>docs/Bug_Fixes_2026-11-23_PassingSpace.md</c>), AUD-P1 to AUD-P7. (1) <b>An uncontested run is a won
+/// race</b>: <see cref="AI.RunScoring.ArrivalAdvantage"/> keeps the neutral 0.5 only when no opponent is
+/// visible at all and returns 1.0 when opponents are visible but none can reach the meeting region, so an
+/// unmarked run into space no longer enters the pass model a third below a ball to feet. (2) <b>A run ball is
+/// priced on its aim point</b>: the pass preference's progression and the man-on bounce scope read the plan's
+/// target for the ToRun/through variants instead of the receiver's feet. (3) <b>The carrier can play into
+/// space himself</b>: a new <c>ToSpace</c> candidate probes 8 and 14 m ahead of a team-mate who has no live
+/// run advertisement, verifies the race through the one reach model, plans a ball at the planner's crisp pace
+/// floor and prices a race-derived promise (no lead double-charge); a penetrative ball (promised run,
+/// ToSpace, a geometrically line-breaking feet ball) is released on a scaled first-touch window instead of the
+/// routine tempo lockout, which itself is unchanged. (4) <b>A receiver meets the ball on its path</b>: the
+/// reception planner's open-body and escape offsets drop to 0.40 / 0.50 m and every body-offset plan is clamped
+/// to 0.55 m of the ball's predicted trajectory (the old 1.1 / 1.3 m offsets already exceeded the 1.24 m
+/// execution reach), and the approach deadband tightens 0.45 -&gt; 0.15 m. (5) <b>A ground pass stays in play
+/// and arrives firm</b>: both planners project the calibrated stop point and cap the power when a near-line
+/// target would roll out of the pitch, and a timed-region pass can be floored to a minimum arrival pace; the
+/// crisp arrival pace itself stays at 9.0 m/s because a measured 7.0 m/s experiment lengthened flights and
+/// increased lane blocking (the overhit is owned by the stop cap). (6) <b>The attack uses the middle</b>:
+/// midfield carries value goalward penetration from -10 m, the line-break target floor drops 12 -&gt; 4 m, and
+/// the width -&gt; central-threat reception blend moves from +17.5/+25.5 m to +5/+18 m. Trajectories differ from
+/// version 55 wherever a carrier, passer, receiver, runner or off-ball anchor decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 55;
+    public const int AiBehaviour = 56;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

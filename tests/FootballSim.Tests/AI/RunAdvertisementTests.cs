@@ -443,9 +443,16 @@ public sealed class RunAdvertisementTests
     }
 
     /// <summary>
-    /// Every forward option that is not the runner's own advertised to-run ball, as "key → score", in a
-    /// stable order. The announcement is information about exactly that ball, so it is excluded from the
-    /// comparison of *other* forward options rather than hidden by a coarse direction filter.
+    /// Every forward option that is not the runner's own advertised to-run ball (nor the runner's own
+    /// speculative space ball), as "key → score", in a stable order. The announcement is information about
+    /// exactly that runner's movement, so it is excluded from the comparison of *other* forward options
+    /// rather than hidden by a coarse direction filter.
+    ///
+    /// AUD-P3 (2026-11-23) added the space-ball exclusion with a documented reason: the carrier's
+    /// <c>ToSpace</c> probe is built only for a receiver with no live advertisement (or one slower than a
+    /// sprint), because a committed runner is already served by the promised to-run ball. A runner who
+    /// announces a region therefore loses that speculative ball <b>to himself</b> — by design — while every
+    /// other forward option is unchanged, which is the property this test pins.
     /// </summary>
     private static List<string> ForwardOptionsExceptRunPass(CandidateGenerator generator, int runnerId)
     {
@@ -456,12 +463,18 @@ public sealed class RunAdvertisementTests
             if (candidate.TargetXZ is not Vector3 target) continue;
             if (target.X <= 2f) continue;
             if (IsRunPassTo(candidate, runnerId)) continue;
+            if (IsSpacePassTo(candidate, runnerId)) continue;
             options.Add($"{candidate.Key.Describe()} {candidate.UtilityScore:F4}");
         }
 
         options.Sort(StringComparer.Ordinal);
         return options;
     }
+
+    private static bool IsSpacePassTo(UtilityCandidate candidate, int playerId) =>
+        candidate.Key.Kind == CandidateKind.Pass &&
+        candidate.Key.TargetPlayerId == playerId &&
+        candidate.Key.TargetTag == CandidateGenerator.SpacePassTag;
 
     private static bool IsRunPassTo(UtilityCandidate candidate, int playerId) =>
         candidate.Key.Kind == CandidateKind.Pass &&

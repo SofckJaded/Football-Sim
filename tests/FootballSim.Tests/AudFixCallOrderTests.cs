@@ -299,18 +299,18 @@ public sealed class AudFixCallOrderTests
 
     /// <summary>
     /// Captured on the pre-fix engine (commit 4ed6aab, before the AUD-13c publication move) at <c>ai53</c>,
-    /// then re-captured at <c>ai55-rs1</c> after the AIB-01..AIB-06 behaviour fixes. The shipped 18-tick delay
-    /// means no same-tick call was ever usable, so the fix must reproduce the same path *for the same AI*; the
-    /// fingerprint is a drift guard over positions, analytics and the call/combination counters.
+    /// re-captured at <c>ai55-rs1</c> after the AIB-01..AIB-06 behaviour fixes, and re-captured at
+    /// <c>ai56-rs1</c> after the 2026-11-23 passing/space audit fixes (AUD-P1..AUD-P7). The shipped 18-tick
+    /// delay means no same-tick call was ever usable, so the fix must reproduce the same path *for the same
+    /// AI*; the fingerprint is a drift guard over positions, analytics and the call/combination counters.
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=48.329254,11.4716|players=" +
-        "1:-41.662224,1.4412389;2:3.908893,23.54375;3:3.9737408,-21.663395;4:-1.4592378,8.904141;" +
-        "5:-1.4711467,-7.432362;6:19.104939,2.8336546;7:51.55946,8.102137;8:41.32918,5.2931323;" +
-        "9:30.227127,-2.4485707;10:45.614845,-5.21825;11:31.792274,-0.77393395;12:51.39415,2.922631;" +
-        "13:49.670685,11.933961;14:47.072254,-4.6664925;15:48.54426,10.926725;16:45.461956,-6.2554455;" +
-        "17:45.00784,-4.7951064;18:5.1955776,18.493708;19:22.890034,7.756842;20:1.6690971,0.79193914;" +
-        "21:13.17601,-7.486145;22:5.3065643,-16.566927;" +
-        "|analytics=1179,305,563,122,4,3,3,2,4,0,0,0|calls=142,3922,139,0|" +
-        "combinations=4,0,0,0,1,0,2";
+        "tick=1500|ball=36.865574,10.604403|players=1:-48.95229,0.6898636;2:-4.982068,22.594364;" +
+        "3:-5.1219134,-22.53239;4:-7.9840384,8.249606;5:-8.4340105,-7.990346;6:29.904078,5.505505;" +
+        "7:24.893158,15.687863;8:17.540503,6.5898223;9:37.878586,11.783722;10:21.742302,-3.2867074;" +
+        "11:24.183952,-13.347277;12:50.016052,2.017887;13:40.11565,13.663011;14:39.039467,-24.410036;" +
+        "15:38.205826,3.2180333;16:30.50779,-4.6240373;17:21.892334,1.6534606;18:-4.1754036,20.319223;" +
+        "19:39.746376,-2.4022892;20:-3.8493052,0.8373754;21:44.733532,6.349883;22:-2.0972168,-19.456749;" +
+        "|analytics=1129,371,532,118,11,3,9,1,1,0,0,0|calls=180,4213,170,0|" +
+        "combinations=5,1,0,0,2,1,0";
 }

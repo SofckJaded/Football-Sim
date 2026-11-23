@@ -54,7 +54,10 @@ public readonly record struct ReceptionValueTerms(
 ///   and a wider side is never scored below a narrower one at the same lateral coordinate (AUD-01).
 ///   In the final third the width credit is replaced by a central-threat credit (AIB-4b), because raw
 ///   width credit gave the centre line 0 and the wings 1 for <i>every</i> profile and structurally
-///   outscored central and half-space receptions.</item>
+///   outscored central and half-space receptions. AUD-P6 / Fix 5.3 moved that exchange forward into
+///   midfield (<see cref="FinalThirdBlendStartProjMeters"/> → <see cref="FinalThirdBlendEndProjMeters"/>),
+///   because the AIB-4b window began at the final-third line and left the build-up pass — the one a
+///   midfielder actually chooses — priced on width, still pulling the attack to the flank.</item>
 /// </list>
 ///
 /// <b>Transition risk is not here.</b> The pass score owns it through its loss term, which rises in the
@@ -108,23 +111,39 @@ public sealed class ReceptionValueModel
     public const float StructureWeight = 0.08f;
 
     // ---------------------------------------------------------------------------------------------
-    // AIB-4b — the final-third structure credit is central threat, not raw width.
+    // AIB-4b / AUD-P6 — the final-third structure credit is central threat, not raw width.
     //
     // AttackingWidthPreference.Score gives the centre line 0 and the wings 1 for every profile
     // (reachedWidth = (|z| / HalfWidth) / 0.55), so a completed flank pass collected a width credit a
     // completed central or half-space pass could never collect. Together with the extra pressure freedom
     // on the flanks that is the "always attacking down the wing" finding. The convention itself is right
-    // for build-up and for width jobs (AUD-01), so it is kept there; only the attacking reception's
-    // final-third position is valued as central threat instead.
+    // for build-up and for width jobs (AUD-01), so it is kept there; the attacking reception's position is
+    // blended toward central threat instead. AUD-P6 / Fix 5.3 moved that blend forward into midfield
+    // (see FinalThirdBlendStartProjMeters), because starting it at the final-third line left the build-up
+    // pass — the one a midfielder actually chooses — priced on width alone.
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// AIB-4b: distance past the final-third line over which the width credit is exchanged for the
-    /// central-threat credit, in metres. The final third begins at <c>HalfLength / 3</c> (17.5 m on the
-    /// default pitch); blending over this span keeps the value continuous at the boundary instead of
-    /// stepping at it.
+    /// AUD-P6 / Fix 5.3: attack-relative projection, in metres, at which <see cref="Structure01"/> begins
+    /// exchanging the build-up width credit for the central-threat credit.
+    ///
+    /// It used to begin at the final-third line (<c>HalfLength / 3</c> = 17.5 m on the nominal pitch), so
+    /// every midfield reception was still priced on raw width — the centre line scored 0 and the wings 1
+    /// for <i>every</i> profile — and the attack kept being pulled to the flank through build-up. The
+    /// window starts in midfield on purpose: a central reception at +6 m must already be worth slightly
+    /// more than the touchline equivalent, not only once the ball has crossed the final-third line.
     /// </summary>
-    public const float FinalThirdBlendMeters = 8f;
+    public const float FinalThirdBlendStartProjMeters = 5f;
+
+    /// <summary>
+    /// AUD-P6 / Fix 5.3: attack-relative projection, in metres, at which the width → central-threat
+    /// exchange is complete. The span
+    /// (<see cref="FinalThirdBlendEndProjMeters"/> − <see cref="FinalThirdBlendStartProjMeters"/> = 13 m)
+    /// keeps the credit continuous instead of stepping — at +6 m the blend is 1/13, not 0 or 1 — and +18 m
+    /// is already past the final-third line (17.5 m on the nominal pitch), so by the time the ball reaches
+    /// the final third the credit is the central threat the AIB-4b fix intended.
+    /// </summary>
+    public const float FinalThirdBlendEndProjMeters = 18f;
 
     /// <summary>
     /// AIB-4b: lateral distance from the centre line that still earns the full central-corridor share of
@@ -299,13 +318,15 @@ public sealed class ReceptionValueModel
     }
 
     /// <summary>
-    /// The positional-structure credit (AUD-01, AIB-4b). Behind the final-third line it is the shared
-    /// width convention, unchanged. In the attacking third it is blended into a <b>central-threat</b>
-    /// credit: the raw width credit gave the centre line 0 and the wings 1 for every profile, which made
-    /// flank receptions systematically outscore central and half-space ones — the "always attacking down
-    /// the wing" finding. The replacement (not an extra bonus) keeps the same <see cref="StructureWeight"/>
-    /// the only weight on positional structure and the term in 0..1, so <see cref="MaxValue"/> stays an
-    /// upper bound.
+    /// The positional-structure credit (AUD-01, AIB-4b, AUD-P6). Below
+    /// <see cref="FinalThirdBlendStartProjMeters"/> it is the shared width convention, unchanged. From +5 m
+    /// to +18 m it is blended into a <b>central-threat</b> credit: the raw width credit gave the centre line
+    /// 0 and the wings 1 for every profile, which made flank receptions systematically outscore central and
+    /// half-space ones — the "always attacking down the wing" finding. AUD-P6 / Fix 5.3 moved that exchange
+    /// into midfield (it used to start at the final-third line, 17.5 m, and finish at 25.5 m), because a
+    /// midfield reception is exactly where the next pass is chosen and the old window left it priced on
+    /// width. The replacement (not an extra bonus) keeps <see cref="StructureWeight"/> the only weight on
+    /// positional structure and the term in 0..1, so <see cref="MaxValue"/> stays an upper bound.
     /// </summary>
     private float Structure01(in FootballerObservation obs, Vector2 arrivalPointXZ, float arrivalProjX)
     {
@@ -319,15 +340,15 @@ public sealed class ReceptionValueModel
     }
 
     /// <summary>
-    /// AIB-4b: 0 while the reception is behind the final-third line, ramping to 1 over
-    /// <see cref="FinalThirdBlendMeters"/> past it, so the credit changes continuously and a reception
-    /// just inside the final third is not abruptly repriced.
+    /// AUD-P6 / Fix 5.3: 0 while the reception is behind <see cref="FinalThirdBlendStartProjMeters"/>,
+    /// ramping to 1 over the 13 m to <see cref="FinalThirdBlendEndProjMeters"/>, so the credit changes
+    /// continuously and a midfield reception is not abruptly repriced at a boundary. The old window was
+    /// <c>(HalfLength / 3 = 17.5 → 25.5 m)</c>; it started too deep in the attacking third for the blend to
+    /// affect the pass a midfielder actually chooses.
     /// </summary>
-    private float FinalThirdBlend01(float arrivalProjX)
-    {
-        float boundary = _pitch.HalfLength / 3f;
-        return Clamp01((arrivalProjX - boundary) / FinalThirdBlendMeters);
-    }
+    private float FinalThirdBlend01(float arrivalProjX) =>
+        Clamp01((arrivalProjX - FinalThirdBlendStartProjMeters)
+                / (FinalThirdBlendEndProjMeters - FinalThirdBlendStartProjMeters));
 
     /// <summary>
     /// AIB-4b: how threatening a final-third reception point is, independent of the profile's width — the
@@ -484,11 +505,13 @@ public sealed class ReceptionValueModel
 /// profile-independent: a profile-dependent ramp would again lower a wide side's score at the same
 /// |z| — the inversion this convention exists to remove.
 ///
-/// <b>Scope (AIB-4b).</b> This class keeps its AUD-01 meaning unchanged and remains the width credit for
-/// build-up receptions and for wide jobs (<see cref="Tactics.JobRegionScoring"/>). Only the final-third
-/// value of an attacking reception is different: <see cref="ReceptionValueModel"/> exchanges this credit
-/// for its central-threat credit there, because raw width credit gives the centre line 0 for every
-/// profile — a structural central-reception penalty of its own, not an AUD-01 inversion.
+/// <b>Scope (AIB-4b, AUD-P6).</b> This class keeps its AUD-01 meaning unchanged and remains the width
+/// credit for build-up receptions and for wide jobs (<see cref="Tactics.JobRegionScoring"/>). Only the
+/// attacking-reception value differs: <see cref="ReceptionValueModel"/> exchanges this credit for its
+/// central-threat credit from <see cref="ReceptionValueModel.FinalThirdBlendStartProjMeters"/> onward, so
+/// midfield build-up receptions are no longer priced on width alone (AUD-P6 / Fix 5.3 moved that exchange
+/// forward from the final-third line). The reason is structural: raw width credit gives the centre line 0
+/// for every profile — a central-reception penalty of its own, not an AUD-01 inversion.
 /// </summary>
 public static class AttackingWidthPreference
 {
