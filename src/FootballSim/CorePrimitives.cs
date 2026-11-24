@@ -701,12 +701,36 @@ public enum TeamId
 /// variant; they score goal-side position and lane screening, are clamped at the live line band's ceiling, and
 /// the allocator's vacated-gap depth is clamped to the same band. Trajectories differ from version 57 wherever a
 /// carrier, shooter, passer, receiver, or off-ball defender decided.</item>
+/// <item><c>AiBehaviour 59</c> — the 2026-11-24 owner review of version 58
+/// (<c>docs/Bug_Fixes_2026-11-23_AI57Review.md</c> §11), six corrections to AIB-07/AIB-10/AIB-11/AIB-12 and one
+/// review item measured and deferred. (1) <b>A carrier never sprints into a head-on tackle</b>:
+/// <c>IsCarryPathBlocked</c> exempted any opponent moving <i>towards</i> the carrier (a sign inversion) and only
+/// blocked for one retreating away; a body now vacates the corridor only by stepping laterally out of it on its
+/// own side or by outrunning the carrier, so a charging defender stops the sprint. (2) <b>The advance prospect
+/// prices the lane it claims</b>: the shot-value gain is weighted by the real outfield lane clearance from the
+/// carry target to the goal (it was hard-coded to a 100 %-open lane), the shooting-range entry fades in over
+/// four metres instead of switching on at 23.5 m, and the term is 0.40 instead of 0.65, so a compact block ahead
+/// collapses it and a good box pass can still win. (3) <b>A space promise is contested when the receiver can
+/// play it</b>: <see cref="AI.PassArrivalPromise"/> carries a separate contest-arrival moment, so a ToSpace ball
+/// (whose timing arrival is deliberately the ball's own flight, AUD-P3) is priced against the receiver's real
+/// arrival instead of the flight alone — the AIB-10 defender-timing fix was a no-op for that candidate. (4) <b>A
+/// space probe cannot roll out of play</b>: the calibrated roll-out at the receiver's arrival is tested against
+/// the pitch rectangle and refused when the ball has left it. (5) <b>An announced run gets a ball timed to the
+/// meet, not merely a firm one</b>: forcing the 9.0 m/s crisp floor onto every <c>ToRun</c> starved advertised
+/// runs whose meet was 2 s away (mistiming 0.64 s, timing term 0, completion ~0.02, rejected); the carrier now
+/// keeps the crisp floor while it is inside the promise's own timing tolerance and otherwise plans the ball with
+/// the planner's 6.0 m/s arrival-pace floor, which is the review's starved case. (6) <b>Every promised pass
+/// shares one roll-out criterion</b>: a promised ball whose calibrated roll is more than its promise radius plus
+/// a receiving reach past its region is refused in the planner path, not only in the ToSpace probe. The AIB-09
+/// review item (freeing Marker/CoverDefender from the line ceiling) is <b>documented as measured and deferred</b>:
+/// all three forms moved the box-cross structural fixture below its protected 5 m floor. Trajectories differ from
+/// version 58 wherever a carrier, passer or receiver decided.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 58;
+    public const int AiBehaviour = 59;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

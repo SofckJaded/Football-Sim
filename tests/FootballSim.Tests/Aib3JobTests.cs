@@ -19,8 +19,10 @@ namespace FootballSim.Tests;
 /// <item><b>CandidateGenerator</b>: defensive jobs used to be scored with the attacking support package —
 ///   <c>StepOutOfCoverShadow</c> pushed the target up to six metres away from the nearest opponent and
 ///   <c>+0.30 lane + 0.30 space</c> paid the defender for the empty grass he stepped into. Classified by
-///   <see cref="CandidateGenerator.IsDefensiveJob"/>, those duties now emit no stepped-out variant, are
-///   clamped at the live line's ceiling, and are scored on goal-side position and lane blocking.</item>
+///   <see cref="CandidateGenerator.IsDefensiveJob"/>, those duties now emit no stepped-out variant and are
+///   scored on goal-side position and lane blocking. Every defensive duty's target is still clamped at the
+///   live line's ceiling: the 2026-11-24 review asked to free the man-oriented duties, and all three forms of
+///   that were measured to break the 5 m `JobTargetStructureTests` floor (see the clamp test's comment).</item>
 /// <item><b>TeamJobs.FindVacancy</b>: the protected region was the static kickoff-relative slot, so it
 ///   could sit forward of the line the team was actually defending. Its depth is now clamped to
 ///   <see cref="DefensiveLineBand.MaxProjX"/>; with no valid band the old result stands exactly.</item>
@@ -37,6 +39,7 @@ public sealed class Aib3JobTests
     private const int SelfId = 104;
     private const int CarrierId = 110;
     private const int AttackerId = 202;
+    private const int KeeperId = 50;
 
     // ---------------------------------------------------------------------------------------------
     // 1. The classification itself.
@@ -113,18 +116,16 @@ public sealed class Aib3JobTests
             "(pre-fix: candidates at 12 m and 16 m, both in front of him)");
     }
 
-    // ---------------------------------------------------------------------------------------------
-    // 3. A defensive target respects the live band's ceiling exactly.
-    // ---------------------------------------------------------------------------------------------
-
     /// <summary>
-    /// The depth half of the same defect for a <see cref="TacticalJob.Marker"/>. The allocator's anchor
-    /// here is 14 m; the live band's ceiling is 6 m (the ball is deep in this team's half and the line has
-    /// dropped with it), so the unclamped anchor is 8 m in front of the last line — a marker standing in
-    /// the space the through ball goes through rather than goal-side of the man at 12 m.
-    ///
-    /// Pre-fix the base candidate is emitted at 14 m and an adjusted one even further out, so both the
-    /// "inside the band" and the "one candidate" assertions fail.
+    /// AIB-09, 2026-11-24 owner review: the review asked to free <see cref="TacticalJob.Marker"/> and
+    /// <see cref="TacticalJob.CoverDefender"/> from the line ceiling. Three forms were measured — full freedom,
+    /// an 8 m ahead-of-line allowance and a man-relative goal-side bound — and all of them move the `box-cross`
+    /// structural fixture from 5.18 m to 4.6 m of anchor separation, below the 5 m
+    /// <see cref="JobTargetStructureTests"/> floor this batch must not lower (and the reference match opens up).
+    /// The clamp therefore stays uniform, which this test pins: <b>every</b> defensive duty is clamped at the
+    /// ceiling, including the two the review wanted freed, so a later session cannot silently re-enable a
+    /// measured-unshippable variant without its own gate evidence. The doc comment on
+    /// <see cref="CandidateGenerator.ClampDefensiveJobDepth"/> records the measurement.
     /// </summary>
     [Fact]
     public void AIB09_DefensiveJobTarget_RespectsTheLiveLineBandCeiling()
@@ -133,25 +134,53 @@ public sealed class Aib3JobTests
         const float maxProjX = 6f;
         Vector2 selfXZ = new(16f, 8f);
         Vector2 anchorXZ = new(14f, 4f);
+
+        // Every defensive duty, including the man-oriented ones the review asked to free, is clamped to the
+        // live ceiling: the measured alternative costs the 5 m structural gate.
+        AssertDutyTarget(TacticalJob.ProtectGap, selfXZ, anchorXZ, maxProjX, minProjX, clamped: true);
+        AssertDutyTarget(TacticalJob.DefensiveLine, selfXZ, anchorXZ, maxProjX, minProjX, clamped: true);
+        AssertDutyTarget(TacticalJob.DefensiveCover, selfXZ, anchorXZ, maxProjX, minProjX, clamped: true);
+        AssertDutyTarget(TacticalJob.Marker, selfXZ, anchorXZ, maxProjX, minProjX, clamped: true);
+        AssertDutyTarget(TacticalJob.CoverDefender, selfXZ, anchorXZ, maxProjX, minProjX, clamped: true);
+    }
+
+    /// <summary>Generates one defensive duty's job candidates and asserts its single target's depth.</summary>
+    private static void AssertDutyTarget(
+        TacticalJob job,
+        Vector2 selfXZ,
+        Vector2 anchorXZ,
+        float maxProjX,
+        float minProjX,
+        bool clamped)
+    {
         var generator = new CandidateGenerator(Pitch, communication: null,
             new AiRuntimeConfig { EnableCombinations = false });
 
         generator.GenerateOffBallCandidates(
             DefenderObservation(
-                selfXZ, anchorXZ, ballXZ: new Vector2(-14f, 0f), TacticalJob.Marker, TeamId.Away,
+                selfXZ, anchorXZ, ballXZ: new Vector2(-14f, 0f), job, TeamId.Away,
                 [Opponent(AttackerId, TacticalRole.Striker, 12f, 4f)],
                 Band(proj: maxProjX, min: minProjX, max: maxProjX)),
             OpponentGoal, OwnGoal, selfXZ, isPrimaryBallResponder: false, offsideLineProjX: 0f);
 
-        (int count, UtilityCandidate only) = SingleJobCandidate(generator, TacticalJob.Marker);
-
+        (int count, UtilityCandidate only) = SingleJobCandidate(generator, job);
         Assert.Equal(1, count);
         Assert.True(only.TargetXZ.HasValue);
         float targetProj = only.TargetXZ!.Value.X;
-        Assert.True(targetProj <= maxProjX + 1e-3f,
-            $"the marker target {targetProj:F2} m sits forward of the live line ceiling {maxProjX:F1} m");
-        Assert.True(targetProj >= minProjX - 1e-3f, "the marker target left the band's floor");
-        Assert.Equal(maxProjX, targetProj, precision: 3);
+        Assert.True(targetProj >= minProjX - 1e-3f, $"{job} target left the band's floor");
+        if (clamped)
+        {
+            Assert.True(targetProj <= maxProjX + 1e-3f,
+                $"{job} target {targetProj:F2} m sits forward of the live line ceiling {maxProjX:F1} m");
+            Assert.Equal(maxProjX, targetProj, precision: 3);
+        }
+        else
+        {
+            Assert.True(targetProj > maxProjX + 1e-3f,
+                $"{job} target {targetProj:F2} m was dragged back to the back-four ceiling {maxProjX:F1} m; " +
+                "a man-oriented duty must be free to defend ahead of the line");
+            Assert.Equal(anchorXZ.X, targetProj, precision: 3);
+        }
     }
 
     /// <summary>
@@ -271,6 +300,50 @@ public sealed class Aib3JobTests
         Assert.True(goalSideUtility > aheadUtility + 0.20f,
             $"a goal-side defensive target ({goalSideUtility:F3}) must outscore one that stepped in front " +
             $"of the covered attacker ({aheadUtility:F3}); pre-fix the ball-side target won by ~0.267");
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // 5b. The goal-side term stays on the nearest opponent (a measured rejection, 2026-11-24).
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// AIB-09 owner-review correction, <b>rejected on measurement</b>. The review's minor nit was to read
+    /// <see cref="FootballerObservation.JobTargetPlayerId"/> (the man the allocator marked) in
+    /// <c>EvaluateDefensiveGoalSide01</c> instead of the nearest visible opponent. It was implemented and the
+    /// reference match opened up badly: the same build goes 11–10 with 57/47 shots without it and 24–11 with
+    /// 72/38 with it on the fixed seed, i.e. a "minor nit" that costs 13 goals in one match and 21–35 total
+    /// goals across the probe seeds, because committed man-markers follow their man out of the block. The
+    /// shipping decision is therefore the nearest-opponent reading, and this test pins it: an id that names a
+    /// <i>different</i> opponent must produce the identical utility, and the fallbacks (not visible, out of
+    /// range, a keeper) are therefore trivially identical too.
+    ///
+    /// The fixture makes the difference measurable if the reading ever returns: the nearest opponent at (9, 0)
+    /// is one metre ball-side of the target (goal-side 0.375) while the named man at (14, 0) would be fully
+    /// goal-side (1.0), worth <c>DefensivePositionWeight × 0.5 × 0.625 = 0.09375</c>.
+    /// </summary>
+    [Fact]
+    public void AIB09_GoalSideTerm_StaysOnTheNearestOpponent_MeasuredRejection()
+    {
+        Vector2 selfXZ = new(14f, -6f);
+        Vector2 ballXZ = new(-30f, 20f);
+        Vector2 anchorXZ = new(10f, 0f);
+        PerceivedEntity nearest = Opponent(AttackerId, TacticalRole.Striker, 9f, 0f);
+        PerceivedEntity marked = Opponent(AttackerId + 1, TacticalRole.CenterBack, 14f, 0f);
+
+        float nearestRead = DefensiveJobUtilityWith(
+            TacticalJob.Marker, selfXZ, ballXZ, anchorXZ, jobTargetPlayerId: null, nearest, marked);
+        float markedIdRead = DefensiveJobUtilityWith(
+            TacticalJob.Marker, selfXZ, ballXZ, anchorXZ, marked.PlayerId, nearest, marked);
+        float unknownIdRead = DefensiveJobUtilityWith(
+            TacticalJob.Marker, selfXZ, ballXZ, anchorXZ, jobTargetPlayerId: 999, nearest, marked);
+
+        // Pre-fix (the rejected reading) `markedIdRead - nearestRead` was exactly 0.09375; shipping the
+        // nearest-opponent reading makes it exactly zero, so the value difference is *asserted* to be absent.
+        Assert.Equal(nearestRead, markedIdRead, 6);
+        Assert.Equal(nearestRead, unknownIdRead, 6);
+        Assert.True(
+            CandidateGenerator.DefensivePositionWeight * 0.5f * (1.0f - 0.375f) > 0.09f,
+            "the fixture must stay able to detect the rejected reading (its utility lift was ~0.094)");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -474,6 +547,7 @@ public sealed class Aib3JobTests
     /// The off-ball observation a defensive duty decides from: the team is defending, the ball is loose in
     /// this picture (so <see cref="PressPolicy"/> offers no primary act and the decision reaches the job
     /// candidates), and the duty anchor and line band are exactly what the fixture sets.
+    /// <paramref name="jobTargetPlayerId"/> is the marked-man id the allocator would have published.
     /// </summary>
     private static FootballerObservation DefenderObservation(
         Vector2 selfXZ,
@@ -482,7 +556,8 @@ public sealed class Aib3JobTests
         TacticalJob job,
         TeamId possessingTeam,
         IReadOnlyList<PerceivedEntity> visible,
-        DefensiveLineBand lineBand) => new()
+        DefensiveLineBand lineBand,
+        int? jobTargetPlayerId = null) => new()
     {
         SelfId = SelfId,
         SelfTeam = TeamId.Home,
@@ -502,6 +577,7 @@ public sealed class Aib3JobTests
         TacticalAnchorPosition = new Vector3(dutyAnchorXZ.X, 0f, dutyAnchorXZ.Y),
         TacticalJob = job,
         TacticalJobAnchor = new Vector3(dutyAnchorXZ.X, 0f, dutyAnchorXZ.Y),
+        JobTargetPlayerId = jobTargetPlayerId,
         AttackingDirectionX = 1f,
         MatchTimeSeconds = 10f,
         CurrentMatchPhase = MatchPhase.FirstHalf,
@@ -609,6 +685,31 @@ public sealed class Aib3JobTests
                 selfXZ, anchorXZ, ballXZ, job, TeamId.Away,
                 [Opponent(AttackerId, TacticalRole.Striker, attackerXZ.X, attackerXZ.Y)],
                 DefensiveLineBand.None),
+            OpponentGoal, OwnGoal, selfXZ, isPrimaryBallResponder: false, offsideLineProjX: 0f);
+
+        (_, UtilityCandidate source) = SingleJobCandidate(generator, job);
+        Assert.True(source.TargetXZ.HasValue);
+        return source.UtilityScore;
+    }
+
+    /// <summary>
+    /// The utility of one defensive duty anchor in a picture with an explicit visible set and an optional
+    /// marked-man id — used to isolate the goal-side term's choice of opponent.
+    /// </summary>
+    private static float DefensiveJobUtilityWith(
+        TacticalJob job,
+        Vector2 selfXZ,
+        Vector2 ballXZ,
+        Vector2 anchorXZ,
+        int? jobTargetPlayerId,
+        params PerceivedEntity[] visible)
+    {
+        var generator = new CandidateGenerator(Pitch, communication: null,
+            new AiRuntimeConfig { EnableCombinations = false });
+        generator.GenerateOffBallCandidates(
+            DefenderObservation(
+                selfXZ, anchorXZ, ballXZ, job, TeamId.Away, visible,
+                DefensiveLineBand.None, jobTargetPlayerId),
             OpponentGoal, OwnGoal, selfXZ, isPrimaryBallResponder: false, offsideLineProjX: 0f);
 
         (_, UtilityCandidate source) = SingleJobCandidate(generator, job);

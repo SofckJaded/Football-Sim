@@ -162,6 +162,17 @@ public static class ActionValueScale
     // withdrawn (exactly 0) the moment an opponent can arrive at the carrier or at the target inside the
     // stated windows. The existing contact-risk deduction stays the only pressure penalty: this is a
     // prospect that does not exist when closed, never a second discount of the same risk.
+    //
+    // 2026-11-24 owner-review correction (still AIB-07b): the first cut priced the prospect on a
+    // hardcoded 100 %-open shooting lane and switched it on in one step at ShotRangeMeters, so a compact
+    // block between the carry target and goal paid nothing and a carrier crossing 23.5 m gained 0.65 in a
+    // single tick. The prospect is now multiplied by the real outfield lane clearance from the carry target
+    // to the goal (keeper excluded — the AIB-05 convention: the keeper is the shot's save risk, not an
+    // outfield lane blocker), fades in over CarryAdvanceRampMeters, and its cap sits in the reviewer's
+    // 0.35–0.45 band. Measured on the neutral 20 m 1v1 fixture (settled touch): open lane 1.00 and the
+    // 4 m ramp at 0.875 give an advance of 0.35, carry 1.3287 against the keeper-aware shot 0.9478 (the
+    // drive still wins by 0.38; shot/carry crossover 16.8 m); the same picture with a three-body block on
+    // the target→goal ray reads lane 0.00 and pays exactly nothing; a closing chaser still pays nothing.
     // ---------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -170,12 +181,34 @@ public static class ActionValueScale
     /// <remarks>
     /// The audit's own unit: with the shipped curve a clean shot from 20 m is worth
     /// <see cref="ShotValue"/>(20, 1, 21°) ≈ 0.98 and the same shot from 15.5 m — one 4.5 m carry target
-    /// closer — ≈ 1.60, so a full reference probe is worth ≈ 0.62. 0.65 is the stated cap: large enough that
-    /// an open 20 m drive beats a keeper-aware 0.95 shot and a 1.0–1.1 pass (measured: open 1v1 carry 1.63
-    /// vs shot 0.95), small enough that a clean pass plus the better shot still wins from ~14 m inside the
-    /// box (measured crossover ≈ 15.1 m; regression <c>Aib3CarryShotTests.AIB07b_AnOpenOneOnOneAtTwentyMetres_DrivesInsteadOfShooting</c>).
+    /// closer — ≈ 1.60, so a full reference probe is worth ≈ 0.62.
+    ///
+    /// <para><b>2026-11-24 review correction (AIB-07b).</b> Lowered 0.65 → 0.40, inside the reviewer's
+    /// 0.35–0.45 band, and chosen by measurement rather than by taste: 0.40 is the largest value in the band
+    /// that keeps an open square/cutback pass in the box able to win. A settled open-lane carry in the box
+    /// band now tops out at <c>0.90 base+space + 0.40 = 1.30 gain</c>, i.e. 1.3787 utility with the 0.0787
+    /// forward-progress preference, below the top of the reviewer's typical 1.10–1.40 box-pass band; at 0.45
+    /// it would be 1.4287 and the pass could no longer win. The audit's finding-1 case is preserved: with
+    /// the lane gate and the <see cref="CarryAdvanceRampMeters"/> ramp the open 20 m 1v1 still drives
+    /// (carry 1.3287 vs keeper-aware shot 0.9478), and the measured shot/carry crossover moved 15.1 m →
+    /// 16.8 m (the shot now wins in the 15–16.8 m band where the old drive did). Regression
+    /// <c>Aib3CarryShotTests.AIB07b_AnOpenOneOnOneAtTwentyMetres_DrivesInsteadOfShooting</c> pins it.</para>
     /// </remarks>
-    public const float CarryAdvanceValue = 0.65f;
+    public const float CarryAdvanceValue = 0.40f;
+
+    /// <summary>
+    /// Distance, in metres, over which the advance prospect fades in as the carrier enters
+    /// <see cref="ShotRangeMeters"/> (AIB-07b, 2026-11-24 owner-review correction).
+    /// </summary>
+    /// <remarks>
+    /// The first cut gated the prospect with <c>distanceToGoal &lt; ShotRangeMeters</c>, which is a hard
+    /// 0 → 0.65 step at 23.5 m: one tick outside the range paid nothing, the next tick paid the full term,
+    /// so a carrier could be pulled into a ball-hog by a single metre. The term now ramps linearly from 0 at
+    /// 23.5 m to full at 19.5 m (4 m ≈ the carry's own 4.5 m target, so the fade covers the distance one
+    /// carry probe closes). At 20 m the ramp reads 0.875 and the open-lane advance is 0.35 of the 0.40 cap.
+    /// The gate is a ramp, not a wider range: beyond 23.5 m the term is still exactly zero.
+    /// </remarks>
+    public const float CarryAdvanceRampMeters = 4f;
 
     /// <summary>
     /// Shot-value improvement that counts as one full reference probe, in scale units (AIB-07b).

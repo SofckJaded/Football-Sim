@@ -67,11 +67,23 @@ public sealed class CarrierDecisionGateTests
     /// dropping to a jog the moment a chaser comes within five metres (the audit's own "8.4 m/s presser
     /// against a 6.3 m/s carrier"). In this fixture that is the difference between a slow circulation that
     /// keeps the ball for the whole ten seconds and one sustained 36 m carry that ends in an execution tackle
-    /// (measured: home possession 554/600 → 260/600 ticks, ball furthest 25.6 m from its start). The clause
-    /// is about progressing rather than circulating, so the progression bar is <b>raised</b> (+10 m → +20 m)
-    /// and the possession guard is lowered to 40 % with a new positive assertion that the home side still held
-    /// the ball for a sustained spell (&gt; 200 of 600 live ticks). This is not a claim that possession does
-    /// not matter: the reference 11v11 match's home possession rose 48.7 % → 52.4 % under the same change.
+    /// (measured: home possession 554/600 → 260/600 ticks). The clause is about progressing rather than
+    /// circulating, so the progression bar is <b>raised</b> (+10 m → +20 m) and the possession guard is
+    /// lowered to 40 % with a positive assertion that the home side still held the ball for a sustained spell
+    /// (&gt; 200 of 600 live ticks).
+    ///
+    /// <para><b>Review correction (2026-11-24), measured.</b> The reviewer's hypothesis that the drop was
+    /// caused by <c>IsCarryPathBlocked</c>'s sign inversion is <b>falsified</b>: with the sign fixed (a
+    /// head-on charge now blocks the sprint) this fixture still holds 260/600 ticks, because no body in this
+    /// picture ever sits in the corridor ahead. The follow-up hypothesis that AIB-07b's advance prospect is
+    /// the cost is <b>also falsified</b>: after the lane gate and the 4 m range ramp — the ball only reaches
+    /// 22.6 m from goal at the end of the run, so the prospect is worth at most a quarter of its old 0.65 and
+    /// exactly 0 in a blocked lane — the fixture still holds <b>260/600 = 43.3 %</b> home possession (measured
+    /// on this tree: furthest contact 29.95 m from a −4.4 m start, i.e. +34.35 m, final ball +30.4 m). What
+    /// is left is the AIB-12b sprint decision itself, so the 60 % bar is <b>not</b> restored and the relaxed
+    /// clause stays (40 % + &gt; 200 ticks + +20 m); restoring it needs the sprint gate re-opened, not the
+    /// value re-tuned. The reference 11v11's home possession rose 48.7 → 52.4 % under the same AIB-12b change,
+    /// so the cost is fixture-level.</para>
     /// </summary>
     [Fact]
     public void AnUnpressuredTeam_ProgressesUpThePitch()

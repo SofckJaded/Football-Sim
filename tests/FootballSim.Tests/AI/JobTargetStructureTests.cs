@@ -35,6 +35,16 @@ public sealed class JobTargetStructureTests
     /// floor — `docs/KNOWN_ISSUES.md` records that), and 5.5 m between a short outlet and the cover behind the
     /// ball is two adjacent duties, not the stacking the 0.4 m case was.
     ///
+    /// <para><b>2026-11-24 owner-review item (AIB-09): floor NOT moved and the change deferred.</b> The review
+    /// asked to free <see cref="TacticalJob.Marker"/> and <see cref="TacticalJob.CoverDefender"/> from the
+    /// back-four depth ceiling. Three forms were implemented and measured (full freedom, an 8 m ahead-of-line
+    /// allowance, a man-relative goal-side bound) and every one moves `box-cross`'s closest refined pair from
+    /// 5.18 m to 4.6 m at the same sample (t=144, DepthRun vs ThirdPlayerOption) — the marker's movement changes
+    /// the passage of play and the anchors follow the ball. 4.6 m would pass at 4.5 m, but this floor is a gate
+    /// that has been protected from lowering, and the separation is a soft region preference, so the scoping is
+    /// deferred to the owner instead of being bought with the gate. The four fixtures measure as documented
+    /// above at 5 m.</para>
+    ///
     /// The <see cref="TacticalJob.BallResponder"/> is still not an off-ball duty: he is the man on the ball (or
     /// the receiver a pass is travelling to), and his assignment carries his shape slot rather than a place the
     /// team is trying to occupy. `build-up-3v2` has only two outfield players, so it has a single off-ball duty

@@ -86,7 +86,11 @@ public readonly record struct PassArrivalPromise(
     Vector2 TargetXZ,
     float ArrivalSeconds,
     float MeetRadiusMeters,
-    float Confidence01)
+    float Confidence01,
+    // AIB-10 (audit 2026-11-23, finding 4) / 2026-11-24 owner-review correction: the moment the receiver
+    // can actually play the promised ball, when that is later than the ball's own flight. Zero means "not
+    // stated" and the promise's ArrivalSeconds is that moment, which is every promise except ToSpace.
+    float ContestArrivalSeconds = 0f)
 {
     /// <summary>No promise: the pass model falls back to estimating the receiver's arrival itself.</summary>
     public static PassArrivalPromise None => default;
@@ -96,7 +100,28 @@ public readonly record struct PassArrivalPromise(
         Confidence01 > 0f &&
         float.IsFinite(ArrivalSeconds) &&
         float.IsFinite(MeetRadiusMeters) &&
-        SimMath.IsFinite(TargetXZ);
+        SimMath.IsFinite(TargetXZ) &&
+        float.IsFinite(ContestArrivalSeconds) &&
+        ContestArrivalSeconds >= 0f;
+
+    /// <summary>
+    /// The instant a contest for the promised ball is priced at — the moment the receiver is actually there,
+    /// not the moment the ball is. <see cref="ContestArrivalSeconds"/> when the builder stated it, otherwise
+    /// <see cref="ArrivalSeconds"/>.
+    ///
+    /// <b>AIB-10 / 2026-11-24 review correction (review item A1).</b> A <c>ToSpace</c> promise deliberately
+    /// keeps <see cref="ArrivalSeconds"/> equal to the ball's own flight (AUD-P3: the timing term is exactly 1
+    /// and the lead is not double-charged), so without this second instant the ground estimate's
+    /// <c>max(flight, receiverArrival)</c> contest collapses to <c>max(flight, flight) = flight</c> again and
+    /// the AIB-10 defender-timing fix is a no-op for that candidate: a ball whose receiver arrives at 1.30 s
+    /// after an 0.80 s flight priced every defender at 0.80 s. The builder that knows the receiver's real
+    /// arrival states it here; the timing/mistiming term stays on <see cref="ArrivalSeconds"/>, so the ball is
+    /// still priced as certain to be at its own flight time and the AUD-P3 no-double-charge rule survives.
+    /// </summary>
+    public float ContestMomentSeconds =>
+        ContestArrivalSeconds > 0f && float.IsFinite(ContestArrivalSeconds)
+            ? ContestArrivalSeconds
+            : ArrivalSeconds;
 }
 
 /// <summary>
@@ -400,6 +425,18 @@ public sealed class PassSuccessModel
     /// <summary>Largest timing tolerance a promised meeting gets, in seconds (a very wide region).</summary>
     public const float MaxPromisedArrivalToleranceSeconds = 0.50f;
 
+    /// <summary>
+    /// The timing tolerance of a promised meeting region, in seconds: how early or late the ball may arrive and
+    /// still be met inside the region the runner announced. One owner of the formula — both estimators charge
+    /// promise mistiming against it, and the carrier's own plan choice uses the same number to decide whether a
+    /// firm crisp ball is still on time (AIB-11 / 2026-11-24 review correction), so plan and pricing cannot
+    /// disagree about what "on time" means.
+    /// </summary>
+    public static float PromiseTimingToleranceSeconds(float meetRadiusMeters) => Math.Clamp(
+        MathF.Abs(meetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
+        MinPromisedArrivalToleranceSeconds,
+        MaxPromisedArrivalToleranceSeconds);
+
     private readonly PassPlanner _planner;
 
     public PassSuccessModel(PassPlanner planner)
@@ -426,6 +463,12 @@ public sealed class PassSuccessModel
     /// for a central ball, for a ball that stays in play, and once the exit is more than
     /// <see cref="Physics.PassPlanner.BoundaryExitPenaltyRadiusMeters"/> past the aim point (an ordinary
     /// long forward ball whose roll ends far beyond the receiver).
+    ///
+    /// <b>AIB-10 / 2026-11-24 owner-review correction (A1).</b> A promised ball's defender contest, congestion
+    /// window and defender horizon are measured at <see cref="PassArrivalPromise.ContestMomentSeconds"/> — the
+    /// receiver's real arrival where the builder states it, falling back to the promise arrival — never at the
+    /// ball's flight alone, while the promise timing term stays on <see cref="PassArrivalPromise.ArrivalSeconds"/>
+    /// (AUD-P3: the ball is certain to be at its own flight time, and the lead is never charged twice).
     /// </summary>
     public PassSuccessTerms Estimate(
         in FootballerObservation obs,
@@ -458,9 +501,7 @@ public sealed class PassSuccessModel
             // the ball's own flight matches it (inside the region's width) and how much the promise is
             // worth. A mistimed ball is charged by the same per-second scale as any other margin.
             receiverArrival = Math.Clamp(promise.ArrivalSeconds, 0f, 6f);
-            float tolerance = Math.Clamp(
-                MathF.Abs(promise.MeetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
-                MinPromisedArrivalToleranceSeconds, MaxPromisedArrivalToleranceSeconds);
+            float tolerance = PromiseTimingToleranceSeconds(promise.MeetRadiusMeters);
             float mistiming = MathF.Max(0f, MathF.Abs(flight - receiverArrival) - tolerance);
             float timingTerm = Math.Clamp(1f - mistiming / ReceiverMarginScaleSeconds, 0f, 1f);
             receiverTerm = Math.Clamp(promise.Confidence01, 0f, 1f) * timingTerm;
@@ -481,7 +522,13 @@ public sealed class PassSuccessModel
         // whose receiver arrives after the ball (a driven or floored timed pass) let a defender who arrives
         // between the two score a full defender term: the ball is there, but nobody can play it and the
         // defender simply waits. A defender who arrives after both is still untouched (margin positive).
-        float contestSeconds = MathF.Max(flight, receiverArrival);
+        //
+        // 2026-11-24 owner-review correction (A1): the receiver's real arrival is the promise's
+        // ContestArrivalSeconds where the builder stated it, not ArrivalSeconds. For ToSpace ArrivalSeconds is
+        // deliberately the ball's own flight (AUD-P3), so the max below used to collapse to the flight and
+        // this term was a no-op for that candidate — an 0.80 s ball the receiver could only reach at 1.30 s
+        // priced its defenders at 0.80 s. The timing/mistiming term above stays on ArrivalSeconds.
+        float contestSeconds = ContestSeconds(promise, promised, flight, receiverArrival);
         float defenderMargin = float.PositiveInfinity;
         float defenderArrival = float.PositiveInfinity;
         float defenderUncertainty = 0f;
@@ -657,6 +704,9 @@ public sealed class PassSuccessModel
     /// against the ball's flight alone, consistently with <see cref="Estimate"/>. A defender who can reach
     /// the landing after the ball but before the receiver can no longer score a full defender term, and the
     /// congestion window is counted from the same instant so a late contestor is charged once, not excused.
+    /// The receiver's moment is <see cref="PassArrivalPromise.ContestMomentSeconds"/> when the promise states
+    /// one (2026-11-24 owner-review correction, A1), so a driven or timed promise whose arrival is later than
+    /// its flight prices the contest at the arrival, not the flight.
     /// </summary>
     public LoftedPassTerms EstimateRaised(
         in FootballerObservation obs,
@@ -703,9 +753,7 @@ public sealed class PassSuccessModel
             // Solved from the promised arrival: what is left to price is the runner's own confidence and
             // how well the ball's flight matched the moment he said he would be there.
             receiverArrival = Math.Clamp(promise.ArrivalSeconds, 0f, 6f);
-            float tolerance = Math.Clamp(
-                MathF.Abs(promise.MeetRadiusMeters) * 0.5f / PromisedRegionCrossSpeed,
-                MinPromisedArrivalToleranceSeconds, MaxPromisedArrivalToleranceSeconds);
+            float tolerance = PromiseTimingToleranceSeconds(promise.MeetRadiusMeters);
             float mistiming = MathF.Max(0f, MathF.Abs(flight - receiverArrival) - tolerance);
             float timingTerm = Math.Clamp(1f - mistiming / ReceiverMarginScaleSeconds, 0f, 1f);
             receiverTerm = Math.Clamp(promise.Confidence01, 0f, 1f) * timingTerm;
@@ -722,8 +770,10 @@ public sealed class PassSuccessModel
         // can actually be played — the later of the ball's flight and the receiver's arrival — exactly as the
         // ground estimate now measures it. Pre-fix the term used `flight` alone, so a landed ball nobody can
         // reach yet (the receiver is still running to it) read as an uncontested landing, and a defender who
-        // arrives between the two scored a full defender term.
-        float contestSeconds = MathF.Max(flight, receiverArrival);
+        // arrives between the two scored a full defender term. 2026-11-24 owner-review correction (A1): the
+        // receiver's moment is the promise's ContestArrivalSeconds where the builder stated one (ToSpace keeps
+        // ArrivalSeconds equal to the ball's own flight by AUD-P3), so the same rule holds for every promise.
+        float contestSeconds = ContestSeconds(promise, promised, flight, receiverArrival);
         float defenderTerm = 1f;
         float defenderUncertaintySeconds = 0f;
         float horizon = MathF.Max(contestSeconds + DefenderHorizonSlackSeconds, 1f);
@@ -1122,6 +1172,25 @@ public sealed class PassSuccessModel
     /// <summary>AIB-02b: the bounded completion multiplier for that crowding.</summary>
     private static float CongestionFactor(int extraDefenders) =>
         1f - DefenderCongestionStep01 * extraDefenders;
+
+    /// <summary>
+    /// AIB-10 / 2026-11-24 owner-review correction (A1): the instant the defender contest, the congestion
+    /// window and the defender horizon are measured from — the later of the ball's own flight and the moment
+    /// the receiver can actually play it. The receiver's moment is the promise's
+    /// <see cref="PassArrivalPromise.ContestMomentSeconds"/> (the builder's stated receiver arrival for
+    /// ToSpace, otherwise the promise's own arrival), and the reach estimate for an unpromised ball. The
+    /// promise <i>timing</i> term never reads this: it stays on <see cref="PassArrivalPromise.ArrivalSeconds"/>
+    /// so the ball is priced as certain to be at its own flight time (AUD-P3).
+    /// </summary>
+    private static float ContestSeconds(
+        in PassArrivalPromise promise,
+        bool promised,
+        float flight,
+        float receiverArrival)
+    {
+        float receiverMoment = promised ? promise.ContestMomentSeconds : receiverArrival;
+        return MathF.Max(flight, receiverMoment);
+    }
 
     /// <summary>
     /// How aligned the receiver's current run is with the arrival point, 1 = running straight at it.

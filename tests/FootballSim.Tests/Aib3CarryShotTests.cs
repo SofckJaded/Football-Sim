@@ -203,25 +203,44 @@ public sealed class Aib3CarryShotTests
     /// exactly 20 m with the early bonus expired, where the pre-fix carry was 0.90 + 0.0787 progress = 0.9787
     /// against a 0.9808 shot, i.e. the old code shot by 0.002.
     ///
-    /// Post-fix the advance term saturates (one reference probe is worth 0.6156, above the 0.60
-    /// normalisation), so the gain is exactly <c>0.50 + 0.40 x space + 0.65</c> = 1.55 with space 1.0 and the
-    /// carry beats the keeper-aware shot (0.9478) by 0.68. Inside the box the accounting flips: at 14 m the
-    /// shot (1.8016) beats the carry (1.5204). Measured drive crossover ≈15.1 m, i.e. inside the penalty box.
+    /// Post-fix the advance term is lane-gated and ramped (2026-11-24 review correction, still AIB-07b): the
+    /// gain is <c>0.50 + 0.40 × space + 0.40 × lane × ramp</c>, with space 1.0, an open lane (1.0) and the
+    /// 4 m ramp at 0.875 for 20 m, so exactly <c>0.50 + 0.40 + 0.35 = 1.25</c> and the utility 1.3288 beats
+    /// the keeper-aware shot (0.9478) by 0.381. The old hard step at 23.5 m is gone: at 22.5 m the ramp is
+    /// 0.25 and the gain is exactly 1.00 (pre-fix the same picture paid the full 1.55). Inside the box the
+    /// accounting flips: at 14 m the shot (1.8016) beats the carry (1.3003). Measured shot/carry crossover
+    /// 16.8 m (was 15.1 m before the cap was lowered): at 16.5 m the shot still wins, at 17 m the drive does.
     /// </summary>
     [Fact]
     public void AIB07b_AnOpenOneOnOneAtTwentyMetres_DrivesInsteadOfShooting()
     {
+        float rampAtTwenty = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - 20f) / ActionValueScale.CarryAdvanceRampMeters, 0f, 1f);
         CandidateGenerator openAtTwenty = Generate(Observation(
             new Vector2(32.5f, 0f), Keeper(new Vector2(51.5f, 0f))));
         UtilityCandidate carry = Single(openAtTwenty, CandidateKind.Carry, "open 1v1 at 20 m");
         UtilityCandidate shot = Single(openAtTwenty, CandidateKind.Shot, "open 1v1 at 20 m");
 
-        Assert.True(carry.UtilityScore > shot.UtilityScore + 0.40f,
+        Assert.True(carry.UtilityScore > shot.UtilityScore + 0.30f,
             $"the open 20 m drive ({carry.UtilityScore:F3}) must beat the keeper-aware shot " +
-            $"({shot.UtilityScore:F3}) by 0.40; pre-fix the carry was 0.9787 against the 0.9808 shot");
+            $"({shot.UtilityScore:F3}) by 0.30; pre-fix the carry was 0.9787 against the 0.9808 shot");
         Assert.Equal(
-            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus + ActionValueScale.CarryAdvanceValue,
+            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus
+                + ActionValueScale.CarryAdvanceValue * rampAtTwenty,
             carry.Terms.Gain, 3);
+
+        // 22.5 m, inside ShotRangeMeters but in the ramp's fade: a quarter of the advance, not the old full
+        // step. Pre-fix this picture paid the old full term (0.65) and the gain was 1.55.
+        CandidateGenerator openAtTwentyTwo = Generate(Observation(
+            new Vector2(30f, 0f), Keeper(new Vector2(51.5f, 0f))));
+        UtilityCandidate fadingCarry = Single(openAtTwentyTwo, CandidateKind.Carry, "open 1v1 at 22.5 m");
+        float rampAtTwentyTwo = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - 22.5f) / ActionValueScale.CarryAdvanceRampMeters, 0f, 1f);
+        Assert.Equal(
+            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus
+                + ActionValueScale.CarryAdvanceValue * rampAtTwentyTwo,
+            fadingCarry.Terms.Gain, 3);
+        Assert.True(rampAtTwentyTwo > 0f && rampAtTwentyTwo < 1f, "the 22.5 m sample must sit inside the ramp");
 
         // 14 m: the shot the drive would reach is no longer worth more than the shot on offer now.
         CandidateGenerator openAtFourteen = Generate(Observation(
@@ -230,7 +249,22 @@ public sealed class Aib3CarryShotTests
         UtilityCandidate closeCarry = Single(openAtFourteen, CandidateKind.Carry, "open 1v1 at 14 m");
         Assert.True(closeShot.UtilityScore > closeCarry.UtilityScore,
             $"inside the box the shot ({closeShot.UtilityScore:F3}) must beat the drive " +
-            $"({closeCarry.UtilityScore:F3}); the measured crossover is ≈15.1 m");
+            $"({closeCarry.UtilityScore:F3}); the measured crossover is ≈16.8 m");
+
+        // The measured crossover, pinned either side: shot wins at 16.5 m, the drive wins at 17 m.
+        CandidateGenerator atSixteenAndHalf = Generate(Observation(
+            new Vector2(36f, 0f), Keeper(new Vector2(51.5f, 0f))));
+        Assert.True(
+            Single(atSixteenAndHalf, CandidateKind.Shot, "16.5 m").UtilityScore >
+            Single(atSixteenAndHalf, CandidateKind.Carry, "16.5 m").UtilityScore,
+            "16.5 m is inside the measured 16.8 m shot/carry crossover: the shot must win");
+
+        CandidateGenerator atSeventeen = Generate(Observation(
+            new Vector2(35.5f, 0f), Keeper(new Vector2(51.5f, 0f))));
+        Assert.True(
+            Single(atSeventeen, CandidateKind.Carry, "17 m").UtilityScore >
+            Single(atSeventeen, CandidateKind.Shot, "17 m").UtilityScore,
+            "17 m is outside the measured 16.8 m shot/carry crossover: the drive must win");
     }
 
     /// <summary>
@@ -238,7 +272,7 @@ public sealed class Aib3CarryShotTests
     /// arrive at the carrier in ~0.30 s (inside the 0.50 s contact window), so the prospect is withdrawn and
     /// the contact risk is charged instead — the shot (0.9478) then beats the carry (0.5993). The control is
     /// the same geometry with the same body receding at 8 m/s: nobody can arrive, the prospect is paid
-    /// (gain 1.55) and the carry wins again.
+    /// (gain 1.25 = 0.90 + the 0.35 advance at 20 m) and the carry wins again.
     ///
     /// The closing carry's gain (0.5205) stays below base + space (0.90), which the pre-fix carry could only
     /// reach through the 0.25 s early bonus; no duplicate pressure term is being paid.
@@ -246,6 +280,9 @@ public sealed class Aib3CarryShotTests
     [Fact]
     public void AIB07b_AClosingChaser_WithdrawsTheAdvanceProspect()
     {
+        float rampAtTwenty = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - 20f) / ActionValueScale.CarryAdvanceRampMeters, 0f, 1f);
+        float advanceAtTwenty = ActionValueScale.CarryAdvanceValue * rampAtTwenty;
         PerceivedEntity keeper = Keeper(new Vector2(51.5f, 0f));
         CandidateGenerator closing = Generate(Observation(
             new Vector2(32.5f, 0f), keeper, Opponent(new Vector2(28f, 0f), new Vector2(8f, 0f))));
@@ -256,9 +293,12 @@ public sealed class Aib3CarryShotTests
         UtilityCandidate closingShot = Single(closing, CandidateKind.Shot, "closing chaser");
         UtilityCandidate recedingCarry = Single(receding, CandidateKind.Carry, "receding chaser");
 
-        Assert.True(recedingCarry.Terms.Gain - closingCarry.Terms.Gain > ActionValueScale.CarryAdvanceValue,
+        Assert.Equal(
+            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus + advanceAtTwenty,
+            recedingCarry.Terms.Gain, 4);
+        Assert.True(recedingCarry.Terms.Gain - closingCarry.Terms.Gain > advanceAtTwenty,
             $"the open carry ({recedingCarry.Terms.Gain:F3}) must out-gain the closed one " +
-            $"({closingCarry.Terms.Gain:F3}) by at least the advance term ({ActionValueScale.CarryAdvanceValue:F2}) " +
+            $"({closingCarry.Terms.Gain:F3}) by at least the advance term ({advanceAtTwenty:F2}) " +
             "plus the contact risk it replaces");
         Assert.True(closingCarry.Terms.Gain < ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus,
             $"a closed carry pays no advance prospect; its gain was {closingCarry.Terms.Gain:F3}");
@@ -268,11 +308,76 @@ public sealed class Aib3CarryShotTests
     }
 
     /// <summary>
+    /// 2026-11-24 owner-review correction (AIB-07b): the prospect must be paid on the <b>real</b> shooting
+    /// lane from the carry target, not on a hardcoded 1.0. The block stands on the target→goal ray 11 m
+    /// beyond the 4.5 m carry target — far outside the 0.60 s target-arrival window, so the arrival gate
+    /// cannot be what zeroes the term — and the outfield lane clearance reads exactly 0, so the advance is
+    /// exactly 0 and the carry's gain is exactly base + space (0.90; the 20 m open control gains 1.25).
+    /// Pre-fix this picture paid the full 0.65 (the old code measured gain 1.55) and the assertion fails.
+    /// The off-centre variant (block four metres nearer, not dead on the ray) keeps a real but reduced lane
+    /// (0.53) and pays a real but reduced prospect (1.0108 against the 1.25 open control), so the term is
+    /// lane-proportional rather than an on/off test.
+    /// </summary>
+    [Fact]
+    public void AIB07b_ACompactBlockBetweenTheCarryTargetAndGoal_CollapsesTheAdvanceProspect()
+    {
+        const float openBlockDepth = 48f;   // on the ray, 11 m beyond the carry target at (37, 0)
+        const float nearerBlockDepth = 45f; // four metres nearer, off the axis: a realistic box block
+        PerceivedEntity keeper = Keeper(new Vector2(51.5f, 0f));
+        Vector2 goalXZ = new(Pitch.HalfLength, 0f);
+
+        CandidateGenerator open = Generate(Observation(new Vector2(32.5f, 0f), keeper));
+        UtilityCandidate openCarry = Single(open, CandidateKind.Carry, "open control");
+        PerceivedEntity[] onTheRay =
+        [
+            keeper,
+            Opponent(new Vector2(openBlockDepth, 0f)),
+            Opponent(new Vector2(openBlockDepth, 3f)),
+            Opponent(new Vector2(openBlockDepth, -3f))
+        ];
+        CandidateGenerator blocked = Generate(Observation(new Vector2(32.5f, 0f), onTheRay));
+        UtilityCandidate blockedCarry = Single(blocked, CandidateKind.Carry, "compact block");
+
+        Assert.True(blockedCarry.TargetXZ.HasValue);
+        Vector2 blockedTargetXZ = XZ(blockedCarry.TargetXZ!.Value);
+        float laneToGoal = CandidateGenerator.EvaluateLaneClearance(
+            blockedTargetXZ, goalXZ, onTheRay, TeamId.Home, excludeGoalkeeper: true);
+        Assert.Equal(0f, laneToGoal, 4);
+        Assert.Equal(ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus,
+            blockedCarry.Terms.Gain, 4);
+        Assert.True(openCarry.Terms.Gain - blockedCarry.Terms.Gain > 0.30f,
+            $"an open lane must pay the advance and a blocked one nothing: open gain {openCarry.Terms.Gain:F3} " +
+            $"vs blocked gain {blockedCarry.Terms.Gain:F3}");
+
+        // Off-centre block: a real lane and a real (smaller) prospect, not an on/off gate.
+        PerceivedEntity[] offCentre =
+        [
+            keeper,
+            Opponent(new Vector2(nearerBlockDepth, 0f)),
+            Opponent(new Vector2(nearerBlockDepth, 3f)),
+            Opponent(new Vector2(nearerBlockDepth, -3f))
+        ];
+        CandidateGenerator partial = Generate(Observation(new Vector2(32.5f, 0f), offCentre));
+        UtilityCandidate partialCarry = Single(partial, CandidateKind.Carry, "partial block");
+        Assert.True(partialCarry.TargetXZ.HasValue);
+        float partialLane = CandidateGenerator.EvaluateLaneClearance(
+            XZ(partialCarry.TargetXZ!.Value), goalXZ, offCentre, TeamId.Home, excludeGoalkeeper: true);
+        Assert.True(partialLane > 0.20f && partialLane < 0.80f,
+            $"the off-centre block must leave a real, partial lane; it read {partialLane:F3}");
+        Assert.True(partialCarry.Terms.Gain < openCarry.Terms.Gain - 0.20f,
+            $"a partial block must shrink the prospect ({partialCarry.Terms.Gain:F3} vs open " +
+            $"{openCarry.Terms.Gain:F3}); the pre-fix code paid the full term in both pictures");
+        Assert.True(partialCarry.Terms.Gain > ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus,
+            $"a half-clear lane must still pay something ({partialCarry.Terms.Gain:F3})");
+    }
+
+    /// <summary>
     /// The outer gate: at 30 m there is no shot at all (beyond <see cref="ActionValueScale.ShotRangeMeters"/>),
     /// so advancing cannot raise a shot value and the advance prospect is <b>exactly</b> zero — the carry's
-    /// gain is exactly base + space (0.90). A clean 12 m pass to a team-mate (1.7505) then beats the carry
-    /// (0.9787), which is the ordering audit finding 5 asked for. Pre-fix the same pass also beat the carry,
-    /// but the fix must not make the carry beat it by inventing value at a distance it cannot shoot from.
+    /// gain is exactly base + space (0.90), and the ramp is exactly 0 rather than the old hard gate's mirror
+    /// image. A clean 12 m pass to a team-mate (1.7505) then beats the carry (0.9787), which is the ordering
+    /// audit finding 5 asked for. Pre-fix the same pass also beat the carry, but the fix must not make the
+    /// carry beat it by inventing value at a distance it cannot shoot from.
     /// </summary>
     [Fact]
     public void AIB07b_NoShotAvailable_PaysNoAdvanceProspect_AndACleanPassWins()
@@ -304,7 +409,7 @@ public sealed class Aib3CarryShotTests
     /// 0.10–0.12 / 0.35–0.40.
     ///
     /// The measured gap between a first touch (0.1 s) and a settled touch (0.6 s) on the same 20 m open 1v1
-    /// is exactly the bonus: 1.65 - 1.55 = 0.10 (pre-fix: 0.25, and 0.6 s was still inside the 0.70 s
+    /// is exactly the bonus: 1.35 - 1.25 = 0.10 (pre-fix: 0.25, and 0.6 s was still inside the 0.70 s
     /// window so both touches paid it and the old gap at 0.6 s was 0). The window is asserted through the
     /// 0.6 s sample.
     /// </summary>
@@ -319,17 +424,20 @@ public sealed class Aib3CarryShotTests
         CandidateGenerator settled = Generate(
             Observation(new Vector2(32.5f, 0f), Keeper(new Vector2(51.5f, 0f))), timeOnBall: 0.6f);
 
+        float rampAtTwenty = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - 20f) / ActionValueScale.CarryAdvanceRampMeters, 0f, 1f);
         float earlyGain = Single(early, CandidateKind.Carry, "early touch").Terms.Gain;
         float settledGain = Single(settled, CandidateKind.Carry, "settled touch").Terms.Gain;
         Assert.Equal(ActionValueScale.CarryEarlyBonus, earlyGain - settledGain, 3);
-        // Full-space early carry with the advance term: 0.50 + 0.40 + 0.10 + 0.65 = 1.65. Without the
-        // advance term (the audit's midfield decomposition) it is 0.50 + 0.40 + 0.10 ≈ 1.00 before the
+        // Full-space early carry with the advance term: 0.50 + 0.40 + 0.35 + 0.10 = 1.35 (the advance is
+        // 0.40 x the 0.875 range ramp at 20 m since the 2026-11-24 review correction). Without the advance
+        // term (the audit's midfield decomposition) it is 0.50 + 0.40 + 0.10 ≈ 1.00 before the
         // progress/dribble preferences — the audit's "0.95-1.05 after the cut" omitted those two terms and
         // would be ≈1.22 for its own 1.37 decomposition, which is why the constants are the low end rather
         // than a tuned total.
         Assert.Equal(
-            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus + ActionValueScale.CarryAdvanceValue
-                + ActionValueScale.CarryEarlyBonus,
+            ActionValueScale.CarryBaseValue + ActionValueScale.CarrySpaceBonus
+                + ActionValueScale.CarryAdvanceValue * rampAtTwenty + ActionValueScale.CarryEarlyBonus,
             earlyGain, 3);
     }
 
@@ -348,9 +456,13 @@ public sealed class Aib3CarryShotTests
     /// (b) five bodies behind (2.41–2.57 m) plus two bodies at rel (1.0, ±2.2) — inside the 6 m x 2.2 m
     /// corridor of the chosen forward direction: no sprint, because the ground it would run through is
     /// occupied;
-    /// (c) the same two bodies moving opposite the carry direction (they vacate that ground at 6 m/s): the
-    /// path is no longer blocked and the carrier sprints again;
-    /// (d) a body 1.5 m ahead: inside the contact floor, no sprint (a sprint would have to stop immediately).
+    /// (c) the same two bodies stepping laterally OUT of the corridor at 6 m/s (each away from the axis on
+    /// its own side): the path is no longer blocked and the carrier sprints again;
+    /// (d) a body 1.5 m ahead: inside the contact floor, no sprint (a sprint would have to stop immediately);
+    /// (e) <b>review correction</b>: the same two corridor bodies <b>charging head-on at the carrier</b>
+    /// (6 m/s in the carry direction's negative) must NOT be exempt. The first cut of
+    /// <c>IsCarryPathBlocked</c> exempted exactly that case with a backwards sign, so the carrier sprinted
+    /// into a tackle; this assertion fails on that code.
     /// </summary>
     [Fact]
     public void AIB12b_TheSprintGate_FollowsThePathAhead_NotTheNearestBody()
@@ -364,14 +476,23 @@ public sealed class Aib3CarryShotTests
         Assert.False(Single(corridorHeld, CandidateKind.Carry, "corridor held").Command.Sprint,
             "a body in the 6 m x 2.2 m corridor ahead must stop the sprint");
 
-        CandidateGenerator corridorVacated = Generate(Observation(new Vector2(-30f, 0f), CorridorFixture(runningOut: true)));
+        CandidateGenerator corridorVacated = Generate(Observation(
+            new Vector2(-30f, 0f), CorridorFixture(steppingOut: true)));
         Assert.True(Single(corridorVacated, CandidateKind.Carry, "corridor vacated").Command.Sprint,
-            "bodies already running out of the ground ahead do not block the sprint");
+            "bodies stepping laterally out of the ground ahead do not block the sprint");
 
         CandidateGenerator inContact = Generate(Observation(
             new Vector2(-30f, 0f), Opponent(new Vector2(-28.5f, 0f))));
         Assert.False(Single(inContact, CandidateKind.Carry, "contact floor").Command.Sprint,
             "a body inside tackle reach plus a step is a contact, not a sprint");
+
+        // (e) Review correction: a head-on charge is the most blocking case there is. The pre-fix helper
+        // skipped it (`dot(velocity, direction) <= -1`), so this assertion failed on that code.
+        CandidateGenerator headOn = Generate(Observation(
+            new Vector2(-30f, 0f), CorridorFixture(chargingAtCarrier: true)));
+        Assert.False(Single(headOn, CandidateKind.Carry, "head-on charge").Command.Sprint,
+            "an opponent running straight at the carrier must stop the sprint — the sign of the escape " +
+            "test must never exempt along-axis motion towards the carrier");
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -388,7 +509,9 @@ public sealed class Aib3CarryShotTests
     /// keeper instead of 0.4 m.
     /// <b>AIB-07b</b>: the old carry gain at 20 m was base + space x 1.0 = 0.90 (the 0.70 s early bonus has
     /// expired at 0.8 s) and the old shot was <c>ShotValue(20, 1, mouth)</c> = 0.9808 with no keeper term, so
-    /// the old code shot by 0.002. The shipped carry gain is exactly one advance term (0.65) higher.
+    /// the old code shot by 0.002. The shipped carry gain is exactly one advance term higher — 0.35, which is
+    /// <see cref="ActionValueScale.CarryAdvanceValue"/> (0.40) times the 0.875 range ramp at 20 m; the value
+    /// was 0.65 before the 2026-11-24 review correction and is quoted at its shipped value here.
     /// <b>AIB-12b</b>: the old gate required <c>nearestOppDist &gt; 5.0</c>; a chaser 4 m behind made the old
     /// predicate false while the shipped carrier sprints.
     /// </summary>
@@ -416,7 +539,9 @@ public sealed class Aib3CarryShotTests
         Assert.True(preFixShotValue > preFixCarryGain,
             $"the audit's defect must reproduce: the old shot {preFixShotValue:F3} beat the old carry " +
             $"{preFixCarryGain:F3} at 20 m");
-        Assert.Equal(ActionValueScale.CarryAdvanceValue, shippedCarryGain - preFixCarryGain, 4);
+        float rampAtTwenty = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - 20f) / ActionValueScale.CarryAdvanceRampMeters, 0f, 1f);
+        Assert.Equal(ActionValueScale.CarryAdvanceValue * rampAtTwenty, shippedCarryGain - preFixCarryGain, 4);
 
         // AIB-12b — old sprint predicate on the same fixture.
         const float chaserDistance = 4f;
@@ -435,12 +560,19 @@ public sealed class Aib3CarryShotTests
     /// <summary>
     /// Own-half sprint fixture: five bodies behind the carrier (2.41–2.57 m, so the contact floor of 2.40 is
     /// not what decides) plus two bodies at rel (1.0, ±2.2) — inside the 6 m x 2.2 m corridor of the chosen
-    /// forward direction. <paramref name="runningOut"/> gives the corridor pair the believed velocity that
-    /// vacates that ground.
+    /// forward direction. <paramref name="steppingOut"/> gives the corridor pair the believed velocity that
+    /// really vacates that ground (each stepping away from the axis on its own side);
+    /// <paramref name="chargingAtCarrier"/> gives them a head-on run instead, which is the opposite of
+    /// vacating and must stop the sprint (review correction).
     /// </summary>
-    private static PerceivedEntity[] CorridorFixture(bool runningOut = false)
+    private static PerceivedEntity[] CorridorFixture(
+        bool steppingOut = false,
+        bool chargingAtCarrier = false)
     {
-        Vector2 away = runningOut ? new Vector2(-6f, 0f) : Vector2.Zero;
+        // Each corridor body steps away from the axis on its own side (z = +2.2 moves +Z, z = -2.2 moves -Z).
+        Vector2 outPositiveZ = steppingOut ? new Vector2(0f, 6f) : Vector2.Zero;
+        Vector2 outNegativeZ = steppingOut ? new Vector2(0f, -6f) : Vector2.Zero;
+        Vector2 headOn = chargingAtCarrier ? new Vector2(-6f, 0f) : Vector2.Zero;
         return
         [
             Opponent(new Vector2(-32.41f, 0f)),
@@ -448,8 +580,8 @@ public sealed class Aib3CarryShotTests
             Opponent(new Vector2(-32.41f, -0.4f)),
             Opponent(new Vector2(-32.41f, 0.9f)),
             Opponent(new Vector2(-32.41f, -0.9f)),
-            Opponent(new Vector2(-29f, 2.2f), away),
-            Opponent(new Vector2(-29f, -2.2f), away)
+            Opponent(new Vector2(-29f, 2.2f), outPositiveZ + headOn),
+            Opponent(new Vector2(-29f, -2.2f), outNegativeZ + headOn)
         ];
     }
 
@@ -521,6 +653,8 @@ public sealed class Aib3CarryShotTests
         Capability = CapabilityEstimate.Generic,
         PositionUncertaintyMeters = uncertainty
     };
+
+    private static Vector2 XZ(Vector3 point) => new(point.X, point.Z);
 
     private static UtilityCandidate Single(CandidateGenerator generator, CandidateKind kind, string context)
     {

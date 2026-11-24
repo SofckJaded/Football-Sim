@@ -632,6 +632,19 @@ public sealed class PassPlanner
     }
 
     /// <summary>
+    /// AUD-P5 / fix 4.1: arrival speed at a distance for a power, in m/s — the quantity the paced timed plan
+    /// floors (<c>minArrivalSpeedMetersPerSecond</c>). Exposed like <see cref="TryGetFlightTime"/> so a test or
+    /// probe can verify that a paced plan really arrives at least as fast as its caller asked, from the same
+    /// calibrated samples every other query reads (no second table). Returns false when the power cannot reach
+    /// the distance.
+    /// </summary>
+    public bool TryGetArrivalSpeed(float power01, float distanceMeters, out float arrivalSpeedMetersPerSecond)
+    {
+        int powerIndex = Math.Clamp((int)MathF.Round((power01 - MinPower) / PowerStep), 0, PowerSamples - 1);
+        return TryGetArrivalSpeedAt(powerIndex, distanceMeters, out arrivalSpeedMetersPerSecond);
+    }
+
+    /// <summary>
     /// Distance the ball has covered <paramref name="timeSeconds"/> after the kick at this power.
     /// The inverse of <see cref="TryGetFlightTime"/>: the pass-lane interception test needs to know
     /// where the rolling ball actually is while a defender runs, not just when it arrives.

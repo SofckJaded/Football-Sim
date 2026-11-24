@@ -279,6 +279,35 @@ public sealed class CandidateGenerator : IAiStateResettable
     public const float MinUncommittedRunSpeed = 3.0f;
 
     /// <summary>
+    /// AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction (review item B): the arrival
+    /// pace floor, in m/s, of a <b>promised</b> <c>ToRun</c> ball — the advertised-run and one-two paths, which
+    /// are timed by <see cref="PassPlanner.PlanGroundPassToRegion"/>.
+    ///
+    /// The first AIB-11 cut forced the 9.0 m/s crisp floor onto every path; measured on the review's own
+    /// geometry, a normal advertised run 16–20 m away with a meet tick 2.0–2.3 s away got a 1.15–1.30 s
+    /// flight, so the pass model's promise mistiming was <c>|1.2 − 2.2| − 0.385 ≈ 0.63 s</c>, its timing term
+    /// clamped to 0 and the completion to ≈0.02 — the candidate was then rejected as `low-completion`, i.e. the
+    /// fix starved exactly the run ball it was meant to serve. The floor is now a stated <b>pace</b> instead of
+    /// a crisp <i>range</i>: firm enough not to be a 2 s roller (this is about twice the arrival pace a roller
+    /// that late would still have), loose enough not to arrive a second before the meet. 6.0 m/s is also below
+    /// <see cref="PassSuccessModel.PromisedRegionCrossSpeed"/> (6.5 m/s), the pace at which the promise's own
+    /// timing tolerance is defined, so the ball's remaining roll at the meet stays a region-sized quantity; the
+    /// shared roll-out criterion (<see cref="PromiseCatchRadiusMeters"/> via
+    /// <see cref="RolledPastPromiseMeters"/>) is what refuses a ball that still over-runs its region.
+    ///
+    /// <para><b>2026-11-24 refinement — the pace floor is a fallback, not a replacement.</b> A lower floor makes
+    /// a <i>short</i> meeting's ball gentler (measured: 11.2 m, 1.02 s meet plans 0.55 power / 1.00 s where the
+    /// crisp floor planned 0.60 / 0.93 s), which reintroduces a slower, more blockable ball and flipped the
+    /// `box-cross` A3.4 gate. <see cref="ChoosePromisedRunPower"/> therefore keeps the crisp floor while it is
+    /// on time and uses this pace floor only when the crisp ball would arrive more than the promise's own
+    /// timing tolerance early — the review's starved case. The uncommitted variant is deliberately <b>not</b>
+    /// given this floor: it has no promise, its plan is the untimed
+    /// <see cref="PassPlanner.PlanGroundPass"/> solve, and a pace floor measured at a distance it never
+    /// aims at only over-firms it (its timed-region equivalent, the far-meeting floor, was a measured defect).</para>
+    /// </summary>
+    public const float RunPassMinArrivalSpeedMetersPerSecond = 6.0f;
+
+    /// <summary>
     /// AIB-02c: bounded lead, in metres, that an unled raised ball gives a moving receiver. When a ground
     /// route is blocked and nobody has announced a run, the raised alternative used to aim at the receiver's
     /// <i>current</i> position for a 1.5–2.5 s hang; this is the sensible middle: his own velocity for the
@@ -534,9 +563,32 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// AIB-10 (audit 2026-11-23, finding 4): reason text for a space probe whose ball has already rolled out
     /// of the promised region by the time the receiver can get there — the audit's "ball 0.80 s vs receiver
     /// 1.72 s, stopped 29.2 m past" impossible pass. The promise's arrival is the ball's flight by design, so
-    /// this is the one place the receiver's real arrival is checked against where the ball actually is.
+    /// <see cref="RolledPastPromiseMeters"/> measures the receiver's real arrival through the promise's
+    /// contest moment; a ball past the shared <see cref="PromiseCatchRadiusMeters"/> is refused here.
     /// </summary>
     public const string RejectionSpaceRolledPast = "space-rolled-past";
+
+    /// <summary>
+    /// AIB-10 / 2026-11-24 owner-review correction (review item A2): reason text for a space probe whose
+    /// calibrated roll would take the <b>ball out of the pitch</b> before the receiver can get there. Probes
+    /// are clamped <see cref="SpaceProbePitchMarginMeters"/> inside every line, but the ball is not: a probe
+    /// aimed near a touchline or goal line that then rolls on can cross the line before the meeting, and a
+    /// ball out of play is not a meeting at all. <see cref="PassSuccessModel"/>'s
+    /// <see cref="Physics.PassPlanner.BoundaryExitRisk01"/> prices that exit in the completion; it never
+    /// refuses it, so the physical feasibility question is asked here.
+    /// </summary>
+    public const string RejectionSpaceRollsOut = "space-rolls-out";
+
+    /// <summary>
+    /// AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction: reason text for any promised
+    /// ground pass whose ball would be more than <see cref="PromiseCatchRadiusMeters"/> past its promised
+    /// region at the moment the receiver is there. The advertised-run ball used to have no roll-out check at
+    /// all, so a fast ball timed 1 s before a far meet rolled 6–7 m past <c>MeetXZ</c> and the promise still
+    /// read as met; this is the same criterion <see cref="RejectionSpaceRolledPast"/> applies to a space probe,
+    /// now shared by every promise through <see cref="RolledPastPromiseMeters"/>.
+    /// </summary>
+    public const string RejectionRolledPastPromise = "rolled-past-promise";
+
     // ---------------------------------------------------------------------------------------------
     // A8.1 — bounded combinations. The numbers are the hand-set calibration of the trigger, the two
     // preference bonuses and the return run's utility; the contract's own lifecycle (delay, arrival,
@@ -759,22 +811,33 @@ public sealed class CandidateGenerator : IAiStateResettable
     public const float SpacePromiseRadiusMeters = 4f;
 
     /// <summary>
-    /// AIB-10 (audit 2026-11-23, finding 4): how far past the aim point the rolling ball may be when the
-    /// receiver actually gets there before the promise is a fiction, in metres. The space promise's
-    /// <c>ArrivalSeconds</c> is deliberately the ball's own flight (AUD-P3: the timing term is exactly 1 and
-    /// the lead is not double-charged), so the pass model cannot see that a ball struck well before the
-    /// receiver's arrival has already rolled out of the region. This is the measured version of that check:
-    /// the ball must still be within the promise region <b>plus one receiving reach</b> at the receiver's own
-    /// arrival, or the probe is refused. The reach is the pass model's own intercept-reach floor
-    /// (<see cref="PassSuccessModel.LaneStepInReachMeters"/>, 1.22 m; execution plays the ball at
-    /// ~1.24 m), because the promise names the region the receiver will be in, not the exact point: a ball
-    /// just past the region's edge is still a ball the man in it can touch. Measured: a legitimate 21.8 m
-    /// space ball sits 4.1 m past its aim point when the receiver arrives (inside the 5.22 m bound), while
-    /// the audit's impossible ball is ~16 m past. The audit's blunt alternative
+    /// AIB-10 (audit 2026-11-23, finding 4) / AIB-11 (finding 6) / 2026-11-24 owner-review correction: the
+    /// <b>one shared roll-out bound</b>, in metres, that every promised ground pass must respect — how far
+    /// past the promised region the rolling ball may be at the moment the receiver is there before the promise
+    /// is a fiction.
+    ///
+    /// The space promise's <c>ArrivalSeconds</c> is deliberately the ball's own flight (AUD-P3: the timing
+    /// term is exactly 1 and the lead is not double-charged), so the pass model cannot see that a ball struck
+    /// well before the receiver's arrival has already rolled out of the region; the advertised-run promise has
+    /// the same failure from the other side (a firm ball timed seconds early rolls past the meet). The measured
+    /// form of both is <see cref="RolledPastPromiseMeters"/>: the ball must still be within the promise region
+    /// <b>plus one receiving reach</b> at the promise's contest moment, or the pass is refused. The reach is
+    /// the pass model's own intercept-reach floor (<see cref="PassSuccessModel.LaneStepInReachMeters"/>, 1.22 m;
+    /// execution plays the ball at ~1.24 m), because the promise names the region the receiver will be in, not
+    /// the exact point: a ball just past the region's edge is still a ball the man in it can touch. Measured:
+    /// a legitimate 21.8 m space ball sits 4.1 m past its aim point when the receiver arrives (inside the
+    /// 5.22 m bound), while the audit's impossible ball is ~16 m past. The audit's blunt alternative
     /// (<c>receiverArrival &gt; flight + 0.35 s</c>) was not used: the roll-out is the quantity the promise
     /// is actually about, and 0.35 s is a 4–6 m lag at a crisp ball's arrival speed.
+    ///
+    /// <para><b>2026-11-24 review correction:</b> named <c>SpacePromiseCatchRadiusMeters</c> when only the
+    /// space probe used it. It is now the single criterion for every promised pass — the advertised and one-two
+    /// <c>ToRun</c> paths reject through it in <see cref="TryAddGroundPass"/> — so it carries the shared name.
+    /// The value is unchanged: lowering it to 4 m without new lane evidence flipped a legitimate 21.8 m ball
+    /// and three fixtures (AIB-10 batch), and an advertised run's 5 m meeting region is wider than the 4 m space
+    /// one, so this bound is if anything conservative there.</para>
     /// </summary>
-    public const float SpacePromiseCatchRadiusMeters =
+    public const float PromiseCatchRadiusMeters =
         SpacePromiseRadiusMeters + PassSuccessModel.LaneStepInReachMeters;
 
     /// <summary>
@@ -1336,7 +1399,14 @@ public sealed class CandidateGenerator : IAiStateResettable
         // exists). A ball to feet keeps the receiver's own ground. Both variants used to read the receiver's
         // feet, so a through ball aimed 12 m past a runner earned exactly the same progress and directness
         // preference as the same ball rolled to his feet — the audit's ToRun-loses-to-ToFeet inversion.
-        bool ProgressFromTarget = false);
+        bool ProgressFromTarget = false,
+        // AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction: the arrival-pace floor,
+        // in m/s, a promised pass is timed with. Passed straight into
+        // <see cref="PassPlanner.PlanGroundPassToRegion"/>'s <c>minArrivalSpeedMetersPerSecond</c>, which was
+        // the dead parameter the AIB-11 fix should have used: a firm *pace* lets the timing solve place the
+        // ball near the meet, where a crisp *range* floor struck it seconds early. Zero (the default) means
+        // "no pace floor", the planner's pre-AUD-P5 behaviour, and is what every unpromised pass uses.
+        float MinArrivalSpeedMetersPerSecond = 0f);
 
     /// <summary>
     /// Every feasible pass the carrier can play (A4.1), scored with A4.2's success model.
@@ -1632,18 +1702,35 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// velocity x flight lead, up to <see cref="RunPassMaxLeadMeters"/> (25 m), for a man who promised
     /// nothing.
     ///
-    /// <b>AIB-11 (audit 2026-11-23, finding 6): every path is struck with the crisp-ball floor.</b> Pre-fix
+    /// <b>AIB-11 (audit 2026-11-23, finding 6), corrected by the 2026-11-24 owner review (item B).</b> Pre-fix
     /// all three variants passed <c>MinPower01: 0f</c>, so the <i>promised</i> variant — whose plan is the
     /// timed-region planner — could only be as firm as the meeting time demanded: an advertised run 2 s away
     /// produced a 0.25–0.35-power roller whose flight the lane test then hard-rejected, exactly the audit's
-    /// "still fires slow rollers and gets blocked" finding. The floor is <see cref="PassPlanner.MinCrispPower01"/>
-    /// measured to the ball's actual known target (the advertised region, the one-two return region) and, for
-    /// the uncommitted variant, to the furthest point the planner's own lead bound can legally aim at (his
-    /// current distance + <see cref="UncommittedThroughLeadMeters"/> + <see cref="PassPlanner.UncommittedLeadMaxMeters"/>),
-    /// because that variant has no planned target before the planner solves one. The price is stated honestly:
-    /// the firmer ball arrives <b>early</b>, and the pass model's promise timing term charges the mistiming
-    /// (AUD-P5's trade) — the ball is still a ball the runner can attack, which the roller was not. The floor
-    /// is never below the old 0 and never removes the lead hedge, the offside gate or the promise.
+    /// "still fires slow rollers and gets blocked" finding. The first fix forced <see cref="PassPlanner.MinCrispPower01"/>
+    /// (the 9.0 m/s crisp <i>range</i> floor) onto every path, which over-corrected: measured on the review's
+    /// geometry, a normal advertised run 16–20 m away with a meet 2.0–2.3 s away was struck to arrive 1.15–1.30 s,
+    /// so its promise mistiming was ≈0.63 s, its timing term 0 and its completion ≈0.02 — rejected as
+    /// `low-completion`, i.e. the run ball was starved out by the very floor meant to serve it.
+    ///
+    /// <para><b>2026-11-24 review correction, second cut:</b> the promised paths (advertised run, one-two
+    /// return) now choose their power with <see cref="ChoosePromisedRunPower"/>: the <b>crisp floor</b> is
+    /// kept while it is on time, and the stated <b>arrival pace</b>
+    /// (<see cref="RunPassMinArrivalSpeedMetersPerSecond"/>, 6.0 m/s) is used only when the crisp floor would
+    /// arrive more than the promise's own timing tolerance early — the review's starved far-meet case. The
+    /// literal "paced floor always" line was measured and refined: for a <i>short</i> advertised meet the
+    /// paced floor strikes <b>gentler</b> than the crisp one (11.2 m ball, 1.02 s meet: 0.55 power / 1.00 s
+    /// against 0.60 / 0.93 s), so the ball is later and the lane test can reject it — the slow-roller defect
+    /// AIB-11 exists to remove, in miniature; the same change flipped the `box-cross` passage and tripped the
+    /// protected A3.4 off-ball-target gate at 4.93 m. Keeping the crisp ball when it is on time also keeps the
+    /// review's fix product-shaped: only the balls that were actually starved change.
+    ///
+    /// The remaining over-run of a paced ball is refused by the one shared roll-out criterion
+    /// (<see cref="RolledPastPromiseMeters"/> in <see cref="TryAddGroundPass"/>), which is stronger than any
+    /// power floor. The uncommitted variant is <c>MinPower01: 0f</c>: it has no promise, its plan is the untimed
+    /// <see cref="PassPlanner.PlanGroundPass"/> solve (not <see cref="PassPlanner.PlanGroundPassToRegion"/>), so
+    /// a floor measured at the furthest legal meeting point only over-firms a ball whose meeting is unknown —
+    /// that was the review's "far-meeting floor" defect. Its lead hedge, the offside gate and the commitment
+    /// rules are untouched.</para>
     /// </summary>
     private bool TryBuildRunPassOption(
         in FootballerObservation obs,
@@ -1659,11 +1746,21 @@ public sealed class CandidateGenerator : IAiStateResettable
             advert.MeetTick > obs.Tick)
         {
             float arriveInSeconds = advert.TicksUntilMeeting(obs.Tick) * SimConstants.FixedDeltaTime;
+            ChoosePromisedRunPower(
+                ballXZ,
+                advert.MeetXZ,
+                arriveInSeconds,
+                advert.MeetRadiusMeters,
+                out float runMinPower01,
+                out float runMinArrivalSpeed);
             option = new PassOption(
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
                 MaxLeadMeters: RunPassMaxLeadMeters,
-                MinPower01: _passPlanner.MinCrispPower01(Vector2.Distance(ballXZ, advert.MeetXZ)),
+                // 2026-11-24 review correction (AIB-11): the crisp floor while it is on time, the paced floor
+                // only when the crisp ball would be more than the promise's tolerance early (see the helper).
+                MinPower01: runMinPower01,
+                MinArrivalSpeedMetersPerSecond: runMinArrivalSpeed,
                 PassType: KickIntentType.ThroughPass,
                 Tag: RunPassTag,
                 HumanCaller: false,
@@ -1688,12 +1785,22 @@ public sealed class CandidateGenerator : IAiStateResettable
             obs.Combination.ExpectedArrivalTick > obs.Tick + 2)
         {
             float arriveInSeconds = (obs.Combination.ExpectedArrivalTick - obs.Tick) * SimConstants.FixedDeltaTime;
+            ChoosePromisedRunPower(
+                ballXZ,
+                obs.Combination.ReturnXZ,
+                arriveInSeconds,
+                obs.Combination.ReturnRadiusMeters,
+                out float oneTwoMinPower01,
+                out float oneTwoMinArrivalSpeed);
             option = new PassOption(
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
                 MaxLeadMeters: RunPassMaxLeadMeters,
-                MinPower01: _passPlanner.MinCrispPower01(
-                    Vector2.Distance(ballXZ, obs.Combination.ReturnXZ)),
+                // 2026-11-24 review correction (AIB-11): the same crisp-while-on-time / paced-when-starved rule
+                // as the advertised path; the return region is a promise too, so it is timed the same way and
+                // rolled out the same way.
+                MinPower01: oneTwoMinPower01,
+                MinArrivalSpeedMetersPerSecond: oneTwoMinArrivalSpeed,
                 PassType: KickIntentType.ThroughPass,
                 Tag: RunPassTag,
                 HumanCaller: false,
@@ -1709,7 +1816,6 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         if (!RunsIntoSpace(obs, mate, offsideLineProjX)) return false;
 
-        Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
         // AIB-02c: a ball into space needs a man actually sprinting into it when nobody has promised the run.
         // RunsIntoSpace's floor (1.5 m/s) is a jog; a lead that assumes a jog keeps going for a whole flight
@@ -1720,13 +1826,12 @@ public sealed class CandidateGenerator : IAiStateResettable
             LeadDirection: Vector2.Normalize(mateVelocityXZ),
             LeadMeters: UncommittedThroughLeadMeters,
             MaxLeadMeters: PassPlanner.UncommittedLeadMaxMeters,
-            // AIB-11: this variant has no target before `PlanGroundPass` solves the meeting, so the floor is
-            // measured at the furthest legal meeting — the receiver's current distance plus the two stated
-            // lead bounds — rather than at his feet (which would under-floor a ball led four metres).
-            MinPower01: _passPlanner.MinCrispPower01(
-                Vector2.Distance(ballXZ, mateXZ) +
-                UncommittedThroughLeadMeters +
-                PassPlanner.UncommittedLeadMaxMeters),
+            // 2026-11-24 review correction (AIB-11): back to 0. This variant has no promise and its plan is the
+            // untimed `PlanGroundPass` solve, so `PlanGroundPassToRegion` — and its pace parameter — is not even
+            // used here. The old crisp floor was measured at the furthest legal meeting (current distance + both
+            // lead bounds), which over-firmed a ball whose meeting is unknown; a far-meeting floor on an untimed
+            // solve is a guess paid as pace. The lead hedge and the sprint gate are unchanged.
+            MinPower01: 0f,
             PassType: KickIntentType.ThroughPass,
             Tag: RunPassTag,
             HumanCaller: false,
@@ -1735,6 +1840,56 @@ public sealed class CandidateGenerator : IAiStateResettable
             // progression is the aim point the planner selects, not the runner's current feet.
             ProgressFromTarget: true);
         return true;
+    }
+
+    /// <summary>
+    /// AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction: chooses the minimum power
+    /// mode for a <b>promised</b> run ball — the advertised run and the one-two return.
+    ///
+    /// <para>The review measured a starved ball: the crisp 9.0 m/s floor struck a normal 16–20 m advertised run
+    /// (meet 2.0–2.3 s away) to arrive 1.15–1.30 s, so the promise's mistiming was ≈0.63 s, its timing term 0
+    /// and its completion ≈0.02 — rejected `low-completion`. The fix is an arrival-<b>pace</b> floor
+    /// (<see cref="RunPassMinArrivalSpeedMetersPerSecond"/>) that lets the timing solve place the ball near the
+    /// meet instead of a second early.</para>
+    ///
+    /// <para><b>Why not always paced (the 2026-11-24 refinement).</b> A pace floor is a <i>lower</i> power floor,
+    /// so for a <b>short</b> meeting it strikes gentler than the crisp floor: an 11.2 m ball with a 1.02 s meet
+    /// plans at 0.55 power / 1.00 s flight where the crisp floor planned 0.60 / 0.93 s. The slower, longer ball
+    /// is what the lane test then rejects — the slow-roller defect AIB-11 exists to remove, in miniature — and
+    /// the changed winner flipped the `box-cross` passage enough to trip the protected A3.4 off-ball-target
+    /// gate. So the crisp floor is kept whenever it is <b>on time</b>: its flight for this distance is read from
+    /// the planner's own table and compared with the meet, and the crisp floor is used unless it arrives more
+    /// than the promise's own <see cref="PassSuccessModel.PromiseTimingToleranceSeconds"/> early — the only
+    /// case where the firm ball is the starved one. The threshold is that existing promise tolerance, not a new
+    /// tuning knob: the same number the estimator charges mistiming against, so plan choice and pricing agree.
+    /// The paced mode is the fallback and also the answer when the table has no flight for the crisp floor.</para>
+    /// </summary>
+    private void ChoosePromisedRunPower(
+        Vector2 ballXZ,
+        Vector2 targetXZ,
+        float arriveInSeconds,
+        float meetRadiusMeters,
+        out float minPower01,
+        out float minArrivalSpeedMetersPerSecond)
+    {
+        minPower01 = 0f;
+        minArrivalSpeedMetersPerSecond = 0f;
+
+        float distance = Vector2.Distance(ballXZ, targetXZ);
+        if (!float.IsFinite(distance) || distance <= 0f) return;
+
+        float crispFloor = _passPlanner.MinCrispPower01(distance);
+        if (!_passPlanner.TryGetFlightTime(crispFloor, distance, out float crispFlight)) return;
+
+        float tolerance = PassSuccessModel.PromiseTimingToleranceSeconds(meetRadiusMeters);
+        bool crispIsOnTime = arriveInSeconds - crispFlight <= tolerance;
+        if (crispIsOnTime)
+        {
+            minPower01 = crispFloor;
+            return;
+        }
+
+        minArrivalSpeedMetersPerSecond = RunPassMinArrivalSpeedMetersPerSecond;
     }
 
     /// <summary>
@@ -1781,11 +1936,24 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// Keeping <c>ArrivalSeconds</c> as the ball's flight blinds the pass model to a ball that has rolled far
     /// past the aim point before the receiver can get there, so the builder measures the ball's own calibrated
     /// roll-out at the receiver's real arrival and refuses the probe once it exceeds
-    /// <see cref="SpacePromiseCatchRadiusMeters"/> (the promise region plus one receiving reach). That is
+    /// <see cref="PromiseCatchRadiusMeters"/> (the promise region plus one receiving reach). That is
     /// the measured form of
     /// the audit's "ball 0.80 s vs receiver 1.72 s, stopped 29.2 m past" finding; writing
-    /// <c>receiverReach.Seconds</c> into the promise was rejected because it re-introduces AUD-P3's lead
-    /// double-charge. The pace floor, offside clamp, crowd gate and race margin are all untouched.
+    /// <c>receiverReach.Seconds</c> into <c>ArrivalSeconds</c> was rejected because it re-introduces AUD-P3's
+    /// lead double-charge — the receiver's moment is carried on
+    /// <see cref="PassArrivalPromise.ContestArrivalSeconds"/> instead, so the pass model's contest is priced at
+    /// it while the timing term stays on the ball's own flight.
+    ///
+    /// <b>2026-11-24 owner-review corrections (A1 and A2).</b> (A1) The promise now states
+    /// <see cref="PassArrivalPromise.ContestArrivalSeconds"/> = the receiver's real arrival, so the AIB-10
+    /// contest fix is not collapsed back to <c>max(flight, flight)</c> for this candidate. (A2) The roll-out
+    /// guard also asks where the <b>ball</b> is at that arrival, not only how far past the aim point it rolled:
+    /// the probe is clamped <see cref="SpaceProbePitchMarginMeters"/> inside every line but the ball is not, so
+    /// a ball aimed near a line can be out of play before the receiver gets there. A ball out of play is not a
+    /// meeting at all, so the probe is refused with <see cref="RejectionSpaceRollsOut"/> — and that check runs
+    /// before the roll-out bound, because "out of the pitch" is the stronger physical fact. The roll-out
+    /// criterion itself is the shared <see cref="RolledPastPromiseMeters"/> every promised pass uses. The pace
+    /// floor, offside clamp, crowd gate and race margin are all untouched.
     /// </summary>
     private bool TryBuildSpacePassOption(
         in FootballerObservation obs,
@@ -1887,6 +2055,17 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
+            // The promise confidence is the measured race, not a nominal 1.0: a minimum-margin ball
+            // (0.35 s) promises 0.675, a full second's margin or more promises 1.0, and the stated floor
+            // never lets the derivation produce a zero-confidence "promise" later. This is the only route
+            // the race takes into the pass model (the promise replaces the receiver-arrival term). Built
+            // before the plan so the roll-out guards below can read the exact promise the candidate carries.
+            float confidence01 = Math.Clamp(
+                SpacePromiseConfidenceBase + SpacePromiseConfidenceMarginWeight * Math.Clamp(
+                    raceMarginSeconds / SpacePromiseConfidenceMarginScaleSeconds, 0f, 1f),
+                SpacePromiseConfidenceFloor,
+                1f);
+
             float probeDistanceMeters = Vector2.Distance(ballXZ, spaceXZ);
             if (probeDistanceMeters < MinPassDistanceMeters || probeDistanceMeters > MaxPassDistanceMeters)
             {
@@ -1908,32 +2087,48 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
-            // AIB-10 (audit 2026-11-23, finding 4): the promise is the ball's own flight, on purpose — the
-            // pass model's promise timing term is then exactly 1 and the lead is not double-charged (AUD-P3).
-            // The cost of that convention is that the model cannot see the audit's impossible ball: struck
-            // 0.80 s before the receiver can get there, it is 29.2 m past the promised grass by 1.72 s, yet
-            // every model term still reads 1. The physical question is asked here instead, on the planner's
-            // own calibrated roll: at the receiver's real arrival, how far past the aim point is the ball?
-            // If it is outside the promised region (<see cref="SpacePromiseCatchRadiusMeters"/>) the meeting
-            // is a fiction and the probe is refused rather than promised.
+            // AIB-10 (audit 2026-11-23, finding 4): the promise's main arrival is the ball's own flight, on
+            // purpose — the pass model's promise timing term is then exactly 1 and the lead is not
+            // double-charged (AUD-P3). The 2026-11-24 owner review (A1) adds the receiver's real arrival as the
+            // promise's separate contest moment: without it the estimator's `max(flight, receiverArrival)`
+            // collapses to the flight for this candidate and the AIB-10 defender-timing fix is a no-op (an
+            // 0.80 s ball its receiver only reaches at 1.30 s would price every defender at 0.80 s).
+            var promise = new PassArrivalPromise(
+                spaceXZ,
+                probePlan.FlightTimeSeconds,
+                SpacePromiseRadiusMeters,
+                confidence01,
+                ContestArrivalSeconds: receiverReach.Seconds);
+
+            // The physical question the promise cannot express is asked here, on the planner's own calibrated
+            // roll. AIB-10: at the receiver's real arrival, how far past the aim point is the ball? If it is
+            // outside <see cref="PromiseCatchRadiusMeters"/> the meeting is a fiction and the probe is refused
+            // rather than promised. The same measurement is the shared criterion every promised pass uses
+            // (<see cref="RolledPastPromiseMeters"/>), so the space probe and the advertised run cannot drift.
             float ballDistanceAtReceiverArrival = _passPlanner.BallDistanceAtTime(
                 probePlan.Power01, receiverReach.Seconds);
-            float rolledPastMeters = ballDistanceAtReceiverArrival - probeDistanceMeters;
-            if (rolledPastMeters > SpacePromiseCatchRadiusMeters)
+            float rolledPastMeters = RolledPastPromiseMeters(probePlan, ballXZ, promise);
+
+            // 2026-11-24 owner review (A2): the ball has to still be ON the pitch at that arrival. The probe
+            // is clamped <see cref="SpaceProbePitchMarginMeters"/> inside every line, but the ball keeps
+            // rolling from wherever the carrier is; a probe near a touchline or goal line can be rolled out of
+            // play before the receiver arrives. The test is the ball's centre against the pitch rectangle: a
+            // ball on the line is still in play, so this is the conservative reading and needs no extra
+            // inward margin. (BoundaryExitRisk01 prices this in the completion; it never refuses it.)
+            Vector2 ballAtReceiverArrival = ballXZ +
+                                            probePlan.AimDirectionXZ * ballDistanceAtReceiverArrival;
+            if (MathF.Abs(ballAtReceiverArrival.X) > _pitch.HalfLength ||
+                MathF.Abs(ballAtReceiverArrival.Y) > _pitch.HalfWidth)
+            {
+                Reject(mate.PlayerId, RejectionSpaceRollsOut);
+                continue;
+            }
+
+            if (rolledPastMeters > PromiseCatchRadiusMeters)
             {
                 Reject(mate.PlayerId, RejectionSpaceRolledPast);
                 continue;
             }
-
-            // The promise confidence is the measured race, not a nominal 1.0: a minimum-margin ball
-            // (0.35 s) promises 0.675, a full second's margin or more promises 1.0, and the stated floor
-            // never lets the derivation produce a zero-confidence "promise" later. This is the only route
-            // the race takes into the pass model (the promise replaces the receiver-arrival term).
-            float confidence01 = Math.Clamp(
-                SpacePromiseConfidenceBase + SpacePromiseConfidenceMarginWeight * Math.Clamp(
-                    raceMarginSeconds / SpacePromiseConfidenceMarginScaleSeconds, 0f, 1f),
-                SpacePromiseConfidenceFloor,
-                1f);
 
             option = new PassOption(
                 LeadDirection: Vector2.Zero,
@@ -1945,17 +2140,46 @@ public sealed class CandidateGenerator : IAiStateResettable
                 HumanCaller: false,
                 // The plan's own flight time: the promise is "the ball is in this grass at the instant the
                 // plan says it is", which is exact, so the model's timing term is 1 and no lead is charged.
-                Promise: new PassArrivalPromise(
-                    spaceXZ,
-                    probePlan.FlightTimeSeconds,
-                    SpacePromiseRadiusMeters,
-                    confidence01),
+                Promise: promise,
                 // AUD-P2: a ball into space is scored on where it is aimed, not on the receiver's feet.
                 ProgressFromTarget: true);
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// AIB-10 (audit 2026-11-23, finding 4) / AIB-11 (finding 6) / 2026-11-24 owner-review correction: the
+    /// <b>one roll-out criterion every promised ground pass is measured by</b> — how many metres past
+    /// <see cref="PassArrivalPromise.TargetXZ"/> the rolling ball is at the promise's contest moment
+    /// (<see cref="PassArrivalPromise.ContestMomentSeconds"/>: the receiver's real arrival when the builder
+    /// states one, otherwise the promised arrival). A positive value means the ball has over-run its region;
+    /// the callers refuse the pass once it exceeds the shared <see cref="PromiseCatchRadiusMeters"/>.
+    ///
+    /// <para>Why the contest moment and not <c>ArrivalSeconds</c>: for the ToSpace promise
+    /// <c>ArrivalSeconds</c> is deliberately the ball's own flight (AUD-P3), so the ball is exactly at its aim
+    /// point then and a check at that instant always passes — the review's impossible ball rolled ~16 m past by
+    /// the time the receiver arrived. The contest moment is the instant the receiver can actually play the
+    /// ball, which is the instant the promise is about. For an advertised run or a one-two the two coincide
+    /// (the promised arrival is the receiver's), so the same call is the pre-existing check.</para>
+    ///
+    /// <para>Uses the planner's own calibrated roll (<see cref="PassPlanner.BallDistanceAtTime"/>), the same
+    /// table the plan and the lane test use — never a second trajectory. Deterministic and allocation-free:
+    /// two table lookups. Returns zero for a non-finite input or an absent promise, so a caller can never
+    /// produce a NaN rejection.</para>
+    /// </summary>
+    public float RolledPastPromiseMeters(in PassPlan plan, Vector2 ballXZ, in PassArrivalPromise promise)
+    {
+        if (!plan.Feasible || !promise.IsPresent || !SimMath.IsFinite(ballXZ)) return 0f;
+
+        float aimDistance = Vector2.Distance(ballXZ, promise.TargetXZ);
+        if (!float.IsFinite(aimDistance)) return 0f;
+
+        float covered = _passPlanner.BallDistanceAtTime(plan.Power01, promise.ContestMomentSeconds);
+        if (!float.IsFinite(covered)) return 0f;
+
+        return covered - aimDistance;
     }
 
     /// <summary>
@@ -2181,9 +2405,18 @@ public sealed class CandidateGenerator : IAiStateResettable
         // A5.3: when the receiver has advertised a meeting region there is nothing to lead. The target is
         // that region and the power is whatever gets the ball there when he does; a region no power can
         // reach in time is not offered at all rather than played as a different ball.
+        //
+        // AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction: a promised pass states its
+        // minimum arrival <b>pace</b>, which is the planner's own (previously dead) timed-plan parameter. It is
+        // a floor the timing solve can work with — a firm ball whose flight still lands near the meet — where
+        // the crisp *range* floor struck the ball so early that the promise mistiming zeroed the completion.
         PassPlan plan = option.Promise.IsPresent
             ? _passPlanner.PlanGroundPassToRegion(
-                ballXZ, option.Promise.TargetXZ, option.Promise.ArrivalSeconds, option.MinPower01)
+                ballXZ,
+                option.Promise.TargetXZ,
+                option.Promise.ArrivalSeconds,
+                option.MinPower01,
+                option.MinArrivalSpeedMetersPerSecond)
             : _passPlanner.PlanGroundPass(
                 ballXZ,
                 mate.PlayerId,
@@ -2247,6 +2480,24 @@ public sealed class CandidateGenerator : IAiStateResettable
         {
             Reject(mate.PlayerId, RejectionLaneBlocked);
             return false;
+        }
+
+        // AIB-11 (audit 2026-11-23, finding 6) / 2026-11-24 owner-review correction: ONE roll-out criterion
+        // for every promised ground pass, in one place. A promised ball is struck to be near its meet, but a
+        // time solve that has to be early (or a paced floor that cannot be that slow) still leaves it rolling:
+        // the advertised-run defect the review measured was a ball 6–7 m past MeetXZ at the meet tick with no
+        // check at all. The criterion is the same measured roll-out the space probe uses
+        // (<see cref="RolledPastPromiseMeters"/>), against the same shared <see cref="PromiseCatchRadiusMeters"/>.
+        // It runs after the plan exists and before the completion floor so the reason names the physical fact
+        // rather than being hidden behind the probability gate.
+        if (option.Promise.IsPresent && !option.HumanCaller)
+        {
+            float rolledPastMeters = RolledPastPromiseMeters(plan, ballXZ, option.Promise);
+            if (rolledPastMeters > PromiseCatchRadiusMeters)
+            {
+                Reject(mate.PlayerId, RejectionRolledPastPromise);
+                return false;
+            }
         }
 
         // AIB-02e: an ordinary ball to feet has to clear the raised ordinary floor — except where the corridor
@@ -3451,7 +3702,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// direction already chosen unless another is clearly better (A2.4 pressure plus boundary safety).
     ///
     /// AIB-07b (audit 2026-11-23, finding 1) adds the advance prospect: the value of the better shot the
-    /// carry's own target would produce, paid in the gain only while that ground is open. AIB-12b (finding 5)
+    /// carry's own target would produce, paid in the gain only while that ground is open. The 2026-11-24
+    /// owner-review correction keeps the term but multiplies it by the outfield lane clearance from the carry
+    /// target to the goal and ramps it in over <see cref="ActionValueScale.CarryAdvanceRampMeters"/> instead
+    /// of gating it in one step at <see cref="ActionValueScale.ShotRangeMeters"/>. AIB-12b (finding 5)
     /// decides the sprint from the path ahead (see <see cref="IsCarryPathBlocked"/>) instead of from the
     /// static nearest-opponent ring, so a chaser behind the carrier no longer forces a jog.
     /// </summary>
@@ -3567,9 +3821,21 @@ public sealed class CandidateGenerator : IAiStateResettable
         // prospect that does not exist under pressure, never a second discount of the same risk. It is not
         // in ScoreCarryDirection on purpose — the direction fixtures and the sprint decision are about the
         // physical space, and the advance is about what the space is worth.
+        //
+        // 2026-11-24 owner-review correction (AIB-07b): the first cut paid the prospect on a hardcoded
+        // 100 %-open shooting lane and switched it on in one 0.65 step at ShotRangeMeters, so a compact
+        // block between the carry target and goal was free and one metre of forward movement could flip a
+        // release into a ball-hog. The prospect is now (a) multiplied by the real outfield lane clearance
+        // from the carry target to the goal — keeper excluded, the AIB-05 convention for a shot lane — so a
+        // block in front of the target collapses it, and (b) faded in over CarryAdvanceRampMeters, so it
+        // grows as the carrier enters shooting range instead of stepping on. The ramp is read from the
+        // carrier's distance now, like the old gate, and it is exactly 0 beyond ShotRangeMeters.
         float advanceProspect = 0f;
         float distanceToGoalNow = Vector2.Distance(selfXZ, goalXZ);
-        if (distanceToGoalNow < ActionValueScale.ShotRangeMeters &&
+        float shotRangeRamp01 = Math.Clamp(
+            (ActionValueScale.ShotRangeMeters - distanceToGoalNow) / ActionValueScale.CarryAdvanceRampMeters,
+            0f, 1f);
+        if (shotRangeRamp01 > 0f &&
             bestSpace >= ActionValueScale.CarryAdvanceMinSpace01 &&
             (opponentArrivalSeconds < 0f ||
              opponentArrivalSeconds >= ActionValueScale.ContactRiskArrivalSeconds))
@@ -3577,17 +3843,22 @@ public sealed class CandidateGenerator : IAiStateResettable
             float targetArrival = _pressure.Read(carryTarget, out _).OpponentArrivalSeconds;
             if (targetArrival < 0f || targetArrival >= ActionValueScale.CarryAdvancePathArrivalSeconds)
             {
-                // The prospect is priced on a clean lane (1.0) and the pitch's real goal geometry: it asks
-                // "what would this ground be worth", not "what would this shot do", so it must not re-price
-                // the shot's lane or keeper a second time.
+                // The prospect is priced on the pitch's real goal geometry: it asks "what would this ground
+                // be worth", not "what would this shot do", so it must not re-price the shot's keeper a
+                // second time. The lane is the exception and it is outfield-only: a wall of bodies between
+                // the target and the goal is what the ground is worth, and the keeper is not part of it.
+                float laneClearance01 = EvaluateLaneClearance(
+                    carryTarget, goalXZ, obs.VisiblePlayers, obs.SelfTeam, excludeGoalkeeper: true);
                 float shotValueGain = ActionValueScale.ShotValue(
                         Vector2.Distance(carryTarget, goalXZ), 1f,
                         GoalMouthAngleDegrees(carryTarget, oppGoalCenter))
                     - ActionValueScale.ShotValue(
                         distanceToGoalNow, 1f,
                         GoalMouthAngleDegrees(selfXZ, oppGoalCenter));
-                advanceProspect = ActionValueScale.CarryAdvanceValue * Math.Clamp(
-                    shotValueGain / ActionValueScale.CarryAdvanceReferenceUnits, 0f, 1f);
+                advanceProspect = ActionValueScale.CarryAdvanceValue
+                                  * laneClearance01
+                                  * shotRangeRamp01
+                                  * Math.Clamp(shotValueGain / ActionValueScale.CarryAdvanceReferenceUnits, 0f, 1f);
             }
         }
 
@@ -3698,9 +3969,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     ///
     /// The exemptions are the point of the helper: an opponent behind or beside the path
     /// (<c>dot(rel, dir) &lt;= 0</c>), one further than the horizon, one wider than the half-width, and one
-    /// already running out of the path at <see cref="SprintPathEscapeSpeedMetersPerSecond"/> do not stop the
-    /// sprint. That is what lets the carrier keep the ball moving at a chaser's own pace instead of dropping
-    /// to a jog the moment anyone comes within five metres.
+    /// genuinely <b>leaving</b> that ground do not stop the sprint. That is what lets the carrier keep the ball
+    /// moving at a chaser's own pace instead of dropping to a jog the moment anyone comes within five metres.
+    ///
+    /// <b>Review correction (2026-11-24):</b> the first cut exempted any body whose velocity along the carry
+    /// axis was <c>&lt;= -1 m/s</c> — i.e. one running <i>straight at the carrier</i>. The sign was backwards:
+    /// a head-on charge is the most blocking case there is, and it was being treated as "vacating the
+    /// corridor", so the carrier sprinted into a tackle (and the A4 build-up possession clause had to be
+    /// relaxed for it). A body vacates the corridor only in the two physical senses below; along-axis motion
+    /// towards the carrier can never exempt it.
     /// </summary>
     private static bool IsCarryPathBlocked(in FootballerObservation obs, Vector2 selfXZ, Vector2 direction)
     {
@@ -3715,10 +3992,23 @@ public sealed class CandidateGenerator : IAiStateResettable
             float ahead = Vector2.Dot(relative, direction);
             if (ahead <= 0f) continue;
             if (relative.Length() > SprintPathHorizonMeters) continue;
-            if (MathF.Abs(Vector2.Dot(relative, perpendicular)) > SprintPathHalfWidthMeters) continue;
+
+            float lateral = Vector2.Dot(relative, perpendicular);
+            if (MathF.Abs(lateral) > SprintPathHalfWidthMeters) continue;
 
             Vector2 velocityXZ = new(opponent.EstimatedVelocity.X, opponent.EstimatedVelocity.Z);
-            if (Vector2.Dot(velocityXZ, direction) <= -SprintPathEscapeSpeedMetersPerSecond) continue;
+
+            // (a) He is stepping out of the corridor on his own side of the axis: the ground he occupies
+            //     now is not the ground he will occupy when the carrier gets there. Signed by which side of
+            //     the axis he stands on, so drifting towards the axis is never an escape.
+            float lateralSpeed = Vector2.Dot(velocityXZ, perpendicular);
+            if (MathF.Sign(lateral) * lateralSpeed >= SprintPathEscapeSpeedMetersPerSecond) continue;
+
+            // (b) He is outrunning the carrier along the carry axis — the gap does not close, so there is no
+            //     contact to sprint into. Only a strictly faster body qualifies; a body moving towards the
+            //     carrier has a closing speed above the carrier's own and is blocked below.
+            if (Vector2.Dot(velocityXZ, direction) >= obs.SelfAttributes.MaxSprintSpeed) continue;
+
             return true;
         }
 
@@ -4872,6 +5162,11 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <c>COVER_GAP</c> protector (and a marker, a cover defender, a line defender) up to six metres away
     /// from the man he was there to cover, and the opened-space reward paid him for the empty grass he
     /// stepped into — so the attacker could run in behind his back.
+    ///
+    /// 2026-11-24 owner-review note (AIB-09): the depth clamp still applies to every defensive duty. The review
+    /// asked to free <see cref="TacticalJob.Marker"/> and <see cref="TacticalJob.CoverDefender"/> from the line
+    /// ceiling; three forms of that were measured and none ships without breaking the 5 m
+    /// `JobTargetStructureTests` floor — see <see cref="ClampDefensiveJobDepth"/> and `docs/KNOWN_ISSUES.md`.
     /// </summary>
     private void AddJobCandidates(in FootballerObservation obs, Vector2 jobTargetXZ, float offsideLineProjX)
     {
@@ -4892,9 +5187,9 @@ public sealed class CandidateGenerator : IAiStateResettable
             Math.Clamp(jobTargetXZ.X, -_pitch.HalfLength + 3.5f, _pitch.HalfLength - 3.5f),
             Math.Clamp(jobTargetXZ.Y, -_pitch.HalfWidth + 2.5f, _pitch.HalfWidth - 2.5f));
 
-        // AIB-09: a defensive duty's target may never sit forward of the live last line. The allocator's
-        // own anchors already live inside the band, but a duty kept from an earlier pass or a fixture
-        // that places its own anchor can be forward of it, and the movement point is what the feet obey.
+        // AIB-09: no defensive duty's target may run forward of the live last line. The allocator's own anchors
+        // already live inside the band, but a duty kept from an earlier pass or a fixture that places its own
+        // anchor can be forward of it, and the movement point is what the feet obey.
         if (defensiveJob) jobTargetXZ = ClampDefensiveJobDepth(obs, jobTargetXZ);
 
         float baseUtility = JobBaseUtility(obs.TacticalJob);
@@ -5054,6 +5349,16 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// not reached); the residual loose-ball case is a movement toward the ball, not a cover position, and
     /// has no meaning to score goal-side. Nothing is added to the set without evidence.</para>
     ///
+    /// <para><b>Owner-review item, measured and deferred (2026-11-24, AIB-09).</b> The review asked to stop
+    /// clamping the man-oriented duties (<see cref="TacticalJob.Marker"/>, <see cref="TacticalJob.CoverDefender"/>)
+    /// to the line, so a midfielder marking a midfielder or a cover man behind a high presser keeps his job. Three
+    /// forms were measured and none ships: fully freeing them, an 8 m ahead-of-line allowance and a
+    /// man-relative goal-side bound all move the `box-cross` structural fixture from 5.18 m to 4.6 m of anchor
+    /// separation (below the 5 m `JobTargetStructureTests` floor this batch must not lower) and open the
+    /// reference match. That fixture's anchors are hypersensitive to the marker's movement because the anchors
+    /// follow the ball. The clamp therefore stays uniform — see `docs/KNOWN_ISSUES.md` and the fix report for the
+    /// owner decision this needs. The table below is the <i>scoring</i> set; it is still the five duties.</para>
+    ///
     /// Public and pure so a regression test can pin the classification table itself; no decision path
     /// iterates or allocates.
     /// </summary>
@@ -5107,10 +5412,12 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     /// <summary>
     /// AIB-09: bounds a defensive duty's movement target at the live line's ceiling, in attack-relative
-    /// projection. A <see cref="TacticalJob.ProtectGap"/> or <see cref="TacticalJob.Marker"/> target
-    /// forward of <see cref="DefensiveLineBand.MaxProjX"/> is forward of the last line the team is
-    /// defending, i.e. in front of the man it is there to cover — the audit's <c>COVER_GAP</c> running
-    /// past <c>THIRD_OPTION</c>. The band's ceiling already contains the credible-runner cap
+    /// projection.
+    ///
+    /// A <see cref="TacticalJob.ProtectGap"/> or <see cref="TacticalJob.Marker"/> target forward of
+    /// <see cref="DefensiveLineBand.MaxProjX"/> is forward of the last line the team is defending, i.e. in
+    /// front of the man it is there to cover — the audit's <c>COVER_GAP</c> running past
+    /// <c>THIRD_OPTION</c>. The band's ceiling already contains the credible-runner cap
     /// (<see cref="DefensiveLineModel.LineToRunnerMeters"/> goal-side of the deepest believed run) and the
     /// keeper cap, so one projection covers "at or goal-side of the last line and of nearby last-line
     /// runners" without a second model.
@@ -5118,6 +5425,19 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// With no valid band (<see cref="FootballerObservation.TeamLineBand"/> defaults to "unknown") the
     /// target is returned unchanged: a standalone controller must not invent a depth it was never given,
     /// which is also what keeps a fixture or a legacy observation on the pre-AIB-09 behaviour.
+    ///
+    /// <para><b>Owner-review item, measured and deferred (2026-11-24).</b> The review asked to scope this
+    /// clamp to the back-line duties so a <see cref="TacticalJob.Marker"/> on a midfielder 15 m up (or a
+    /// <see cref="TacticalJob.CoverDefender"/> behind a high presser) is not dragged back to the back four.
+    /// Three forms were implemented and measured — fully freeing the two man-oriented duties, an 8 m
+    /// ahead-of-line allowance, and a man-relative goal-side bound — and <b>all three</b> move the
+    /// `box-cross` fixture's closest refined anchor pair from 5.18 m to 4.6 m, below the 5 m
+    /// `JobTargetStructureTests` floor that this batch must not lower, and the freed marker also opens the
+    /// reference 11v11 up. The fixture is hypersensitive here because the marker's movement changes the
+    /// passage of play by t=144 and the structural anchors follow the ball. The clamp therefore stays
+    /// uniform, and the scoping is a documented residual for the owner: it needs either a gate re-baseline
+    /// (their call, not this batch's) or a structural guard that holds anchors apart independently of the
+    /// ball's phase.</para>
     /// </summary>
     private static Vector2 ClampDefensiveJobDepth(in FootballerObservation obs, Vector2 targetXZ)
     {
@@ -5143,6 +5463,15 @@ public sealed class CandidateGenerator : IAiStateResettable
     ///
     /// The opponent scan is over <see cref="FootballerObservation.VisiblePlayers"/> only — perception is
     /// the knowledge boundary — and index-looped with no allocation, like the rest of the off-ball path.
+    ///
+    /// <para><b>Measured rejection (2026-11-24 owner review).</b> Reading
+    /// <see cref="FootballerObservation.JobTargetPlayerId"/> instead of the nearest opponent was implemented
+    /// and measured, and <b>not shipped</b>: with the marker's own man driving his goal-side score, committed
+    /// man-markers track their man away from the block, and the reference 11v11 match opens up badly — the
+    /// same build goes 11–10 with 57/47 shots without this reading and 24–11 with 72/38 shots with it (a
+    /// further 13 goals on one fixed seed, and 21–35 total goals across the probe seeds). A "minor nit" that
+    /// costs that much is a match-level behaviour change, not a correction, so the nearest-opponent reading
+    /// stays. If it is ever revisited, bound the marker's depth first and prove the goal volume separately.</para>
     /// </summary>
     private static float EvaluateDefensiveGoalSide01(in FootballerObservation obs, Vector2 targetXZ)
     {

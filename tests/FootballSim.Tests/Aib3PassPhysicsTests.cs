@@ -31,6 +31,27 @@ namespace FootballSim.Tests;
 /// <see cref="PassPlanner.MinCrispPower01"/> had no caller in the AI.</item>
 /// </list>
 ///
+/// <para><b>2026-11-24 owner-review corrections (the second cut of both fixes).</b> (A1) The AIB-10 contest
+/// fix was a no-op for <c>ToSpace</c>: that promise's <c>ArrivalSeconds</c> is the ball's own flight (AUD-P3),
+/// so <c>max(flight, receiverArrival)</c> collapsed back to the flight and defenders were priced at the
+/// ball's arrival instead of the receiver's. The promise now carries
+/// <see cref="PassArrivalPromise.ContestArrivalSeconds"/> (the builder's stated receiver arrival) and both
+/// estimators price the contest, congestion window and horizon at it, while the timing term stays on
+/// <c>ArrivalSeconds</c>. (A2) A space probe could be rolled <b>out of the pitch</b> before the receiver
+/// arrived: probes are clamped three metres inside the lines, the ball is not, and
+/// <see cref="PassPlanner.BoundaryExitRisk01"/> prices that exit rather than refusing it — the probe now
+/// rejects with <see cref="CandidateGenerator.RejectionSpaceRollsOut"/> when the ball's position at the
+/// receiver's arrival is outside the pitch. (B) The first AIB-11 cut forced the 9.0 m/s crisp floor onto the
+/// promised <c>ToRun</c> paths, so a normal 16–20 m advertised run with a ~2.2 s meet was struck ~1 s early,
+/// its promise timing term collapsed and it was rejected as <c>low-completion</c>; the promised paths now keep
+/// the crisp floor while it is <b>on time</b> and use a stated 6.0 m/s arrival <b>pace</b> floor only where the
+/// crisp ball would be more than the promise's timing tolerance early (the second cut — the literal
+/// pace-always line made short-meet balls gentler and tripped the protected A3.4 off-ball-target gate), the
+/// uncommitted path is back to <c>MinPower01: 0f</c>,
+/// and one shared roll-out criterion (<see cref="CandidateGenerator.RolledPastPromiseMeters"/> against
+/// <see cref="CandidateGenerator.PromiseCatchRadiusMeters"/>) refuses any promised ball rolled past its region
+/// at the meeting.</para>
+///
 /// House style: model-level fixtures on synthetic inputs with the <i>pre-fix</i> answer visible in the
 /// arithmetic. Where a pre-fix result depends on the old formula, the test re-derives it from the public
 /// reach model (<see cref="TimeToReachModel"/>) and the planner's own tables, and asserts it, so the
@@ -272,7 +293,7 @@ public sealed class Aib3PassPhysicsTests
     ///   receiver reach to the far probe = 2.06 s
     ///   crisp plan at 8.0 m              = 0.45 power, ≈0.7 s flight
     ///   ball distance at 2.06 s          ≫ 12 m  ⇒  far more than 4 m past the 8.0 m aim point
-    ///   roll-out &gt; SpacePromiseCatchRadiusMeters (5.22 m = the 4 m promise region + one 1.22 m
+    ///   roll-out &gt; PromiseCatchRadiusMeters (5.22 m = the 4 m promise region + one 1.22 m
     ///   receiving reach) ⇒ refuse
     /// </code>
     /// The near probe is inside <see cref="CandidateGenerator.MinPassDistanceMeters"/> and is refused as
@@ -320,12 +341,12 @@ public sealed class Aib3PassPhysicsTests
             ballXZ, farProbe, reach.Seconds, Planner.MinCrispPower01(aimDistance));
         Assert.True(plan.Feasible);
         float rolledPast = Planner.BallDistanceAtTime(plan.Power01, reach.Seconds) - aimDistance;
-        Assert.True(rolledPast > CandidateGenerator.SpacePromiseCatchRadiusMeters,
+        Assert.True(rolledPast > CandidateGenerator.PromiseCatchRadiusMeters,
             $"the ball is only {rolledPast:F1} m past the aim point at the receiver's arrival; " +
-            $"the fixture must exceed the {CandidateGenerator.SpacePromiseCatchRadiusMeters:F1} m catch radius");
+            $"the fixture must exceed the {CandidateGenerator.PromiseCatchRadiusMeters:F1} m catch radius");
         Assert.Equal(
             CandidateGenerator.SpacePromiseRadiusMeters + PassSuccessModel.LaneStepInReachMeters,
-            CandidateGenerator.SpacePromiseCatchRadiusMeters);
+            CandidateGenerator.PromiseCatchRadiusMeters);
     }
 
     /// <summary>
@@ -364,9 +385,9 @@ public sealed class Aib3PassPhysicsTests
         PassPlan plan = Planner.PlanGroundPassToRegion(ballXZ, aim, reach.Seconds, crispFloor);
         Assert.True(plan.Feasible);
         float rolledPast = Planner.BallDistanceAtTime(plan.Power01, reach.Seconds) - distance;
-        Assert.True(rolledPast <= CandidateGenerator.SpacePromiseCatchRadiusMeters,
+        Assert.True(rolledPast <= CandidateGenerator.PromiseCatchRadiusMeters,
             $"a legitimate space ball rolled {rolledPast:F1} m past the aim point at the receiver's arrival");
-        Assert.True(rolledPast < CandidateGenerator.SpacePromiseCatchRadiusMeters - 2f,
+        Assert.True(rolledPast < CandidateGenerator.PromiseCatchRadiusMeters - 2f,
             $"the fixture must be well inside the region (rolled {rolledPast:F1} m past), not a boundary case");
     }
 
@@ -491,65 +512,481 @@ public sealed class Aib3PassPhysicsTests
         Assert.Equal(0f, uncontested.LandingPressure01, 5);
     }
 
+    /// <summary>
+    /// AIB-10 / 2026-11-24 owner-review correction (review item A1): a promised ball whose receiver arrives
+    /// <b>after</b> the ball is contested at the receiver's arrival, not at the flight — which is the
+    /// <c>ToSpace</c> promise shape, whose <c>ArrivalSeconds</c> is deliberately the ball's own flight
+    /// (AUD-P3: the timing term must stay 1 and the lead must not be charged twice).
+    ///
+    /// Fixture (the audit's impossible-space shape, with a defender in the gap): a crisp 8.0 m ball from
+    /// (0,0) to (8,0) — 0.45 power, flight <b>0.733 s</b> — promised with ArrivalSeconds 0.733 (the ball is
+    /// certain to be there) and ContestArrivalSeconds <b>2.06 s</b> (the receiver's own reach from (−6,0)).
+    /// <code>
+    ///   defender at (8,12.5): reaches the probe at 2.13 s (1.88 s of run + the 0.25 s reaction)
+    ///   pre-fix contest = max(0.733, 0.733) with only a 1.53 s defender horizon: the run is out of the
+    ///     horizon, the estimate credits the horizon itself (1.78 s effective) -> margin 1.05 -> term 1.00,
+    ///     completion 0.970
+    ///   fixed  contest = max(0.733, 2.06): margin 0.07 s -> term 0.64, completion 0.754
+    ///   two defenders at (8,12.5)/(8,14) arrive 2.13/2.55 s effective: outside the flight's 1.23 s
+    ///   congestion window, inside the receiver's 2.56 s one -> one extra defender charged (p 0.664)
+    ///   a lone defender at (8,18) arrives at 2.79 s — after both instants — and still scores neutral.
+    /// </code>
+    /// Pre-fix this exact promise priced the defender's term at the flight, so the fix's whole contest change
+    /// was a no-op for <c>ToSpace</c> (the review's A1); the fixed assertions below fail on that code.
+    /// </summary>
+    [Fact]
+    public void AIB10_ContestArrival_ChargesTheDefenderAtTheReceiversArrival()
+    {
+        Vector2 origin = Vector2.Zero;
+        Vector2 probe = new(8f, 0f);
+        float crisp = Planner.MinCrispPower01(8f);
+        Assert.Equal(0.45f, crisp, 3);
+        PassPlan plan = Planner.PlanGroundPassToRegion(origin, probe, arriveInSeconds: 2.06f, minPower01: crisp);
+        Assert.True(plan.Feasible);
+        Assert.Equal(0.45f, plan.Power01, 3);
+        Assert.Equal(0.733f, plan.FlightTimeSeconds, 3);
+
+        FootballerState self = Player(origin);
+        PerceivedEntity receiver = Mate(new Vector2(-6f, 0f));
+        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(receiver), probe, CandidateGenerator.SpaceRaceHorizonSeconds);
+        Assert.True(receiverReach.Reachable);
+        Assert.Equal(2.06f, receiverReach.Seconds, 1);
+
+        var spacePromise = new PassArrivalPromise(
+            probe, plan.FlightTimeSeconds, 4f, 1f,
+            ContestArrivalSeconds: receiverReach.Seconds);
+        Assert.Equal(receiverReach.Seconds, spacePromise.ContestMomentSeconds, 4);
+        var flightMomentPromise = spacePromise with { ContestArrivalSeconds = 0f };
+        Assert.Equal(plan.FlightTimeSeconds, flightMomentPromise.ContestMomentSeconds, 4);
+
+        // (1) The defender term: one defender between the ball's flight and the receiver's real arrival.
+        PerceivedEntity interceptor = Opponent(14, new Vector2(8f, 12.5f), Vector2.Zero);
+        FootballerObservation contestedObs = Observation(self, receiver, interceptor);
+        float lane = CandidateGenerator.EvaluateLaneClearance(
+            origin, plan.TargetXZ, contestedObs.VisiblePlayers, TeamId.Home);
+        PassSuccessTerms fixedTerms = Model.Estimate(contestedObs, receiver, plan, lane, spacePromise);
+        PassSuccessTerms preFixTerms = Model.Estimate(contestedObs, receiver, plan, lane, flightMomentPromise);
+
+        Assert.Equal(fixedTerms.DefenderArrivalSeconds - receiverReach.Seconds,
+            fixedTerms.DefenderMarginSeconds, 2);
+        Assert.True(preFixTerms.DefenderMarginSeconds > 0.5f,
+            $"pre-fix the margin was measured at the flight and was hugely positive " +
+            $"({preFixTerms.DefenderMarginSeconds:F2} s) — the whole defect");
+        float preFixTerm = Math.Clamp(
+            0.5f + preFixTerms.DefenderMarginSeconds / PassSuccessModel.DefenderMarginScaleSeconds, 0f, 1f);
+        Assert.Equal(1f, preFixTerm, 3); // the whole defect: at the flight the defender is not "pressure"
+        Assert.True(fixedTerms.DefenderPressure01 > 0.30f,
+            $"a defender who arrives after the ball but before the receiver must be charged " +
+            $"(pressure {fixedTerms.DefenderPressure01:F2}, pre-fix 0.00)");
+        Assert.True(fixedTerms.CompletionProbability01 < preFixTerms.CompletionProbability01 - 0.15f,
+            $"the contested promise ({fixedTerms.CompletionProbability01:F3}) must price below the same " +
+            $"promise priced at the flight ({preFixTerms.CompletionProbability01:F3})");
+
+        // (2) The congestion window is counted from the same receiver instant: two late contestors land in
+        // the widened window and one extra defender is charged, where the flight window saw nobody.
+        PerceivedEntity first = Opponent(14, new Vector2(8f, 12.5f), Vector2.Zero);
+        PerceivedEntity second = Opponent(15, new Vector2(8f, 14f), Vector2.Zero);
+        FootballerObservation crowdObs = Observation(self, receiver, first, second);
+        float crowdLane = CandidateGenerator.EvaluateLaneClearance(
+            origin, plan.TargetXZ, crowdObs.VisiblePlayers, TeamId.Home);
+        PassSuccessTerms crowdFixed = Model.Estimate(crowdObs, receiver, plan, crowdLane, spacePromise);
+        PassSuccessTerms crowdPreFix = Model.Estimate(crowdObs, receiver, plan, crowdLane, flightMomentPromise);
+        Assert.Equal(1, crowdFixed.CongestionExtraDefenders);
+        Assert.Equal(0, crowdPreFix.CongestionExtraDefenders);
+        Assert.True(crowdFixed.CompletionProbability01 < crowdPreFix.CompletionProbability01 - 0.15f,
+            $"the widened congestion window must charge the crowd ({crowdFixed.CompletionProbability01:F3} " +
+            $"against {crowdPreFix.CompletionProbability01:F3})");
+
+        // (3) A defender who arrives after BOTH instants still scores exactly like an empty picture.
+        PerceivedEntity late = Opponent(16, new Vector2(8f, 18f), Vector2.Zero);
+        FootballerObservation lateObs = Observation(self, receiver, late);
+        float lateLane = CandidateGenerator.EvaluateLaneClearance(
+            origin, plan.TargetXZ, lateObs.VisiblePlayers, TeamId.Home);
+        PassSuccessTerms lateTerms = Model.Estimate(lateObs, receiver, plan, lateLane, spacePromise);
+        Assert.True(lateTerms.DefenderArrivalSeconds > spacePromise.ContestMomentSeconds + 0.25f,
+            $"the late fixture must arrive after both instants ({lateTerms.DefenderArrivalSeconds:F2} s)");
+        Assert.Equal(0f, lateTerms.DefenderPressure01, 4);
+        Assert.Equal(0, lateTerms.CongestionExtraDefenders);
+        FootballerObservation openObs = Observation(self, receiver);
+        float openLane = CandidateGenerator.EvaluateLaneClearance(
+            origin, plan.TargetXZ, openObs.VisiblePlayers, TeamId.Home);
+        Assert.Equal(
+            Model.Estimate(openObs, receiver, plan, openLane, spacePromise).CompletionProbability01,
+            lateTerms.CompletionProbability01, 4);
+    }
+
+    /// <summary>
+    /// AIB-10 / 2026-11-24 owner-review correction (review item A2): a space probe whose calibrated roll
+    /// takes the <b>ball out of the pitch</b> before the receiver can get there is refused with
+    /// <c>space-rolls-out</c>; the same probe far from the line is offered.
+    ///
+    /// Fixture: the carrier's ball is at (20,10), the team-mate at (6,31) — clamped three metres inside the
+    /// top touchline — and the far probe is (20,31): 21.0 m from the ball, receiver reach 2.06 s, crisp plan
+    /// 0.95 power / 1.55 s flight. At 2.06 s the ball has covered 25.08 m and sits at <b>(20, 35.09)</b>,
+    /// 1.09 m past the touchline, while it is only <b>4.08 m</b> past the aim point — inside the 5.22 m
+    /// roll-out bound the pre-fix guard used, so pre-fix the probe was <b>offered</b> (the audit's ball out of
+    /// play before the receiver arrives). Fixed, it is refused with its own reason and the near probe is the
+    /// <c>ToSpace</c> ball. Translating the whole fixture 20 m away from the line — ball (20,−10), team-mate
+    /// (6,11), probe (20,11) — leaves the ball at (20, 15.08), in play, so the same probe is offered.
+    /// </summary>
+    [Fact]
+    public void AIB10_SpaceProbeRollingOutOfThePitch_IsRefusedWhileAnAwayFromLineProbeIsOffered()
+    {
+        Vector2 ballOut = new(20f, 10f);
+        PerceivedEntity mateOut = Mate(new Vector2(6f, 31f));
+        FootballerObservation obsOut = Observation(Player(ballOut), mateOut);
+        var generatorOut = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generatorOut.GenerateOnBallCandidates(obsOut, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        Vector2 farProbe = new(20f, 31f);
+        ReachEstimate reach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(mateOut), farProbe, CandidateGenerator.SpaceRaceHorizonSeconds);
+        Assert.True(reach.Reachable);
+        float aimDistance = Vector2.Distance(ballOut, farProbe);
+        PassPlan plan = Planner.PlanGroundPassToRegion(
+            ballOut, farProbe, reach.Seconds, Planner.MinCrispPower01(aimDistance));
+        Assert.True(plan.Feasible);
+        float ballDistanceAtReceiverArrival = Planner.BallDistanceAtTime(plan.Power01, reach.Seconds);
+        Vector2 ballAtArrival = ballOut + plan.AimDirectionXZ * ballDistanceAtReceiverArrival;
+        float rolledPast = ballDistanceAtReceiverArrival - aimDistance;
+        Assert.True(MathF.Abs(ballAtArrival.Y) > Pitch.HalfWidth,
+            $"the fixture's ball must be out of play at the receiver's arrival (z {ballAtArrival.Y:F2})");
+        Assert.True(rolledPast <= CandidateGenerator.PromiseCatchRadiusMeters,
+            $"the pre-fix roll-out guard must have let this probe through ({rolledPast:F2} m past the aim)");
+
+        bool refusedForTheLine = false;
+        for (int i = 0; i < generatorOut.RejectionCount; i++)
+        {
+            CandidateRejection rejection = generatorOut.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId &&
+                rejection.Reason == CandidateGenerator.RejectionSpaceRollsOut) refusedForTheLine = true;
+        }
+        Assert.True(refusedForTheLine,
+            "a probe whose ball is out of play before the receiver arrives must be refused with space-rolls-out");
+        Assert.DoesNotContain(generatorOut.Candidates, c =>
+            c.Key.Kind == CandidateKind.Pass &&
+            c.Key.TargetTag == CandidateGenerator.SpacePassTag &&
+            c.TargetXZ.HasValue &&
+            Vector2.Distance(new Vector2(c.TargetXZ.Value.X, c.TargetXZ.Value.Z), farProbe) < 0.5f);
+
+        // The same probe, translated 20 m away from the touchline, is offered.
+        Vector2 ballIn = new(20f, -10f);
+        PerceivedEntity mateIn = Mate(new Vector2(6f, 11f));
+        FootballerObservation obsIn = Observation(Player(ballIn), mateIn);
+        var generatorIn = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generatorIn.GenerateOnBallCandidates(obsIn, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate space = Single(generatorIn, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+        Vector2 aim = new(space.TargetXZ!.Value.X, space.TargetXZ.Value.Z);
+        Assert.True(Vector2.Distance(aim, new Vector2(20f, 11f)) < 0.5f,
+            $"the away-from-line far probe (20,11) must be the offered ToSpace ball, got {aim}");
+    }
+
+    /// <summary>
+    /// AIB-10 / 2026-11-24 owner-review correction (review item A1), the builder half: the space candidate's
+    /// promise states the receiver's real arrival as its <see cref="PassArrivalPromise.ContestArrivalSeconds"/>,
+    /// not only the ball's flight as its arrival, so the estimator prices the contest at the receiver's moment.
+    ///
+    /// Fixture ("translated G"): ball (20,−10), team-mate (6,11), far probe (20,11) — the plan arrives in
+    /// <b>1.55 s</b> while the receiver needs <b>2.06 s</b>. Two stale sightings (7 m doubt ⇒ the 0.35 s cap)
+    /// of defenders at (20,28)/(20,28.4) reach the probe at 2.42–2.45 s: they pass the race gate by ≥0.35 s
+    /// and land in the receiver's congestion window (2.56 s) but not the flight's (2.05 s). The candidate's
+    /// completion must equal the estimate rebuilt with ContestArrivalSeconds = 2.06 and must price below the
+    /// same estimate rebuilt without it (0.599 against 0.681 measured). Pre-fix the builder only carried the
+    /// flight, so the candidate priced 0.681 — the assertion on the contest value fails on that code.
+    /// </summary>
+    [Fact]
+    public void AIB10_SpaceCandidate_StatesTheReceiversArrivalAsItsContestMoment()
+    {
+        Vector2 ball = new(20f, -10f);
+        Vector2 aimPoint = new(20f, 11f);
+        PerceivedEntity mate = Mate(new Vector2(6f, 11f));
+        PerceivedEntity staleFirst = DoubtedOpponent(14, new Vector2(20f, 28f));
+        PerceivedEntity staleSecond = DoubtedOpponent(15, new Vector2(20f, 28.4f));
+        FootballerObservation observation = Observation(Player(ball), mate, staleFirst, staleSecond);
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(observation, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+        Vector2 aim = new(space.TargetXZ!.Value.X, space.TargetXZ.Value.Z);
+        Assert.True(Vector2.Distance(aim, aimPoint) < 0.5f, $"the fixture's ToSpace ball must be the far probe, got {aim}");
+
+        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(mate), aim, CandidateGenerator.SpaceRaceHorizonSeconds);
+        Assert.True(receiverReach.Reachable);
+        Assert.Equal(2.06f, receiverReach.Seconds, 2);
+        float distance = Vector2.Distance(ball, aim);
+        PassPlan plan = Planner.PlanGroundPassToRegion(
+            ball, aim, receiverReach.Seconds, Planner.MinCrispPower01(distance));
+        Assert.True(plan.Feasible);
+        Assert.True(plan.FlightTimeSeconds < receiverReach.Seconds - 0.3f,
+            $"the fixture needs the ball to arrive well before the receiver " +
+            $"({plan.FlightTimeSeconds:F2} s against {receiverReach.Seconds:F2} s)");
+
+        // The race gate's defender arrival and confidence, rebuilt exactly as the builder derives them.
+        float defenderArrivalSeconds = CandidateGenerator.SpaceRaceHorizonSeconds;
+        for (int i = 0; i < observation.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity opponent = observation.VisiblePlayers[i];
+            if (opponent.Team == TeamId.Home) continue;
+            ReachEstimate defenderReach = TimeToReachModel.ToPoint(
+                ReachKinematics.FromEntity(opponent), aim, CandidateGenerator.SpaceRaceHorizonSeconds);
+            if (!defenderReach.Reachable) continue;
+            if (defenderReach.Seconds < defenderArrivalSeconds) defenderArrivalSeconds = defenderReach.Seconds;
+        }
+        float raceMargin = defenderArrivalSeconds - receiverReach.Seconds;
+        Assert.True(raceMargin >= CandidateGenerator.SpaceRaceMarginSeconds,
+            $"the fixture's defenders must pass the race gate (margin {raceMargin:F2} s)");
+        float confidence = Math.Clamp(
+            CandidateGenerator.SpacePromiseConfidenceBase +
+            CandidateGenerator.SpacePromiseConfidenceMarginWeight * Math.Clamp(
+                raceMargin / CandidateGenerator.SpacePromiseConfidenceMarginScaleSeconds, 0f, 1f),
+            CandidateGenerator.SpacePromiseConfidenceFloor,
+            1f);
+        float lane = CandidateGenerator.EvaluateLaneClearance(
+            ball, plan.TargetXZ, observation.VisiblePlayers, TeamId.Home);
+        var withContest = new PassArrivalPromise(
+            aim, plan.FlightTimeSeconds, CandidateGenerator.SpacePromiseRadiusMeters, confidence,
+            ContestArrivalSeconds: receiverReach.Seconds);
+        var withoutContest = withContest with { ContestArrivalSeconds = 0f };
+        PassSuccessTerms fixedTerms = Model.Estimate(observation, mate, plan, lane, withContest);
+        PassSuccessTerms preFixTerms = Model.Estimate(observation, mate, plan, lane, withoutContest);
+
+        Assert.Equal(1, fixedTerms.CongestionExtraDefenders);
+        Assert.Equal(0, preFixTerms.CongestionExtraDefenders);
+        Assert.Equal(fixedTerms.CompletionProbability01, space.Terms.Probability01, 3);
+        Assert.True(space.Terms.Probability01 < preFixTerms.CompletionProbability01 - 0.05f,
+            $"the candidate ({space.Terms.Probability01:F3}) must price below the flight-only estimate " +
+            $"({preFixTerms.CompletionProbability01:F3}); pre-fix it priced the flight and the A1 fix was a no-op");
+    }
+
     // =============================================================================================
-    // AIB-11 — the advertised ToRun ball is crisp, not a timed roller
+    // AIB-11 — the advertised ToRun ball is paced to the meet, not struck crisp
     // =============================================================================================
 
     /// <summary>
-    /// AIB-11: the advertised <c>ToRun</c> ball is struck with the crisp floor, so its flight is materially
-    /// shorter than the timed roller the old <c>MinPower01: 0f</c> path produced at the same distance.
+    /// AIB-11 (audit 2026-11-23, finding 6), corrected by the 2026-11-24 owner review (item B): the
+    /// advertised <c>ToRun</c> ball is a <b>paced</b> timed ball, neither the crisp-floor ball the first fix
+    /// forced nor the slow roller of the pre-AIB-11 code.
     ///
     /// Fixture: the carrier has the ball at (0, 8) and team-mate #9 stands at (6, 8) with a live
-    /// advertisement to (16, 8) at tick 608 — 1.8 s away, 16.0 m from the ball. Arithmetic:
+    /// advertisement to (16, 8) at tick 632 — <b>2.2 s</b> away, 16.0 m from the ball. Arithmetic (measured):
     /// <code>
-    ///   pre-fix timed plan (MinPower01 0): 0.50 power / 1.800 s flight  — the audit's slow roller
-    ///   crisp floor MinCrispPower01(16):   0.80 power, table flight ≈1.18 s — the candidate's command
-    ///   promise timing: |1.18 − 1.80| − tolerance(5 m radius) > 0, so the model charges the early
-    ///   arrival (AUD-P5's stated trade); completion 0.57 stays above the 0.30 delivery floor.
+    ///   pre-AIB-11 timed plan (MinPower01 0):   0.50 power / 1.800 s flight — the audit's slow roller
+    ///   first AIB-11 cut (crisp floor 0.80):    0.80 power / 1.217 s flight — arrives 0.98 s early: the
+    ///                                           review's starved ball, mistiming 0.598 s, timing term
+    ///                                           0.003, completion 0.020 -> rejected low-completion
+    ///   corrected (pace floor 6.0 m/s):         0.55 power / 1.667 s flight — mistiming 0.148 s, timing
+    ///                                           term 0.753, completion 0.588 -> offered
     /// </code>
-    /// Pre-fix the candidate's power was 0.50 and its 1.80 s flight is exactly the kind of slow ball the
-    /// lane test then rejected (the audit's Images 8/9). The assertion is on the power/flight, not on a
-    /// magic pass/fail.
+    /// The assertions pin the commanded power to the paced plan, the arrival pace to
+    /// <see cref="CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond"/>, the flight near the meet, the
+    /// completion above the delivery floor — and the starved crisp ball below it. So the test fails on the
+    /// pre-fix code whichever half regresses: the crisp-floor cut fails the pace/power assertions, and the
+    /// pre-AIB-11 roller fails the arrival-pace one.
     /// </summary>
     [Fact]
-    public void AIB11_AdvertisedRunBall_HasTheCrispFloorAndAShorterFlight()
+    public void AIB11_AdvertisedRunBall_IsPacedToTheMeetNotStruckCrisp()
     {
         Vector2 ballXZ = new(0f, 8f);
+        Vector2 meetXZ = new(16f, 8f);
         PerceivedEntity runner = Mate(new Vector2(6f, 8f));
         FootballerObservation observation = Observation(
             Player(new Vector2(0f, 8f)), runner, Opponent(20, new Vector2(-8f, 2f), Vector2.Zero));
-        int meetTick = ObservationTick + 108; // 1.8 s
-        MatchCommunicationContext communication = AnnouncedRun(MateId, new Vector2(16f, 8f), meetTick);
+        const int meetTicks = 132; // 2.2 s
+        MatchCommunicationContext communication = AnnouncedRun(MateId, meetXZ, ObservationTick + meetTicks);
         var generator = new CandidateGenerator(Pitch, communication, PlainPicture()) { TimeOnBall = 0.8f };
 
         generator.GenerateOnBallCandidates(observation, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
 
         UtilityCandidate run = Single(generator, CandidateGenerator.RunPassTag, MateId);
-        Vector2 meetXZ = new(16f, 8f);
+        float meet = meetTicks * SimConstants.FixedDeltaTime;
+        Assert.Equal(2.2f, meet, 3);
         float distance = Vector2.Distance(ballXZ, meetXZ);
         float crispFloor = Planner.MinCrispPower01(distance);
         Assert.Equal(0.80f, crispFloor, 3);
-        Assert.Equal(0.80f, run.Command.KickPower01, 3);
-        Assert.True(run.Command.KickPower01 >= crispFloor - 1e-3f,
-            $"the advertised run ball was struck at {run.Command.KickPower01:F2}; the crisp floor for " +
-            $"{distance:F2} m is {crispFloor:F2}");
 
-        PassPlan preFix = Planner.PlanGroundPassToRegion(ballXZ, meetXZ, arriveInSeconds: 1.8f);
-        Assert.True(preFix.Feasible);
-        Assert.Equal(0.50f, preFix.Power01, 3);
-        Assert.True(preFix.FlightTimeSeconds > 1.7f,
-            $"the pre-fix timed plan must be the slow roller the audit names (flight {preFix.FlightTimeSeconds:F3} s)");
-        Assert.Equal(1.80f, preFix.FlightTimeSeconds, 3);
-        Assert.True(run.Command.KickPower01 > preFix.Power01 + 0.25f,
-            $"the crisp floor only moved the timed ball {preFix.Power01:F2} → {run.Command.KickPower01:F2}");
+        // The plan the builder is required to call: the timed-region planner with the stated pace floor.
+        PassPlan paced = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: meet, minPower01: 0f,
+            minArrivalSpeedMetersPerSecond: CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond);
+        Assert.True(paced.Feasible);
+        Assert.Equal(0.55f, paced.Power01, 3);
+        Assert.Equal(0.55f, run.Command.KickPower01, 3);
+        Assert.True(run.Command.KickPower01 < crispFloor - 0.2f,
+            $"the advertised run ball was struck at {run.Command.KickPower01:F2}; the crisp floor is " +
+            $"{crispFloor:F2} — that is the review's over-firm ball, not the paced one");
 
-        Assert.True(Planner.TryGetFlightTime(run.Command.KickPower01, distance, out float firmFlight),
-            "the planner table must have a flight for the emitted command");
-        Assert.True(firmFlight <= preFix.FlightTimeSeconds - 0.5f,
-            $"the firm run ball must arrive materially sooner ({firmFlight:F3} s against the roller's " +
-            $"{preFix.FlightTimeSeconds:F3} s)");
+        // The pace floor reached the planner: the ball arrives at least as fast as the caller asked.
+        Assert.True(Planner.TryGetArrivalSpeed(run.Command.KickPower01, distance, out float arrivalSpeed),
+            "the planner's table must give an arrival speed for the emitted command");
+        Assert.True(arrivalSpeed >= CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond - 1e-3f,
+            $"the promised run ball arrives at {arrivalSpeed:F2} m/s, below the stated " +
+            $"{CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond:F1} m/s pace floor");
+
+        // ... and it arrives near the meet, not a second early, so the promise timing term stays alive.
+        Assert.True(Planner.TryGetFlightTime(run.Command.KickPower01, distance, out float flight));
+        Assert.True(MathF.Abs(flight - meet) < 0.6f,
+            $"the paced run ball's flight is {flight:F3} s against a {meet:F2} s meet");
+        float tolerance = Math.Clamp(
+            MathF.Abs(5f) * 0.5f / PassSuccessModel.PromisedRegionCrossSpeed,
+            PassSuccessModel.MinPromisedArrivalToleranceSeconds,
+            PassSuccessModel.MaxPromisedArrivalToleranceSeconds);
+        float mistiming = MathF.Max(0f, MathF.Abs(flight - meet) - tolerance);
+        float timingTerm = Math.Clamp(1f - mistiming / PassSuccessModel.ReceiverMarginScaleSeconds, 0f, 1f);
+        Assert.True(timingTerm > 0.6f,
+            $"the paced run ball's promise timing term is {timingTerm:F2}; the crisp ball's was 0");
         Assert.True(run.Terms.Probability01 > CandidateGenerator.MinViableDeliveryCompletion01,
-            $"the firm run ball must survive the delivery floor (p {run.Terms.Probability01:F3})");
+            $"the paced run ball must survive the delivery floor (p {run.Terms.Probability01:F3})");
+
+        // Pre-fix half: the crisp-floor plan the first AIB-11 cut produced was starved by its own mistiming.
+        PassPlan crisp = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: meet, minPower01: crispFloor);
+        Assert.True(crisp.Feasible);
+        Assert.Equal(0.80f, crisp.Power01, 3);
+        Assert.True(crisp.FlightTimeSeconds < flight - 0.3f,
+            $"the crisp plan must arrive materially earlier ({crisp.FlightTimeSeconds:F3} s vs {flight:F3} s)");
+        float crispMistiming = MathF.Max(0f, MathF.Abs(crisp.FlightTimeSeconds - meet) - tolerance);
+        float crispTiming = Math.Clamp(1f - crispMistiming / PassSuccessModel.ReceiverMarginScaleSeconds, 0f, 1f);
+        Assert.True(crispTiming < 0.01f,
+            $"the crisp ball's promise timing term must be ~0 ({crispTiming:F3}) — that is the starvation");
+
+        // The whole pre-fix candidate, priced with the same promise: completion below the delivery floor.
+        Assert.True(communication.Runs.TryGetAdvertisement(
+            TeamId.Home, MateId, observation.Tick, out RunAdvertisement advert));
+        var promise = new PassArrivalPromise(meetXZ, meet, advert.MeetRadiusMeters, advert.Promise01(observation.Tick));
+        float lane = CandidateGenerator.EvaluateLaneClearance(
+            ballXZ, meetXZ, observation.VisiblePlayers, observation.SelfTeam);
+        PassSuccessTerms crispTerms = Model.Estimate(observation, runner, crisp, lane, promise);
+        Assert.True(crispTerms.CompletionProbability01 < CandidateGenerator.MinViableDeliveryCompletion01,
+            $"the crisp-floor ball's completion {crispTerms.CompletionProbability01:F3} must be below the " +
+            $"{CandidateGenerator.MinViableDeliveryCompletion01:F2} delivery floor — pre-fix it was 0.02");
+    }
+
+    /// <summary>
+    /// AIB-11 / 2026-11-24 review correction, second cut — the other half of
+    /// <see cref="CandidateGenerator.ChoosePromisedRunPower"/>: an advertised run whose crisp plan is already
+    /// <b>on time</b> keeps the crisp floor, byte-identical to `ai58`.
+    ///
+    /// Fixture: the same 16.0 m ball at (0,8) → (16,8), but the meet is 84 ticks (1.4 s) away. The crisp floor
+    /// (0.80 power) plans a 1.217 s flight — 0.183 s early, inside the promise's 5 m-region timing tolerance
+    /// (0.385 s) — so the firm ball is <i>not</i> starved and the paced floor must not be used. The literal
+    /// "paced floor always" line would strike 0.55 power here, which is gentler and slower: measured, that
+    /// short-meet regression is what flipped `box-cross` into the protected A3.4 gate (4.93 m), so this test
+    /// pins the refinement and the negative arithmetic that selects it.
+    /// </summary>
+    [Fact]
+    public void AIB11_OnTimeAdvertisedRun_KeepsTheCrispFloor()
+    {
+        Vector2 ballXZ = new(0f, 8f);
+        Vector2 meetXZ = new(16f, 8f);
+        PerceivedEntity runner = Mate(new Vector2(6f, 8f));
+        FootballerObservation observation = Observation(
+            Player(new Vector2(0f, 8f)), runner, Opponent(20, new Vector2(-8f, 2f), Vector2.Zero));
+        const int meetTicks = 84; // 1.4 s
+        MatchCommunicationContext communication = AnnouncedRun(MateId, meetXZ, ObservationTick + meetTicks);
+        var generator = new CandidateGenerator(Pitch, communication, PlainPicture()) { TimeOnBall = 0.8f };
+
+        generator.GenerateOnBallCandidates(observation, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        UtilityCandidate run = Single(generator, CandidateGenerator.RunPassTag, MateId);
+        float meet = meetTicks * SimConstants.FixedDeltaTime;
+        Assert.Equal(1.4f, meet, 3);
+        float distance = Vector2.Distance(ballXZ, meetXZ);
+        float crispFloor = Planner.MinCrispPower01(distance);
+        Assert.Equal(0.80f, crispFloor, 3);
+        Assert.True(Planner.TryGetFlightTime(crispFloor, distance, out float crispFlight));
+        float tolerance = PassSuccessModel.PromiseTimingToleranceSeconds(5f);
+        Assert.True(meet - crispFlight <= tolerance,
+            $"the fixture's crisp ball must be on time (early by {meet - crispFlight:F3} s, tolerance " +
+            $"{tolerance:F3} s)");
+        Assert.Equal(crispFloor, run.Command.KickPower01, 3);
+        Assert.True(run.Terms.Probability01 > CandidateGenerator.MinViableDeliveryCompletion01,
+            $"the on-time advertised run must survive the delivery floor (p {run.Terms.Probability01:F3})");
+
+        // The literal paced floor would have been gentler and slower at this short meet — the regression.
+        PassPlan paced = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: meet, minPower01: 0f,
+            minArrivalSpeedMetersPerSecond: CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond);
+        Assert.True(paced.Feasible);
+        Assert.True(paced.Power01 < crispFloor - 0.1f,
+            $"the paced plan must be materially gentler here ({paced.Power01:F2} against {crispFloor:F2})");
+    }
+
+    /// <summary>
+    /// AIB-11 / 2026-11-24 review correction (item B3/B4): the <b>one shared roll-out criterion</b> every
+    /// promised pass uses. It measures the rolling ball's calibrated distance at the promise's contest moment
+    /// against the distance to the promised region; the callers refuse beyond
+    /// <see cref="CandidateGenerator.PromiseCatchRadiusMeters"/>.
+    ///
+    /// Measured on the same 16 m advertised run at the 6.0 m/s pace floor (power 0.55, flight 1.667 s):
+    /// <code>
+    ///   meet 2.2 s: ball 3.13 m past MeetXZ at the meet  -> inside the 5.22 m bound -> keep
+    ///   meet 2.6 s: ball 5.24 m past MeetXZ at the meet  -> beyond the bound      -> refuse
+    /// </code>
+    /// A ToSpace-shaped promise (ArrivalSeconds = the ball's own flight, ContestArrivalSeconds = the
+    /// receiver's real arrival) is measured at the <b>contest</b> moment, which is the instant the promise is
+    /// about; its timing term still reads <c>ArrivalSeconds</c>. Pre-fix the advertised path had no roll-out
+    /// check at all (only the space probe had one), so the 2.6 s over-run was invisible.
+    /// </summary>
+    [Fact]
+    public void AIB11_PromisedRunBallRolledPastTheMeet_IsRefusedByTheSharedCriterion()
+    {
+        Vector2 ballXZ = new(0f, 8f);
+        Vector2 meetXZ = new(16f, 8f);
+        const float distance = 16f;
+        PassPlan insidePlan = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: 2.2f, minPower01: 0f,
+            minArrivalSpeedMetersPerSecond: CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond);
+        PassPlan outsidePlan = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: 2.6f, minPower01: 0f,
+            minArrivalSpeedMetersPerSecond: CandidateGenerator.RunPassMinArrivalSpeedMetersPerSecond);
+        Assert.True(insidePlan.Feasible);
+        Assert.True(outsidePlan.Feasible);
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        var insidePromise = new PassArrivalPromise(meetXZ, 2.2f, 5f, 0.85f);
+        var outsidePromise = new PassArrivalPromise(meetXZ, 2.6f, 5f, 0.85f);
+
+        float insideRoll = generator.RolledPastPromiseMeters(insidePlan, ballXZ, insidePromise);
+        float outsideRoll = generator.RolledPastPromiseMeters(outsidePlan, ballXZ, outsidePromise);
+        Assert.Equal(Planner.BallDistanceAtTime(insidePlan.Power01, 2.2f) - distance, insideRoll, 3);
+        Assert.Equal(Planner.BallDistanceAtTime(outsidePlan.Power01, 2.6f) - distance, outsideRoll, 3);
+        Assert.True(insideRoll <= CandidateGenerator.PromiseCatchRadiusMeters,
+            $"the 2.2 s promised ball must stay inside the shared bound ({insideRoll:F2} m)");
+        Assert.True(outsideRoll > CandidateGenerator.PromiseCatchRadiusMeters,
+            $"the 2.6 s promised ball must be refused ({outsideRoll:F2} m past the meet)");
+        Assert.Equal(0.55f, outsidePlan.Power01, 3);
+
+        // The criterion reads the promise's contest moment, not its flight-seconds arrival: a ToSpace-shaped
+        // promise states the ball's flight as ArrivalSeconds and the receiver's real arrival separately.
+        var spaceShaped = new PassArrivalPromise(
+            meetXZ, insidePlan.FlightTimeSeconds, 4f, 1f, ContestArrivalSeconds: 2.6f);
+        Assert.Equal(insidePlan.FlightTimeSeconds, spaceShaped.ArrivalSeconds, 4);
+        Assert.Equal(Planner.BallDistanceAtTime(insidePlan.Power01, 2.6f) - distance,
+            generator.RolledPastPromiseMeters(insidePlan, ballXZ, spaceShaped), 3);
+
+        // End-to-end: the late meet's advertised run is refused with the shared reason before the completion
+        // floor (its promise timing is already dead, so the reason ordering is what proves the gate fired).
+        PerceivedEntity runner = Mate(new Vector2(6f, 8f));
+        FootballerObservation observation = Observation(
+            Player(new Vector2(0f, 8f)), runner, Opponent(20, new Vector2(-8f, 2f), Vector2.Zero));
+        MatchCommunicationContext communication = AnnouncedRun(MateId, meetXZ, ObservationTick + 156); // 2.6 s
+        var lateGenerator = new CandidateGenerator(Pitch, communication, PlainPicture()) { TimeOnBall = 0.8f };
+        lateGenerator.GenerateOnBallCandidates(observation, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        bool refusedForTheRoll = false;
+        for (int i = 0; i < lateGenerator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = lateGenerator.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId &&
+                rejection.Reason == CandidateGenerator.RejectionRolledPastPromise) refusedForTheRoll = true;
+        }
+        Assert.True(refusedForTheRoll,
+            "a promised ball rolled past the catch radius at the meet must be refused with the shared reason");
+        Assert.DoesNotContain(lateGenerator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == CandidateGenerator.RunPassTag);
     }
 
     // =============================================================================================
@@ -648,6 +1085,16 @@ public sealed class Aib3PassPhysicsTests
         {
             Capability = CapabilityEstimate.Generic
         };
+
+    /// <summary>
+    /// An opponent sighted with a large positional doubt: 7.0 m is the worst case
+    /// (<see cref="PassSuccessModel.UncertaintyArrivalSecondsPerMeter"/> x 7 = 0.35 s, the
+    /// <see cref="PassSuccessModel.MaxUncertaintySeconds"/> cap), so the estimator's congestion window sees him
+    /// up to a third of a second earlier than a fresh sighting. Used by the A1 congestion-window fixture to
+    /// put a late contestor inside the receiver-instant window while the race gate still accepts the probe.
+    /// </summary>
+    private static PerceivedEntity DoubtedOpponent(int id, Vector2 position) =>
+        Opponent(id, position, Vector2.Zero) with { PositionUncertaintyMeters = 7f };
 
     private static PerceivedEntity Mate(Vector2 position) =>
         new(MateId, TeamId.Home, TacticalRole.CentralMidfielder,
