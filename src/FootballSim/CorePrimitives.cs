@@ -763,12 +763,34 @@ public enum TeamId
 /// differ from version 60 wherever a long ball or a mid/long-range lane question decided; the 1500-tick drift
 /// fingerprint is unchanged (that window contains no affected decision) and stays at its <c>ai60</c>
 /// capture.</item>
+/// <item><c>AiBehaviour 62</c> — the 2026-11-24 reach-model and carrier-perception fixes
+/// (<c>docs/task-reach-and-carrier-perception-fixes.md</c>, report
+/// <c>docs/Bug_Fixes_2026-11-24_ReachAndPerception.md</c>): why the ai60/ai61 pass fixes left the rendered
+/// opening interceptions unchanged. (1) <b><see cref="AI.TimeToReachModel"/> no longer declares a body running
+/// diagonally unreachable</b>: the closed-form trajectory ramps the velocity toward the aim line but then cruises
+/// <i>along that line</i>, so any initial velocity perpendicular to it left uncorrected lateral drift — for a
+/// runner not already collinear with the target the drift exceeds the contact reach and the query returned the
+/// horizon as "unreachable". A defender running (−7.94, −1.35) 5.8 m from the interception point, or (−2.72,
+/// −1.98) 3.2 m from the arrival, was therefore deleted from the lane test, the arrival race and the space-race
+/// gate all at once. Collinear starts keep the exact closed form (bit-identical 1D behaviour, O(1) stationary
+/// queries); non-collinear ones integrate the real <c>StepPlayerLocomotion</c> steering law at a 50 ms step with
+/// a refined arrival, validated against actual locomotion on perpendicular, diagonal and reversing sprints.
+/// (2) <b>The carrier's ground pass charges sighting doubt in the corridor</b>:
+/// <see cref="AI.CandidateGenerator.TryAddGroundPass"/> now asks <c>EvaluateLaneClearance</c> for
+/// <c>chargeUncertainty: true</c>, matching the shallow search and the run-region passes — a stale presser
+/// 2.37 m off the lane with 1.49 m of positional doubt scored the corridor 1.000 and a 0.92-completion ball
+/// through him. (3) <b>The lane step-in charges the same doubt as the arrival term</b>: Check 3 of
+/// <see cref="AI.PassSuccessModel.IsLaneBlocked"/> credits a remembered defender's step-in with the bounded
+/// <c>UncertaintyArrivalSecondsPerMeter</c> time the completion's defender term already charges, so the two
+/// halves of the same lane question agree about a stale sighting. Trajectories differ from version 61 wherever a
+/// lane, arrival race, space race or the carrier's pass choice read a defender's momentum or a remembered
+/// position.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 61;
+    public const int AiBehaviour = 62;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

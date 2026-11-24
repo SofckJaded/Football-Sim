@@ -143,11 +143,18 @@ public readonly record struct ReachEstimate(
 ///   <see cref="ReachKinematics.ReachRadius"/>.</item>
 /// </list>
 ///
-/// The trajectory is closed form for a constant desired direction, so a query costs a few dozen
-/// multiply-adds instead of simulating every candidate at 60 Hz. That is a deliberate approximation:
-/// real steering re-aims at the target every tick, which curves the path slightly when the player
-/// starts badly off line. The property that matters for elections is ordering, and the tests compare
-/// the model against actual locomotion on the cases where steering barely curves.
+/// <b>ai62 — two solvers, one model.</b> The closed form (<see cref="Trajectory"/>) is correct when the
+/// initial velocity is collinear with the aim: the velocity ramp stays on the aim line and the player
+/// then cruises along it. It is <i>wrong</i> for any non-collinear start — the velocity delta has a
+/// lateral component, so during the ramp the player drifts sideways and then cruises parallel to the
+/// aim line forever, never steering back. Every opponent running diagonally was therefore declared
+/// unreachable (the 2026-11-24 opening-pass interceptions: a presser 5.8 m from the interception point
+/// returned the 2.5 s horizon), which silently deleted him from the pass-lane test, the arrival race and
+/// the space-race gate. The fix keeps the closed-form path for collinear starts (bit-identical 1D
+/// behaviour, O(1) stationary queries) and integrates the real steering law at a fixed 50 ms step for
+/// non-collinear ones, mirroring <c>StepPlayerLocomotion</c> exactly. That is a deliberate approximation
+/// of the real 60 Hz loop: the tests compare it against actual locomotion on perpendicular, diagonal and
+/// reversing sprints, and the property that matters for elections is ordering.
 /// </summary>
 public static class TimeToReachModel
 {
@@ -156,6 +163,22 @@ public static class TimeToReachModel
 
     /// <summary>Stamina below which the locomotion model stops paying for fatigue (matches execution).</summary>
     public const float MinFatigueStamina = 0.15f;
+
+    /// <summary>
+    /// Initial perpendicular speed, in m/s, below which the closed-form path is exact enough: the start
+    /// is treated as collinear (ai62). 0.25 m/s crosses a 1.24 m reach in 5 s, far beyond any ramp.
+    /// </summary>
+    public const float CollinearPerpSpeedMetersPerSecond = 0.25f;
+
+    /// <summary>
+    /// Fixed integration step of the steering solver, in seconds (ai62): three 60 Hz simulation ticks.
+    /// The brief's recommended step; the arrival within the final step is refined by
+    /// <see cref="SteeringRefineSubSteps"/> sub-steps, so the reported time is finer than this grid.
+    /// </summary>
+    public const float SteeringStepSeconds = 0.05f;
+
+    /// <summary>Sub-steps used to locate the arrival inside the final 50 ms step (ai62).</summary>
+    private const int SteeringRefineSubSteps = 5;
 
     /// <summary>Below this speed a player is treated as standing still (numerical, not tactical).</summary>
     private const float MinSpeed = 0.25f;
@@ -312,6 +335,14 @@ public static class TimeToReachModel
         // that line — a lateral runner simply moves away from it.
         Vector2 aim = LeadPursuitPoint(state, targetXZ, targetVelocityXZ, horizon, sprint);
 
+        // ai62: with sideways momentum the closed form cannot steer onto the target line, so the whole
+        // lead-refinement loop below is wasted work — one steering integration is the answer.
+        if (NeedsSteering(state, aim, velocity, reach, sprint))
+        {
+            return SolveBySteering(
+                state, aim, targetXZ, targetVelocityXZ, horizon, reach, sprint);
+        }
+
         for (int i = 0; i < InterceptRefinements; i++)
         {
             ReachEstimate toAim = SolveToward(
@@ -354,6 +385,15 @@ public static class TimeToReachModel
         float horizon,
         bool sprint)
     {
+        // ai62: a body whose momentum is not aligned with the aim cannot be described by the closed
+        // form — the ramp carries it sideways and the cruise never steers back. Integrate the real
+        // steering law instead (this is the ToPoint / stationary-point path and the aim refinement of
+        // a moving-target intercept).
+        if (NeedsSteering(state, aimXZ, velocity, reach, sprint))
+        {
+            return SolveBySteering(state, aimXZ, targetXZ, targetVelocityXZ, horizon, reach, sprint);
+        }
+
         // Two passes: the turn cost needs a trip length, and the trip length depends on the turn cost.
         // Solving with the optimistic (aligned) speed first gives a length to average the turn over;
         // the second pass uses it. One correction is enough because the cap moves at most 15 %.
@@ -373,6 +413,193 @@ public static class TimeToReachModel
             return ReachEstimate.Unreachable(horizon);
 
         return FindArrival(trajectory, targetXZ, targetVelocityXZ, reach, horizon);
+    }
+
+    /// <summary>
+    /// ai62: true when the closed-form trajectory cannot answer this query honestly — the initial
+    /// velocity has enough momentum perpendicular to the aim that the ramp's lateral drift would exceed
+    /// a quarter of the contact reach. The closed form never steers the drift out, so past that point it
+    /// cruises parallel to the aim line and reports a false unreachable.
+    ///
+    /// The threshold is deliberately generous to the closed form: a collinear start (the 1D tests, a
+    /// stationary player, a player already running at the target) keeps the exact pre-ai62 path and
+    /// therefore bit-identical answers. The drift estimate uses the same acceleration the closed form
+    /// would use, so a fast body whose velocity delta is tiny also stays closed form.
+    /// </summary>
+    private static bool NeedsSteering(
+        in ReachKinematics state,
+        Vector2 aimXZ,
+        Vector2 velocity,
+        float reach,
+        bool sprint)
+    {
+        float speed = velocity.Length();
+        if (speed < MinSpeed) return false;
+
+        Vector2 toAim = aimXZ - state.PositionXZ;
+        float distance = toAim.Length();
+        if (!float.IsFinite(distance) || distance <= 1e-4f) return false;
+
+        Vector2 direction = toAim / distance;
+        float perpSpeed = MathF.Abs(velocity.X * (-direction.Y) + velocity.Y * direction.X);
+        if (perpSpeed <= CollinearPerpSpeedMetersPerSecond) return false;
+
+        Vector2 desiredVelocity = direction * SpeedCap(state, sprint);
+        Vector2 delta = desiredVelocity - velocity;
+        bool braking = Vector2.Dot(desiredVelocity, velocity) < 0f ||
+                       desiredVelocity.LengthSquared() < velocity.LengthSquared();
+        float balance = float.IsFinite(state.Balance01) ? Math.Clamp(state.Balance01, 0.2f, 1f) : 1f;
+        float acceleration = (float.IsFinite(state.Acceleration) ? MathF.Max(0.5f, state.Acceleration) : 6.8f)
+                             * (braking ? 1.45f : 1.15f) * balance;
+        acceleration = MathF.Max(MinAcceleration, acceleration);
+        float rampSeconds = delta.Length() / acceleration;
+        float lateralDrift = 0.5f * perpSpeed * rampSeconds;
+        return lateralDrift > 0.25f * reach;
+    }
+
+    /// <summary>
+    /// ai62: the steering solve for a body whose momentum is not aligned with the aim. Integrates the
+    /// same law <c>StepPlayerLocomotion</c> executes every tick — face-step toward the desired direction,
+    /// cap scaled by alignment, velocity moved at the braking/accelerating acceleration toward the cap —
+    /// at <see cref="SteeringStepSeconds"/> per step, and tests contact reach against the target's own
+    /// position at each instant.
+    ///
+    /// A stationary target is steered at <paramref name="aimXZ"/> (the aim point of the caller's solve);
+    /// a moving target is pursued at its live position, which is what a real chaser does and what makes
+    /// the ramp's lateral momentum get steered out instead of carried past the line. The final
+    /// 50 ms step is refined by <see cref="SteeringRefineSubSteps"/> sub-steps, so the reported time is
+    /// accurate well inside the 0.10 s locomotion tolerance. Deterministic and allocation-free: a
+    /// fixed-size loop over value types only.
+    /// </summary>
+    private static ReachEstimate SolveBySteering(
+        in ReachKinematics state,
+        Vector2 aimXZ,
+        Vector2 targetXZ,
+        Vector2 targetVelocityXZ,
+        float horizon,
+        float reach,
+        bool sprint)
+    {
+        Vector2 position = state.PositionXZ;
+        Vector2 velocity = SimMath.IsFinite(state.VelocityXZ) ? state.VelocityXZ : Vector2.Zero;
+        if (velocity.Length() < MinSpeed) velocity = Vector2.Zero;
+
+        bool movingTarget = targetVelocityXZ.LengthSquared() > MinMovingTargetSpeedSquared;
+        Vector2 steerXZ = movingTarget ? targetXZ : aimXZ;
+        Vector2 desiredDirection = SimMath.SafeNormalize(
+            steerXZ - position,
+            SimMath.SafeNormalize(aimXZ - position, new Vector2(1f, 0f)));
+        Vector2 facing = SimMath.SafeNormalize(
+            state.FacingXZ, SimMath.SafeNormalize(velocity, desiredDirection));
+
+        float baseCap = SpeedCap(state, sprint);
+        float balance = float.IsFinite(state.Balance01) ? Math.Clamp(state.Balance01, 0.2f, 1f) : 1f;
+        float accelerationBase = (float.IsFinite(state.Acceleration) ? MathF.Max(0.5f, state.Acceleration) : 6.8f)
+                                 * balance;
+        accelerationBase = MathF.Max(MinAcceleration, accelerationBase);
+        float turnRateBase = MathF.Max(MinTurnRate,
+            (float.IsFinite(state.AgilityTurnRate) ? state.AgilityTurnRate : 9.5f) * 1.25f);
+        float maxSprintSpeed = float.IsFinite(state.MaxSprintSpeed) ? MathF.Max(0.5f, state.MaxSprintSpeed) : 8.4f;
+
+        // Cheap impossibility floor before any stepping: a player can never move further than
+        // max(current speed, cap) x horizon, and the target can only come targetSpeed x horizon closer.
+        float targetSpeed = targetVelocityXZ.Length();
+        float maxTravel = MathF.Max(velocity.Length(), baseCap) * horizon + 0.5f;
+        if (Vector2.Distance(position, targetXZ) > maxTravel + targetSpeed * horizon + reach)
+            return ReachEstimate.Unreachable(horizon);
+
+        float previousT = 0f;
+        while (previousT < horizon - 1e-4f)
+        {
+            float stepSeconds = MathF.Min(SteeringStepSeconds, horizon - previousT);
+            Vector2 previousPosition = position;
+            Vector2 previousVelocity = velocity;
+            Vector2 previousFacing = facing;
+
+            Vector2 stepSteer = movingTarget
+                ? targetXZ + targetVelocityXZ * previousT
+                : steerXZ;
+            StepSteering(
+                ref position, ref velocity, ref facing, stepSteer, stepSeconds,
+                baseCap, accelerationBase, turnRateBase, maxSprintSpeed);
+
+            float stepT = previousT + stepSeconds;
+            Vector2 targetAtStep = targetXZ + targetVelocityXZ * stepT;
+            if (Vector2.DistanceSquared(position, targetAtStep) <= reach * reach)
+            {
+                // Refine inside the step: re-integrate from the previous state with sub-steps. The
+                // sub-step trajectory is the same law on a finer grid, so it is within one arrival
+                // refinement of the real 60 Hz locomotion.
+                for (int sub = 1; sub <= SteeringRefineSubSteps; sub++)
+                {
+                    float subSeconds = stepSeconds * sub / SteeringRefineSubSteps;
+                    Vector2 subPosition = previousPosition;
+                    Vector2 subVelocity = previousVelocity;
+                    Vector2 subFacing = previousFacing;
+                    Vector2 subSteer = movingTarget
+                        ? targetXZ + targetVelocityXZ * previousT
+                        : steerXZ;
+                    StepSteering(
+                        ref subPosition, ref subVelocity, ref subFacing, subSteer, subSeconds,
+                        baseCap, accelerationBase, turnRateBase, maxSprintSpeed);
+                    Vector2 targetAtSub = targetXZ + targetVelocityXZ * (previousT + subSeconds);
+                    if (Vector2.DistanceSquared(subPosition, targetAtSub) > reach * reach) continue;
+
+                    float arrival = previousT + subSeconds;
+                    return new ReachEstimate(
+                        true, arrival, targetXZ + targetVelocityXZ * arrival, subVelocity.Length());
+                }
+
+                return new ReachEstimate(true, stepT, targetAtStep, velocity.Length());
+            }
+
+            previousT = stepT;
+        }
+
+        return ReachEstimate.Unreachable(horizon);
+    }
+
+    /// <summary>One fixed-step mirror of <c>StepPlayerLocomotion</c>'s steering for the reach model.</summary>
+    private static void StepSteering(
+        ref Vector2 position,
+        ref Vector2 velocity,
+        ref Vector2 facing,
+        Vector2 steerXZ,
+        float stepSeconds,
+        float baseCap,
+        float accelerationBase,
+        float turnRateBase,
+        float maxSprintSpeed)
+    {
+        Vector2 desiredDirection = SimMath.SafeNormalize(steerXZ - position, facing);
+
+        float speed = velocity.Length();
+        float speedRatio = maxSprintSpeed > 1e-3f ? speed / maxSprintSpeed : 0f;
+        float maxTurn = turnRateBase * (1f - 0.25f * speedRatio) * stepSeconds;
+        float currentAngle = MathF.Atan2(facing.Y, facing.X);
+        float targetAngle = MathF.Atan2(desiredDirection.Y, desiredDirection.X);
+        float turn = targetAngle - currentAngle;
+        while (turn > MathF.PI) turn -= 2f * MathF.PI;
+        while (turn < -MathF.PI) turn += 2f * MathF.PI;
+        float newAngle = currentAngle + Math.Clamp(turn, -maxTurn, maxTurn);
+        facing = new Vector2(MathF.Cos(newAngle), MathF.Sin(newAngle));
+
+        float alignment = Vector2.Dot(desiredDirection, facing);
+        float cap = baseCap * (0.85f + 0.15f * Math.Clamp(alignment, 0f, 1f));
+        Vector2 desiredVelocity = desiredDirection * cap;
+        Vector2 deltaV = desiredVelocity - velocity;
+        float deltaLength = deltaV.Length();
+        bool braking = Vector2.Dot(desiredVelocity, velocity) < 0f ||
+                       desiredVelocity.LengthSquared() < velocity.LengthSquared();
+        float maxDeltaV = accelerationBase * (braking ? 1.45f : 1.15f) * stepSeconds;
+
+        Vector2 previousVelocity = velocity;
+        velocity = deltaLength > maxDeltaV && deltaLength > 1e-5f
+            ? velocity + deltaV * (maxDeltaV / deltaLength)
+            : desiredVelocity;
+        // Trapezoidal step: the exact integral of a linear velocity change, so a 50 ms grid tracks the
+        // 60 Hz locomotion's position closely instead of leading or lagging it by half a step.
+        position += 0.5f * (previousVelocity + velocity) * stepSeconds;
     }
 
     /// <summary>

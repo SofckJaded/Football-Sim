@@ -1,0 +1,291 @@
+ai62 opening-pass diagnostic artifact (temporary probe class, removed from the tree before commit)
+version: ai62-rs1
+setup: Seed=20260818 PlayersPerTeam=11 HalfDurationSeconds=240f HumanPlayerId=null
+       Home=FootballSim.Core.TeamTacticalProfile Away=FootballSim.Core.TeamTacticalProfile
+ticks: 600   open-play passes recorded: 5
+analytics: home passes 3/2 away 2/2
+
+== PASS TABLE ==
+ #  tick  passer      receiver    intent        tag        ball(x,z)            target(x,z)          flight  p(trace)  lane  percBlock truthBlock  outcome(tick/player/team/kind)
+ 1     1   8(H)   9(H)  GroundPass    -          (   0.00,   0.00)  (    0.00,    0.00)   0.00  n/a  0.000  False     False      completed t=52 p9 Home Collection
+ 2   128   9(H)   8(H)  GroundPass    #8:ToFeet  (  -3.72,  -2.36)  (   10.82,   -8.50)   1.33  0.876  1.000  False     False      intercepted t=179 p21 Away Tackle
+ 3   185  21(A)  22(A)  ThroughPass   #22:ToRun  (   6.83,  -6.94)  (   -2.98,  -15.26)   1.20  0.865  1.000  False     False      completed t=231 p22 Away Collection
+ 4   267  22(A)  20(A)  ThroughPass   #20:ToRun  (  -3.77, -11.71)  (  -14.47,   -3.92)   1.18  0.677  0.650  False     False      completed t=431 p20 Away Collection
+ 5   456   5(H)   6(H)  GroundPass    #6:ToFeet  ( -24.57,   1.66)  (  -21.18,   -7.20)   0.82  0.892  1.000  False     False      completed t=494 p6 Home Collection
+
+== PASS DETAIL ==
+-- pass 1: t=1 #8(Home) -> #9(Home) intent=GroundPass tag=- traceKey=SetPieceRestart traceTick=1 obsTick=1
+   ball=(0.000,0.000) target=(0.000,0.000) power=0.800 flight=0.000 dist=0.000
+   traceP=n/a modelP=0.0000 lane=0.0000 launchDelay=0.000 perceivedBlocked=False perceivedBlockedNoLaunch=False truthBlocked=False
+   perceivedBlockers=- truthBlockers=-
+   arrivals=-
+   outcome=completed nextTouch t=52 player=9 team=Home kind=Collection
+   touchTrail=t52 Collection #9(Home) ball=(-12.31,0.21)
+   runPromise=-
+   SELF id=8 team=Home role=CentralMidfielder tick=1 pos=(-0.450,0.150) vel=(0.000,0.000) facing=(1.0000,0.0000) stamina=1.000 balance=1.000 control=0.000 profile=FootballSim.Core.TeamTacticalProfile job=BallResponder jobAnchor=<0, 0, 0> attackDir=1.0 phase=FirstHalf ball=(0.000,0.000) ballVel=(-0.001,-0.000) ballState=Loose possessing=Home lastTouch=/Home ctx=[Attacking/Loose/MiddleThird/None/False] rest=0.868
+   SELF ATTR speed=8.400 accel=6.800 turn=9.500 reach=0.750 staminaCap=1.000
+   VISIBLE (21):
+     # 1 Home Goalkeeper         pos=(-43.585,  0.297) vel=(  0.105, -0.001) unc=0.000 age=0 conf=0.33 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 2 Home FullBack           pos=(-34.936, 17.693) vel=(  0.061, -0.209) unc=0.000 age=0 conf=0.41 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 3 Home FullBack           pos=(-34.759,-17.316) vel=( -0.149,  0.014) unc=0.000 age=0 conf=0.40 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 4 Home CenterBack         pos=(-36.313,  6.245) vel=(  0.091, -0.089) unc=0.000 age=0 conf=0.44 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 5 Home CenterBack         pos=(-36.323, -6.210) vel=( -0.047,  0.009) unc=0.000 age=0 conf=0.44 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 6 Home DefensiveMidfielder pos=(-30.074, -0.182) vel=(  0.084, -0.130) unc=0.000 age=0 conf=0.55 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 7 Home Winger             pos=(-18.728, 18.323) vel=(  0.080,  0.052) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 9 Home Striker            pos=(-16.128,  0.003) vel=(  0.022, -0.017) unc=0.000 age=0 conf=0.76 cap=[8.50,7.00,9.50,0.75,0.80]
+     #10 Home CentralMidfielder  pos=(-24.641, -8.136) vel=( -0.050, -0.049) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     #11 Home Winger             pos=(-18.711,-18.430) vel=( -0.028, -0.022) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     #12 Away Goalkeeper         pos=( 43.799, -0.317) vel=(  0.004,  0.055) unc=0.000 age=0 conf=0.32 cap=[8.50,7.00,9.50,0.75,0.80]
+     #13 Away FullBack           pos=( 34.814, 17.747) vel=(  0.033,  0.084) unc=0.000 age=0 conf=0.39 cap=[8.50,7.00,9.50,0.75,0.80]
+     #14 Away FullBack           pos=( 34.967,-17.794) vel=(  0.089,  0.010) unc=0.000 age=0 conf=0.39 cap=[8.50,7.00,9.50,0.75,0.80]
+     #15 Away CenterBack         pos=( 36.070,  6.433) vel=( -0.034, -0.029) unc=0.000 age=0 conf=0.43 cap=[8.50,7.00,9.50,0.75,0.80]
+     #16 Away CenterBack         pos=( 36.064, -6.204) vel=(  0.074,  0.044) unc=0.000 age=0 conf=0.43 cap=[8.50,7.00,9.50,0.75,0.80]
+     #17 Away DefensiveMidfielder pos=( 30.052,  0.347) vel=(  0.030,  0.013) unc=0.000 age=0 conf=0.53 cap=[8.50,7.00,9.50,0.75,0.80]
+     #18 Away Winger             pos=( 18.861, 18.382) vel=(  0.031,  0.063) unc=0.000 age=0 conf=0.59 cap=[8.50,7.00,9.50,0.75,0.80]
+     #19 Away CentralMidfielder  pos=( 25.613,  8.733) vel=( -0.010,  0.130) unc=0.000 age=0 conf=0.58 cap=[8.50,7.00,9.50,0.75,0.80]
+     #20 Away Striker            pos=( 16.037, -0.097) vel=(  0.033, -0.041) unc=0.000 age=0 conf=0.74 cap=[8.50,7.00,9.50,0.75,0.80]
+     #21 Away CentralMidfielder  pos=( 24.774, -8.435) vel=( -0.112,  0.005) unc=0.000 age=0 conf=0.59 cap=[8.50,7.00,9.50,0.75,0.80]
+     #22 Away Winger             pos=( 18.751,-18.409) vel=(  0.016, -0.001) unc=0.000 age=0 conf=0.59 cap=[8.50,7.00,9.50,0.75,0.80]
+   TRUTH players:
+     # 1 Home Goalkeeper         pos=(-43.686,  0.000) vel=(  0.130,  0.000)
+     # 2 Home FullBack           pos=(-34.877, 17.626) vel=(  0.128,  0.025)
+     # 3 Home FullBack           pos=(-34.877,-17.626) vel=(  0.128, -0.025)
+     # 4 Home CenterBack         pos=(-36.189,  6.365) vel=(  0.130,  0.011)
+     # 5 Home CenterBack         pos=(-36.189, -6.365) vel=(  0.130, -0.011)
+     # 6 Home DefensiveMidfielder pos=(-30.004,  0.000) vel=(  0.130,  0.000)
+     # 7 Home Winger             pos=(-18.758, 18.360) vel=(  0.129,  0.016)
+     # 8 Home CentralMidfielder  pos=( -0.452,  0.150) vel=( -0.130, -0.000)
+     # 9 Home Striker            pos=(-16.134,  0.000) vel=(  0.130,  0.000)
+     #10 Home CentralMidfielder  pos=(-24.756, -8.323) vel=(  0.124,  0.042)
+     #11 Home Winger             pos=(-18.758,-18.360) vel=(  0.129, -0.015)
+     #12 Away Goalkeeper         pos=( 43.690,  0.000) vel=(  0.130,  0.000)
+     #13 Away FullBack           pos=( 34.877, 17.625) vel=( -0.126, -0.033)
+     #14 Away FullBack           pos=( 34.877,-17.625) vel=( -0.126,  0.033)
+     #15 Away CenterBack         pos=( 36.189,  6.365) vel=( -0.130, -0.009)
+     #16 Away CenterBack         pos=( 36.189, -6.365) vel=( -0.130,  0.009)
+     #17 Away DefensiveMidfielder pos=( 30.004,  0.000) vel=( -0.130,  0.000)
+     #18 Away Winger             pos=( 18.758, 18.360) vel=( -0.128, -0.024)
+     #19 Away CentralMidfielder  pos=( 25.505,  8.323) vel=( -0.130, -0.012)
+     #20 Away Striker            pos=( 16.134,  0.000) vel=( -0.130,  0.000)
+     #21 Away CentralMidfielder  pos=( 24.756, -8.323) vel=( -0.130,  0.012)
+     #22 Away Winger             pos=( 18.758,-18.360) vel=( -0.128,  0.024)
+-- pass 2: t=128 #9(Home) -> #8(Home) intent=GroundPass tag=#8:ToFeet traceKey=Pass:#8:ToFeet traceTick=128 obsTick=128
+   ball=(-3.724,-2.358) target=(10.822,-8.501) power=0.700 flight=1.333 dist=15.790
+   traceP=0.8762 modelP=0.8762 lane=1.0000 launchDelay=0.092 perceivedBlocked=False perceivedBlockedNoLaunch=False truthBlocked=False
+   perceivedBlockers=- truthBlockers=-
+   arrivals=#17:1.35 
+   outcome=intercepted nextTouch t=179 player=21 team=Away kind=Tackle
+   touchTrail=t179 Tackle #21(Away) ball=(7.22,-6.72)
+   runPromise=InBehind meet=(11.571,-8.998) r=5.000 meetTick=135 arrive=0.1167 conf=1.0000 promise01=1.0000 pubTick=7 visibleTick=25 expiresTick=195
+   SELF id=9 team=Home role=Striker tick=128 pos=(-3.988,-1.777) vel=(5.675,-4.902) facing=(0.3207,-0.9472) stamina=0.986 balance=1.000 control=0.745 profile=FootballSim.Core.TeamTacticalProfile job=BallResponder jobAnchor=<26.642721, 0, -0.16902435> attackDir=1.0 phase=FirstHalf ball=(-3.696,-2.303) ballVel=(6.089,-4.206) ballState=Controlled possessing=Home lastTouch=9/Home ctx=[Attacking/Controlled/MiddleThird/None/False] rest=0.738
+   SELF ATTR speed=8.400 accel=6.800 turn=9.500 reach=0.750 staminaCap=1.000
+   VISIBLE (21):
+     # 1 Home Goalkeeper         pos=(-39.851, -0.608) vel=(  1.956, -1.696) unc=0.000 age=0 conf=0.45 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 2 Home FullBack           pos=(-22.621, 20.287) vel=(  7.650,  1.390) unc=0.000 age=0 conf=0.56 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 3 Home FullBack           pos=(-22.564,-20.286) vel=(  7.559, -1.567) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 4 Home CenterBack         pos=(-23.260,  7.989) vel=(  8.123,  0.954) unc=0.000 age=0 conf=0.67 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 5 Home CenterBack         pos=(-23.142, -7.983) vel=(  8.160, -0.811) unc=0.000 age=0 conf=0.69 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 6 Home DefensiveMidfielder pos=(-22.636,  0.160) vel=(  4.615,  0.064) unc=0.000 age=0 conf=0.71 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 7 Home Winger             pos=( -7.027, 19.873) vel=(  7.125,  0.832) unc=0.000 age=0 conf=0.67 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 8 Home CentralMidfielder  pos=(  8.839, -6.979) vel=(  5.598, -4.295) unc=0.000 age=0 conf=0.79 cap=[8.50,7.00,9.50,0.75,0.80]
+     #10 Home CentralMidfielder  pos=(-15.018, -5.095) vel=(  3.219,  1.107) unc=0.000 age=0 conf=0.82 cap=[8.50,7.00,9.50,0.75,0.80]
+     #11 Home Winger             pos=(-10.500,-26.744) vel=(  4.839, -5.188) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     #12 Away Goalkeeper         pos=( 48.485, -0.239) vel=( -0.297, -0.417) unc=0.000 age=0 conf=0.20 cap=[8.50,7.00,9.50,0.75,0.80]
+     #13 Away FullBack           pos=( 24.624, 14.375) vel=( -5.600, -1.239) unc=0.440 age=6 conf=0.46 cap=[8.50,7.00,9.50,0.75,0.80]
+     #14 Away FullBack           pos=( 24.579,-14.469) vel=( -6.400,  2.095) unc=0.000 age=0 conf=0.52 cap=[8.50,7.00,9.50,0.75,0.80]
+     #15 Away CenterBack         pos=( 25.332,  5.641) vel=( -5.875, -0.400) unc=0.440 age=6 conf=0.50 cap=[8.50,7.00,9.50,0.75,0.80]
+     #16 Away CenterBack         pos=( 25.440, -5.439) vel=( -6.223,  0.578) unc=0.000 age=0 conf=0.55 cap=[8.50,7.00,9.50,0.75,0.80]
+     #17 Away DefensiveMidfielder pos=( 17.828, -0.139) vel=( -4.920, -1.046) unc=0.000 age=0 conf=0.66 cap=[8.50,7.00,9.50,0.75,0.80]
+     #18 Away Winger             pos=(  6.249, 16.105) vel=( -6.869, -1.311) unc=0.767 age=20 conf=0.58 cap=[8.50,7.00,9.50,0.75,0.80]
+     #19 Away CentralMidfielder  pos=( 15.526,  4.761) vel=( -4.977, -3.787) unc=0.000 age=0 conf=0.68 cap=[8.50,7.00,9.50,0.75,0.80]
+     #20 Away Striker            pos=(  2.842, -0.146) vel=( -8.310, -0.135) unc=0.000 age=0 conf=0.89 cap=[8.50,7.00,9.50,0.75,0.80]
+     #21 Away CentralMidfielder  pos=( 14.095, -6.125) vel=( -6.154,  0.954) unc=0.000 age=0 conf=0.71 cap=[8.50,7.00,9.50,0.75,0.80]
+     #22 Away Winger             pos=(  5.882,-16.170) vel=( -7.849,  1.232) unc=0.000 age=0 conf=0.73 cap=[8.50,7.00,9.50,0.75,0.80]
+   TRUTH players:
+     # 1 Home Goalkeeper         pos=(-39.875, -0.548) vel=(  1.838, -1.566)
+     # 2 Home FullBack           pos=(-22.362, 20.233) vel=(  7.568,  1.409)
+     # 3 Home FullBack           pos=(-22.351,-20.279) vel=(  7.626, -1.606)
+     # 4 Home CenterBack         pos=(-23.037,  7.964) vel=(  8.082,  0.848)
+     # 5 Home CenterBack         pos=(-23.006, -7.938) vel=(  8.113, -0.689)
+     # 6 Home DefensiveMidfielder pos=(-22.526,  0.122) vel=(  4.807,  0.055)
+     # 7 Home Winger             pos=( -6.779, 19.780) vel=(  7.072,  0.829)
+     # 8 Home CentralMidfielder  pos=(  8.922, -6.961) vel=(  5.553, -4.270)
+     # 9 Home Striker            pos=( -3.894, -1.856) vel=(  5.668, -4.738)
+     #10 Home CentralMidfielder  pos=(-14.969, -5.032) vel=(  3.151,  1.059)
+     #11 Home Winger             pos=(-10.549,-26.859) vel=(  4.814, -5.200)
+     #12 Away Goalkeeper         pos=( 48.373, -0.049) vel=( -0.342, -0.554)
+     #13 Away FullBack           pos=( 24.578, 14.580) vel=( -4.624, -1.104)
+     #14 Away FullBack           pos=( 24.409,-14.485) vel=( -6.353,  2.171)
+     #15 Away CenterBack         pos=( 25.135,  5.454) vel=( -6.251, -0.521)
+     #16 Away CenterBack         pos=( 25.133, -5.454) vel=( -6.266,  0.523)
+     #17 Away DefensiveMidfielder pos=( 17.723, -0.208) vel=( -4.809, -1.051)
+     #18 Away Winger             pos=(  5.798, 16.086) vel=( -7.713, -1.613)
+     #19 Away CentralMidfielder  pos=( 15.342,  4.747) vel=( -4.959, -3.805)
+     #20 Away Striker            pos=(  2.750, -0.121) vel=( -8.280, -0.125)
+     #21 Away CentralMidfielder  pos=( 13.927, -6.172) vel=( -6.218,  0.911)
+     #22 Away Winger             pos=(  5.776,-16.157) vel=( -7.853,  1.234)
+-- pass 3: t=185 #21(Away) -> #22(Away) intent=ThroughPass tag=#22:ToRun traceKey=Pass:#22:ToRun traceTick=185 obsTick=185
+   ball=(6.832,-6.935) target=(-2.979,-15.256) power=0.550 flight=1.200 dist=12.864
+   traceP=0.8649 modelP=0.8649 lane=1.0000 launchDelay=0.050 perceivedBlocked=False perceivedBlockedNoLaunch=False truthBlocked=False
+   perceivedBlockers=- truthBlockers=-
+   arrivals=-
+   outcome=completed nextTouch t=231 player=22 team=Away kind=Collection
+   touchTrail=t231 Collection #22(Away) ball=(-0.24,-12.99)
+   runPromise=-
+   SELF id=21 team=Away role=CentralMidfielder tick=185 pos=(7.029,-6.788) vel=(-7.189,-2.239) facing=(-0.6080,-0.7939) stamina=0.985 balance=1.000 control=0.859 profile=FootballSim.Core.TeamTacticalProfile job=BallResponder jobAnchor=<7.829702, 0, -7.414907> attackDir=-1.0 phase=FirstHalf ball=(6.730,-6.863) ballVel=(-4.915,-1.450) ballState=Controlled possessing=Away lastTouch=21/Away ctx=[Attacking/Controlled/MiddleThird/CounterAttack/False] rest=0.719
+   SELF ATTR speed=8.400 accel=6.800 turn=9.500 reach=0.750 staminaCap=1.000
+   VISIBLE (21):
+     # 1 Home Goalkeeper         pos=(-37.873, -1.258) vel=(  1.930, -1.082) unc=0.000 age=0 conf=0.31 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 2 Home FullBack           pos=(-15.091, 21.213) vel=(  6.851,  0.876) unc=0.323 age=1 conf=0.44 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 3 Home FullBack           pos=(-15.240,-21.578) vel=(  6.952, -1.594) unc=0.000 age=0 conf=0.59 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 4 Home CenterBack         pos=(-16.851,  8.623) vel=(  5.885,  0.182) unc=0.440 age=6 conf=0.53 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 5 Home CenterBack         pos=(-17.973, -6.041) vel=(  2.966,  2.052) unc=0.000 age=0 conf=0.62 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 6 Home DefensiveMidfielder pos=(-15.595,  0.706) vel=(  7.699,  0.851) unc=0.000 age=0 conf=0.63 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 7 Home Winger             pos=( -2.924, 22.480) vel=(  1.495,  4.127) unc=0.370 age=3 conf=0.52 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 8 Home CentralMidfielder  pos=( 10.847, -8.930) vel=(  0.128,  1.044) unc=0.000 age=0 conf=0.93 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 9 Home Striker            pos=(  2.717, -3.982) vel=(  6.368, -0.576) unc=0.000 age=0 conf=0.92 cap=[8.50,7.00,9.50,0.75,0.80]
+     #10 Home CentralMidfielder  pos=(-13.055, -4.554) vel=(  2.674, -0.069) unc=0.000 age=0 conf=0.69 cap=[8.50,7.00,9.50,0.75,0.80]
+     #11 Home Winger             pos=( -4.779,-29.115) vel=(  7.401,  0.856) unc=0.000 age=0 conf=0.61 cap=[8.50,7.00,9.50,0.75,0.80]
+     #12 Away Goalkeeper         pos=( 48.165, -0.470) vel=( -0.571, -0.957) unc=0.000 age=0 conf=0.36 cap=[8.50,7.00,9.50,0.75,0.80]
+     #13 Away FullBack           pos=( 22.112, 14.094) vel=(  0.069,  0.256) unc=0.000 age=0 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     #14 Away FullBack           pos=( 19.214,-13.444) vel=( -2.868, -0.927) unc=0.000 age=0 conf=0.79 cap=[8.50,7.00,9.50,0.75,0.80]
+     #15 Away CenterBack         pos=( 20.481,  4.960) vel=( -1.793, -0.042) unc=0.000 age=0 conf=0.72 cap=[8.50,7.00,9.50,0.75,0.80]
+     #16 Away CenterBack         pos=( 19.421, -6.052) vel=( -5.430, -1.123) unc=0.000 age=0 conf=0.81 cap=[8.50,7.00,9.50,0.75,0.80]
+     #17 Away DefensiveMidfielder pos=( 15.498, -1.548) vel=( -1.490, -0.505) unc=0.000 age=0 conf=0.85 cap=[8.50,7.00,9.50,0.75,0.80]
+     #18 Away Winger             pos=(  0.971, 14.787) vel=( -2.410, -0.715) unc=0.000 age=0 conf=0.66 cap=[8.50,7.00,9.50,0.75,0.80]
+     #19 Away CentralMidfielder  pos=( 10.526,  4.541) vel=( -5.032,  2.347) unc=0.000 age=0 conf=0.82 cap=[8.50,7.00,9.50,0.75,0.80]
+     #20 Away Striker            pos=( -2.341, -0.525) vel=( -3.459, -0.444) unc=0.000 age=0 conf=0.83 cap=[8.50,7.00,9.50,0.75,0.80]
+     #22 Away Winger             pos=(  1.013,-15.504) vel=( -3.043,  0.189) unc=0.000 age=0 conf=0.84 cap=[8.50,7.00,9.50,0.75,0.80]
+   TRUTH players:
+     # 1 Home Goalkeeper         pos=(-37.628, -1.562) vel=(  1.714, -0.949)
+     # 2 Home FullBack           pos=(-15.181, 21.288) vel=(  6.533,  0.889)
+     # 3 Home FullBack           pos=(-15.057,-21.786) vel=(  6.963, -1.481)
+     # 4 Home CenterBack         pos=(-16.962,  8.285) vel=(  5.101,  0.226)
+     # 5 Home CenterBack         pos=(-17.820, -5.911) vel=(  2.870,  1.913)
+     # 6 Home DefensiveMidfielder pos=(-15.498,  0.665) vel=(  7.521,  0.707)
+     # 7 Home Winger             pos=( -2.998, 22.422) vel=(  1.879,  3.577)
+     # 8 Home CentralMidfielder  pos=( 10.882, -8.906) vel=(  0.008,  1.103)
+     # 9 Home Striker            pos=(  2.818, -4.011) vel=(  6.426, -0.453)
+     #10 Home CentralMidfielder  pos=(-12.999, -4.486) vel=(  2.767, -0.018)
+     #11 Home Winger             pos=( -4.709,-28.971) vel=(  7.335,  1.065)
+     #12 Away Goalkeeper         pos=( 48.292, -0.557) vel=( -0.692, -0.856)
+     #13 Away FullBack           pos=( 21.988, 14.093) vel=( -0.054,  0.361)
+     #14 Away FullBack           pos=( 19.122,-13.565) vel=( -2.804, -1.044)
+     #15 Away CenterBack         pos=( 20.412,  5.132) vel=( -1.598,  0.042)
+     #16 Away CenterBack         pos=( 19.266, -6.008) vel=( -5.269, -1.059)
+     #17 Away DefensiveMidfielder pos=( 15.365, -1.472) vel=( -1.495, -0.355)
+     #18 Away Winger             pos=(  1.002, 14.586) vel=( -2.352, -0.509)
+     #19 Away CentralMidfielder  pos=( 10.409,  4.599) vel=( -5.130,  2.309)
+     #20 Away Striker            pos=( -2.360, -0.493) vel=( -3.601, -0.468)
+     #21 Away CentralMidfielder  pos=(  6.912, -6.826) vel=( -7.046, -2.320)
+     #22 Away Winger             pos=(  0.991,-15.515) vel=( -3.181,  0.195)
+-- pass 4: t=267 #22(Away) -> #20(Away) intent=ThroughPass tag=#20:ToRun traceKey=Pass:#20:ToRun traceTick=267 obsTick=267
+   ball=(-3.772,-11.712) target=(-14.471,-3.921) power=0.600 flight=1.183 dist=13.236
+   traceP=0.6769 modelP=0.6763 lane=0.6499 launchDelay=0.071 perceivedBlocked=False perceivedBlockedNoLaunch=False truthBlocked=False
+   perceivedBlockers=- truthBlockers=-
+   arrivals=#5:1.21 #6:1.35 
+   outcome=completed nextTouch t=431 player=20 team=Away kind=Collection
+   touchTrail=t431 Collection #20(Away) ball=(-22.21,1.59)
+   runPromise=-
+   SELF id=22 team=Away role=Winger tick=267 pos=(-3.270,-11.691) vel=(-5.004,0.994) facing=(-0.9962,-0.0868) stamina=0.972 balance=1.000 control=0.788 profile=FootballSim.Core.TeamTacticalProfile job=BallResponder jobAnchor=<-15.259888, 0, -22.621304> attackDir=-1.0 phase=FirstHalf ball=(-3.741,-11.671) ballVel=(-4.593,1.580) ballState=Controlled possessing=Away lastTouch=22/Away ctx=[Attacking/Controlled/MiddleThird/CounterAttack/False] rest=0.617
+   SELF ATTR speed=8.400 accel=6.800 turn=9.500 reach=0.750 staminaCap=1.000
+   VISIBLE (21):
+     # 1 Home Goalkeeper         pos=(-42.681, -1.543) vel=( -7.230,  0.586) unc=0.000 age=0 conf=0.37 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 2 Home FullBack           pos=(-13.491, 22.140) vel=( -1.086,  0.057) unc=0.000 age=0 conf=0.46 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 3 Home FullBack           pos=( -7.454,-17.892) vel=(  1.577,  4.530) unc=0.000 age=0 conf=0.88 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 4 Home CenterBack         pos=(-13.273,  7.699) vel=(  2.358, -0.149) unc=0.347 age=2 conf=0.65 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 5 Home CenterBack         pos=(-15.436, -6.673) vel=(  4.785, -0.932) unc=0.000 age=0 conf=0.80 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 6 Home DefensiveMidfielder pos=( -7.940, -0.458) vel=(  1.500, -2.270) unc=0.000 age=0 conf=0.81 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 7 Home Winger             pos=(  2.443, 21.112) vel=(  4.643, -3.363) unc=0.743 age=19 conf=0.41 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 8 Home CentralMidfielder  pos=(  7.148, -3.852) vel=( -3.611,  4.125) unc=1.070 age=33 conf=0.66 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 9 Home Striker            pos=(  8.810, -0.224) vel=(  2.460,  3.601) unc=1.047 age=32 conf=0.65 cap=[8.50,7.00,9.50,0.75,0.80]
+     #10 Home CentralMidfielder  pos=( -5.496, -8.276) vel=(  4.203, -4.633) unc=0.000 age=0 conf=0.94 cap=[8.50,7.00,9.50,0.75,0.80]
+     #11 Home Winger             pos=(  3.035,-22.991) vel=(  4.694,  4.876) unc=0.813 age=22 conf=0.70 cap=[8.50,7.00,9.50,0.75,0.80]
+     #12 Away Goalkeeper         pos=( 40.839, -2.422) vel=( -8.286, -1.508) unc=0.000 age=0 conf=0.31 cap=[8.50,7.00,9.50,0.75,0.80]
+     #13 Away FullBack           pos=( 18.846, 18.319) vel=( -2.796,  2.592) unc=0.000 age=0 conf=0.43 cap=[8.50,7.00,9.50,0.75,0.80]
+     #14 Away FullBack           pos=( 17.329,-19.272) vel=( -1.236, -3.816) unc=0.000 age=0 conf=0.66 cap=[8.50,7.00,9.50,0.75,0.80]
+     #15 Away CenterBack         pos=( 20.479,  6.575) vel=( -1.998,  0.589) unc=0.000 age=0 conf=0.54 cap=[8.50,7.00,9.50,0.75,0.80]
+     #16 Away CenterBack         pos=( 15.843, -6.549) vel=( -4.513, -2.668) unc=0.000 age=0 conf=0.69 cap=[8.50,7.00,9.50,0.75,0.80]
+     #17 Away DefensiveMidfielder pos=( 12.676,  1.365) vel=( -4.135,  0.046) unc=0.000 age=0 conf=0.68 cap=[8.50,7.00,9.50,0.75,0.80]
+     #18 Away Winger             pos=( -0.331, 19.580) vel=( -0.340,  5.475) unc=0.000 age=0 conf=0.52 cap=[8.50,7.00,9.50,0.75,0.80]
+     #19 Away CentralMidfielder  pos=(  2.904,  4.437) vel=( -2.253, -2.748) unc=0.000 age=0 conf=0.73 cap=[8.50,7.00,9.50,0.75,0.80]
+     #20 Away Striker            pos=(-10.760, -2.428) vel=( -6.343, -2.551) unc=0.000 age=0 conf=0.82 cap=[8.50,7.00,9.50,0.75,0.80]
+     #21 Away CentralMidfielder  pos=( -2.637, -9.415) vel=( -7.728, -1.237) unc=0.000 age=0 conf=0.96 cap=[8.50,7.00,9.50,0.75,0.80]
+   TRUTH players:
+     # 1 Home Goalkeeper         pos=(-42.727, -1.501) vel=( -7.073,  0.651)
+     # 2 Home FullBack           pos=(-13.581, 22.077) vel=( -1.302,  0.050)
+     # 3 Home FullBack           pos=( -7.477,-17.833) vel=(  1.446,  4.484)
+     # 4 Home CenterBack         pos=(-13.198,  7.684) vel=(  1.841, -0.150)
+     # 5 Home CenterBack         pos=(-15.371, -6.668) vel=(  4.832, -1.039)
+     # 6 Home DefensiveMidfielder pos=( -7.861, -0.351) vel=(  1.314, -2.233)
+     # 7 Home Winger             pos=(  2.620, 20.576) vel=(  5.155, -5.879)
+     # 8 Home CentralMidfielder  pos=(  6.277, -4.676) vel=( -5.759,  0.460)
+     # 9 Home Striker            pos=(  9.468, -0.224) vel=(  4.906,  2.049)
+     #10 Home CentralMidfielder  pos=( -5.412, -8.352) vel=(  4.096, -4.504)
+     #11 Home Winger             pos=(  3.331,-22.640) vel=(  4.843,  5.575)
+     #12 Away Goalkeeper         pos=( 40.640, -2.393) vel=( -8.241, -1.377)
+     #13 Away FullBack           pos=( 18.573, 18.314) vel=( -2.807,  2.441)
+     #14 Away FullBack           pos=( 17.521,-19.330) vel=( -1.152, -3.788)
+     #15 Away CenterBack         pos=( 20.338,  6.451) vel=( -2.016,  0.516)
+     #16 Away CenterBack         pos=( 15.851, -6.656) vel=( -4.608, -2.614)
+     #17 Away DefensiveMidfielder pos=( 12.794,  1.526) vel=( -4.214, -0.090)
+     #18 Away Winger             pos=( -0.311, 19.674) vel=( -0.376,  5.318)
+     #19 Away CentralMidfielder  pos=(  2.746,  4.429) vel=( -2.144, -2.716)
+     #20 Away Striker            pos=(-10.877, -2.441) vel=( -6.309, -2.454)
+     #21 Away CentralMidfielder  pos=( -2.739, -9.440) vel=( -7.713, -1.235)
+     #22 Away Winger             pos=( -3.353,-11.673) vel=( -4.982,  1.123)
+-- pass 5: t=456 #5(Home) -> #6(Home) intent=GroundPass tag=#6:ToFeet traceKey=Pass:#6:ToFeet traceTick=456 obsTick=456
+   ball=(-24.570,1.664) target=(-21.176,-7.200) power=0.550 flight=0.817 dist=9.491
+   traceP=0.8923 modelP=0.8923 lane=1.0000 launchDelay=0.150 perceivedBlocked=False perceivedBlockedNoLaunch=False truthBlocked=False
+   perceivedBlockers=- truthBlockers=-
+   arrivals=-
+   outcome=completed nextTouch t=494 player=6 team=Home kind=Collection
+   touchTrail=t494 Collection #6(Home) ball=(-21.68,-5.76)
+   runPromise=-
+   SELF id=5 team=Home role=CenterBack tick=456 pos=(-24.185,1.933) vel=(-4.836,2.827) facing=(-0.9898,0.1424) stamina=0.969 balance=1.000 control=0.780 profile=FootballSim.Core.TeamTacticalProfile job=BallResponder jobAnchor=<-19.254898, 0, -8.05093> attackDir=1.0 phase=FirstHalf ball=(-24.584,1.700) ballVel=(-6.469,2.461) ballState=Controlled possessing=Home lastTouch=5/Home ctx=[Attacking/Controlled/OwnThird/None/False] rest=0.277
+   SELF ATTR speed=8.400 accel=6.800 turn=9.500 reach=0.750 staminaCap=1.000
+   VISIBLE (21):
+     # 1 Home Goalkeeper         pos=(-49.363,  0.350) vel=(  0.974,  0.669) unc=0.000 age=0 conf=0.61 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 2 Home FullBack           pos=(-22.897, 21.981) vel=( -1.093, -0.100) unc=0.000 age=0 conf=0.69 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 3 Home FullBack           pos=(-20.675, -4.851) vel=( -5.613, -0.147) unc=0.000 age=0 conf=0.88 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 4 Home CenterBack         pos=(-17.847, -1.965) vel=( -3.973, -3.947) unc=0.000 age=0 conf=0.89 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 6 Home DefensiveMidfielder pos=(-18.708, -6.807) vel=( -4.353, -0.694) unc=0.000 age=0 conf=0.84 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 7 Home Winger             pos=(  5.195, 15.103) vel=(  0.819,  1.188) unc=0.000 age=0 conf=0.51 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 8 Home CentralMidfielder  pos=( -4.646,  6.798) vel=( -0.350,  1.757) unc=0.000 age=0 conf=0.69 cap=[8.50,7.00,9.50,0.75,0.80]
+     # 9 Home Striker            pos=(  8.864,  0.147) vel=(  1.233,  0.228) unc=0.000 age=0 conf=0.49 cap=[8.50,7.00,9.50,0.75,0.80]
+     #10 Home CentralMidfielder  pos=( -4.052, -6.703) vel=( -1.780,  0.800) unc=0.000 age=0 conf=0.66 cap=[8.50,7.00,9.50,0.75,0.80]
+     #11 Home Winger             pos=(  4.881,-14.955) vel=(  0.698, -1.317) unc=0.000 age=0 conf=0.48 cap=[8.50,7.00,9.50,0.75,0.80]
+     #12 Away Goalkeeper         pos=( 36.547,  0.658) vel=(  0.610,  0.949) unc=0.487 age=8 conf=0.19 cap=[8.50,7.00,9.50,0.75,0.80]
+     #13 Away FullBack           pos=( 13.103, 21.144) vel=( -1.312,  0.503) unc=2.353 age=88 conf=0.24 cap=[8.50,7.00,9.50,0.75,0.80]
+     #14 Away FullBack           pos=( 15.001,-23.361) vel=( -0.768, -1.101) unc=4.313 age=172 conf=0.22 cap=[8.50,7.00,9.50,0.75,0.80]
+     #15 Away CenterBack         pos=( 16.908,  7.324) vel=( -0.354,  0.074) unc=2.167 age=80 conf=0.29 cap=[8.50,7.00,9.50,0.75,0.80]
+     #16 Away CenterBack         pos=( -2.536, -4.905) vel=( -4.255,  1.279) unc=1.793 age=64 conf=0.48 cap=[8.50,7.00,9.50,0.75,0.80]
+     #17 Away DefensiveMidfielder pos=(  6.412,  0.749) vel=( -1.167,  0.327) unc=2.143 age=79 conf=0.40 cap=[8.50,7.00,9.50,0.75,0.80]
+     #18 Away Winger             pos=( -0.817, 26.826) vel=( -0.041,  1.080) unc=2.680 age=102 conf=0.28 cap=[8.50,7.00,9.50,0.75,0.80]
+     #19 Away CentralMidfielder  pos=( -2.844,  1.564) vel=( -1.499, -0.734) unc=0.487 age=8 conf=0.64 cap=[8.50,7.00,9.50,0.75,0.80]
+     #20 Away Striker            pos=(-23.566,  2.612) vel=( -4.160,  3.693) unc=0.000 age=0 conf=0.99 cap=[8.50,7.00,9.50,0.75,0.80]
+     #21 Away CentralMidfielder  pos=(-12.644,  2.395) vel=( -1.867,  4.920) unc=2.003 age=73 conf=0.60 cap=[8.50,7.00,9.50,0.75,0.80]
+     #22 Away Winger             pos=(-14.469,-15.304) vel=( -1.667, -3.562) unc=1.910 age=69 conf=0.59 cap=[8.50,7.00,9.50,0.75,0.80]
+   TRUTH players:
+     # 1 Home Goalkeeper         pos=(-49.400,  0.316) vel=(  1.102,  0.666)
+     # 2 Home FullBack           pos=(-22.947, 22.076) vel=( -0.924, -0.079)
+     # 3 Home FullBack           pos=(-20.703, -4.888) vel=( -5.539, -0.264)
+     # 4 Home CenterBack         pos=(-17.901, -2.037) vel=( -4.033, -3.860)
+     # 5 Home CenterBack         pos=(-24.264,  1.978) vel=( -4.727,  2.704)
+     # 6 Home DefensiveMidfielder pos=(-18.841, -6.867) vel=( -4.351, -0.815)
+     # 7 Home Winger             pos=(  5.018, 15.241) vel=(  0.855,  1.242)
+     # 8 Home CentralMidfielder  pos=( -4.585,  6.689) vel=( -0.267,  1.813)
+     # 9 Home Striker            pos=(  8.870,  0.139) vel=(  1.262,  0.204)
+     #10 Home CentralMidfielder  pos=( -4.022, -6.568) vel=( -1.898,  0.860)
+     #11 Home Winger             pos=(  4.974,-15.066) vel=(  0.699, -1.434)
+     #12 Away Goalkeeper         pos=( 36.734,  0.496) vel=(  1.825,  0.632)
+     #13 Away FullBack           pos=( 12.118, 20.932) vel=( -1.589,  0.116)
+     #14 Away FullBack           pos=( 12.137,-20.684) vel=( -1.621,  0.116)
+     #15 Away CenterBack         pos=( 15.368,  7.656) vel=( -3.348,  0.244)
+     #16 Away CenterBack         pos=( -4.007, -3.236) vel=( -5.622,  5.169)
+     #17 Away DefensiveMidfielder pos=(  5.148,  0.064) vel=(  0.097, -0.004)
+     #18 Away Winger             pos=( -3.078, 25.610) vel=( -1.902, -1.899)
+     #19 Away CentralMidfielder  pos=( -2.953,  1.605) vel=( -2.646, -1.063)
+     #20 Away Striker            pos=(-23.631,  2.673) vel=( -4.048,  3.647)
+     #21 Away CentralMidfielder  pos=(-13.485,  4.786) vel=( -1.128,  4.922)
+     #22 Away Winger             pos=(-17.212,-17.362) vel=( -2.534, -4.046)

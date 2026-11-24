@@ -329,14 +329,24 @@ public sealed class AudFixCallOrderTests
     /// <c>ai60-rs1</c>. The AUD-13c property is still pinned by the zero-delay tests above; this remains a
     /// bit-for-bit drift tripwire, not a claim that AI changes never move a match. The fix report is
     /// <c>docs/Bug_Fixes_2026-11-24_PassInterception.md</c>.</para>
+    ///
+    /// <para><b>2026-11-24 reach-model re-capture (<c>ai62-rs1</c>):</b> the
+    /// <see cref="AI.TimeToReachModel"/> fix of <c>docs/task-reach-and-carrier-perception-fixes.md</c> — a
+    /// body with sideways momentum is now reachable and steers onto the target instead of being declared
+    /// unreachable — moves every lane, arrival race, space race and ball-responder election in this match, so
+    /// the constant is re-captured once at <c>ai62-rs1</c>. This re-capture is a documented drift step, not a
+    /// new equivalence claim: the 1500-tick window contains 886/598 possession ticks, 464/189 controlled
+    /// possession ticks and 9/7 attempted, 7/5 completed passes on this tree. The AUD-13c property is still
+    /// pinned by the zero-delay tests above. The fix report is
+    /// <c>docs/Bug_Fixes_2026-11-24_ReachAndPerception.md</c>.</para>
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=14.641948,-19.867302|players=1:-42.56437,-2.5123823;2:-11.704586,17.117094;" +
-        "3:13.6756,-18.205042;4:-12.097073,6.8285804;5:-11.286352,-11.553953;6:-4.3457413,-1.0765203;" +
-        "7:20.969486,11.716126;8:4.681759,1.8024306;9:17.622564,-2.018181;10:0.24247992,-6.2538095;" +
-        "11:14.793205,-19.67303;12:46.296852,-1.8189048;13:23.368748,19.288918;14:22.941374,-21.422646;" +
-        "15:23.272827,5.4988656;16:23.573807,-7.259842;17:15.327851,-3.042023;18:-1.00976,20.145355;" +
-        "19:17.938532,-12.535996;20:-13.745039,-1.8923361;21:7.182253,-13.650075;22:-5.256783,-19.034576;" +
-        "|analytics=908,592,421,250,10,4,8,1,0,0,0,0|calls=256,5731,236,2|" +
-        "combinations=4,0,0,0,2,0,1";
+        "tick=1500|ball=8.918642,-15.912471|players=1:-36.674046,-2.5605767;2:-8.629762,18.569473;" +
+        "3:-7.7017884,-22.880846;4:-4.2644534,-2.03876;5:-9.537859,-7.7106776;6:-5.2777176,-16.532103;" +
+        "7:12.439639,17.076824;8:4.672061,2.6279025;9:9.509909,-9.47658;10:-2.7974555,-10.538391;" +
+        "11:6.9905577,-21.250082;12:46.88832,-1.2970123;13:23.937124,13.077446;14:7.9681597,-19.82399;" +
+        "15:17.214209,1.9156749;16:16.998886,-13.308378;17:9.327867,-14.1731615;18:-3.9247596,12.85725;" +
+        "19:4.288994,6.470227;20:-5.6388397,0.60863495;21:0.5871003,-8.124799;22:-4.560614,-16.596624;" +
+        "|analytics=886,598,464,189,9,7,7,5,0,0,0,0|calls=261,6965,244,0|" +
+        "combinations=8,3,2,0,1,0,2";
 }

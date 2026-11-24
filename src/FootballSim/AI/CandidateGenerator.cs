@@ -2469,8 +2469,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             return false;
         }
 
-        // Lane clearance must be judged against the point the pass is actually aimed at.
-        float laneOpenness = EvaluateLaneClearance(ballXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam);
+        // Lane clearance must be judged against the point the pass is actually aimed at, and (ai62) a
+        // remembered defender must be charged the positional doubt the sighting carries — the same
+        // `chargeUncertainty` the shallow search and the run-region passes already ask for. Pre-fix this
+        // call used the unladen metric, so a stale presser 2.37 m off the lane with 1.49 m of doubt
+        // scored the corridor 1.000 and the delivery was priced as open (the 2026-11-24 live Pass 3).
+        float laneOpenness = EvaluateLaneClearance(
+            ballXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam, chargeUncertainty: true);
         PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, plan, laneOpenness, option.Promise);
         laneBlocked = terms.LaneBlocked;
 
@@ -5603,9 +5608,12 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// perpendicular distance is shortened by <see cref="PerceivedEntity.PositionUncertaintyMeters"/> before
     /// it is scored.
     ///
-    /// Only the shallow search asks for it. The A8.1 heuristic and the pass-lane tests keep the unladen
-    /// metric exactly — a fresh sighting has zero uncertainty, so the two agree, and the difference is a
-    /// deliberately more conservative second ball rather than a re-tuned first one.
+    /// The shallow search, the pass-lane candidates and (since ai62) every ground pass built through
+    /// <see cref="TryAddGroundPass"/> ask for it. The A8.1 heuristic and the structural lane tests keep the
+    /// unladen metric exactly — a fresh sighting has zero uncertainty, so the two agree, and the difference
+    /// is a deliberately more conservative second ball rather than a re-tuned first one. Public so a
+    /// regression or a probe can price the same corridor the carrier does (ai62: the opening-pass replay
+    /// pins that a 1.49 m stale sighting 2.37 m off the lane costs most of the corridor).
     ///
     /// AIB-02a: the corridor is a <b>lane</b>, not one defender's shadow. The old metric kept only the worst
     /// defender (<c>minClearanceRatio</c>), so three men clustered around the same passing corridor scored
@@ -5627,7 +5635,7 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// the pass model (<see cref="PassSuccessModel.OpponentSprintSpeed"/>), contributes one body once, and
     /// leaves a stationary defender's value bit-for-bit unchanged.</para>
     /// </summary>
-    internal static float EvaluateLaneClearance(
+    public static float EvaluateLaneClearance(
         Vector2 fromXZ,
         Vector2 toXZ,
         IReadOnlyList<PerceivedEntity> visiblePlayers,

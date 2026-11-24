@@ -281,6 +281,20 @@ public sealed class TimeToReachModelTests
         Vector2 facing,
         Vector3 target)
     {
+        (float measured, ReachEstimate predicted) = RaceToPointEstimate(start, velocity, facing, target);
+        return (measured, predicted.Seconds);
+    }
+
+    /// <summary>
+    /// The same locomotion race, also returning the model's own answer so a test can name what failed
+    /// (an unreachable verdict reads very differently from a slow one).
+    /// </summary>
+    private static (float Measured, ReachEstimate Predicted) RaceToPointEstimate(
+        Vector3 start,
+        Vector3 velocity,
+        Vector2 facing,
+        Vector3 target)
+    {
         var scenario = new MatchScenario
         {
             Name = "reach-race",
@@ -328,8 +342,7 @@ public sealed class TimeToReachModelTests
         }
 
         Assert.True(arrivalTick > 0, "the player never arrived; the fixture is wrong, not the model");
-        Assert.True(predicted.Reachable);
-        return (arrivalTick * Dt, predicted.Seconds);
+        return (arrivalTick * Dt, predicted);
     }
 
     [Fact]
@@ -382,6 +395,112 @@ public sealed class TimeToReachModelTests
         }
 
         Assert.Equal(Rank(measuredTimes), Rank(predictedTimes));
+    }
+
+    // ---- non-collinear velocities (ai62) --------------------------------------------------------
+
+    /// <summary>
+    /// ai62 Task 1: a player already running <b>perpendicular</b> to the target must still be able to
+    /// reach it. Pre-fix the closed-form trajectory cruised parallel to the aim line after the velocity
+    /// ramp, so the lateral drift was never corrected and <c>ToPoint</c> returned
+    /// <c>Reachable == false</c> (horizon 8.00 s here).
+    ///
+    /// Fixture: 7.5 m/s across the aim, 8 m from the target. The whole point is the comparison with real
+    /// locomotion: the model's steering integrator must reproduce the measured arrival within 0.10 s.
+    /// </summary>
+    [Fact]
+    public void ToPoint_PerpendicularInitialVelocity_IsReachableAndMatchesRealLocomotion()
+    {
+        (float measured, ReachEstimate predicted) = RaceToPointEstimate(
+            new Vector3(0f, 0f, 0f), new Vector3(0f, 0f, 7.5f), new Vector2(0f, 1f),
+            new Vector3(8f, 0f, 0f));
+
+        Assert.True(predicted.Reachable, "a player crossing the aim line must be able to turn and reach it");
+        AssertWithinLocomotionTolerance(measured, predicted.Seconds, "perpendicular sprint");
+    }
+
+    /// <summary>
+    /// ai62 Task 1: the exact live geometries of the three opening-pass interceptions (2026-11-24
+    /// diagnostic, seed 20260818), where the pre-fix model declared each defender unreachable.
+    /// <list type="bullet">
+    /// <item>Pass 1: Away #18 at (9.17, 16.88), running (−7.94, −1.35), target (3.92, 19.27).</item>
+    /// <item>Pass 2: Home #4 at (−19.78, 10.92), running (−2.72, −1.98), target (−17.25, 8.91).</item>
+    /// <item>Pass 2: Home #6 at (−13.22, 5.73), running (5.38, 6.35), target (−17.25, 8.91).</item>
+    /// </list>
+    /// Pre-fix all three returned <c>Reachable == false</c> at the 2.5 s horizon, which is what let the
+    /// passing side price these interceptions at p ≈ 0.91/0.97. Each must now be both reachable and
+    /// within the locomotion tolerance.
+    /// </summary>
+    [Fact]
+    public void ToPoint_DiagonalAndReversingWithLateralDrift_MatchesRealLocomotion()
+    {
+        // The arrival bound is the measured shape of each geometry, not one number: #18 is already
+        // running almost straight at the point (0.78 s), #4 is reversing off a diagonal (≈1.0 s), and #6
+        // carries 8.3 m/s almost perpendicular to the point so his momentum has to be killed first
+        // (≈1.95 s — real locomotion measures the same, which is why the tolerance check is the primary
+        // assertion and this bound only catches a solver that has become optimistic).
+        (Vector3 Start, Vector3 Velocity, Vector3 Target, string Label, float MaxSeconds)[] cases =
+        [
+            (new Vector3(9.17f, 0f, 16.88f), new Vector3(-7.94f, 0f, -1.35f), new Vector3(3.92f, 0f, 19.27f),
+                "pass 1 presser #18", 1.00f),
+            (new Vector3(-19.78f, 0f, 10.92f), new Vector3(-2.72f, 0f, -1.98f), new Vector3(-17.25f, 0f, 8.91f),
+                "pass 2 presser #4", 1.30f),
+            (new Vector3(-13.22f, 0f, 5.73f), new Vector3(5.38f, 0f, 6.35f), new Vector3(-17.25f, 0f, 8.91f),
+                "pass 2 covering #6", 2.10f)
+        ];
+
+        foreach ((Vector3 start, Vector3 velocity, Vector3 target, string label, float maxSeconds) in cases)
+        {
+            Vector2 velocityXZ = new(velocity.X, velocity.Z);
+            Vector2 facing = velocityXZ.LengthSquared() > 1e-4f ? Vector2.Normalize(velocityXZ) : new Vector2(1f, 0f);
+
+            (float measured, ReachEstimate predicted) = RaceToPointEstimate(start, velocity, facing, target);
+            Assert.True(predicted.Reachable, $"{label}: the live geometry must be reachable");
+            AssertWithinLocomotionTolerance(measured, predicted.Seconds, label);
+            Assert.True(predicted.Seconds < maxSeconds,
+                $"{label}: arrival {predicted.Seconds:F3}s (real {measured:F3}s) is not the quick interception " +
+                "the live match saw");
+        }
+    }
+
+    /// <summary>
+    /// ai62 Task 1 negative guard: the steering integrator must not claim a target it cannot reach inside
+    /// the horizon. A body 30 m away with a full sprint has no chance in 1.0 s, and the answer must be
+    /// the horizon itself, not an optimistic invention.
+    /// </summary>
+    [Fact]
+    public void ToPoint_UnreachableBeyondHorizon_StillReturnsUnreachable()
+    {
+        ReachEstimate estimate = TimeToReachModel.ToPoint(
+            Kinematics(Vector2.Zero, new Vector2(0f, 1f), velocity: new Vector2(0f, 7.5f)),
+            new Vector2(30f, 0f), horizonSeconds: 1.0f);
+
+        Assert.False(estimate.Reachable);
+        Assert.Equal(1.0f, estimate.Seconds, 3);
+    }
+
+    /// <summary>
+    /// ai62 Task 1, moving target: a chaser already running laterally must intercept a runner crossing
+    /// its front. This is the "only the ToPoint fix was verified" gap: <c>ToMovingPoint</c> goes through
+    /// the same <c>SolveToward</c>, and its aim path is the non-collinear one at every refinement step.
+    /// </summary>
+    [Fact]
+    public void ToMovingPoint_LateralChaserInterceptingMovingTarget_IsReachable()
+    {
+        ReachKinematics chaser = Kinematics(
+            Vector2.Zero, new Vector2(0f, 1f), velocity: new Vector2(0f, 7.5f));
+        Vector2 targetStart = new(12f, 0f);
+        Vector2 targetVelocity = new(0f, 3f);
+
+        ReachEstimate estimate = TimeToReachModel.ToMovingPoint(chaser, targetStart, targetVelocity);
+
+        Assert.True(estimate.Reachable, "a chaser closing laterally must intercept the crossing runner");
+        Assert.True(estimate.Seconds < TimeToReachModel.DefaultHorizonSeconds);
+        Vector2 targetAtArrival = targetStart + targetVelocity * estimate.Seconds;
+        Assert.True(Vector2.Distance(estimate.MeetingPointXZ, targetAtArrival) < 1e-3f,
+            $"the meeting point must be on the runner's path (target at {estimate.Seconds:F3}s = {targetAtArrival})");
+        Assert.True(estimate.MeetingPointXZ.Y > 1f,
+            $"the meeting must be ahead of the runner, not at his start (y={estimate.MeetingPointXZ.Y:F2} m)");
     }
 
     private static void AssertWithinLocomotionTolerance(float measured, float predicted, string label)

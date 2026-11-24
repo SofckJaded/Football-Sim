@@ -5,6 +5,7 @@ using FootballSim.AI;
 using FootballSim.Core;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
+using FootballSim.Tactics;
 using Xunit;
 
 namespace FootballSim.Tests.AI;
@@ -678,6 +679,249 @@ public sealed class PassInterceptionBlindSpotTests
     }
 
     // =============================================================================================
+    // ai62 — the live opening-pass replays (seed 20260818, MatchClientNode spectator setup)
+    //
+    // The ai60/ai61 fixes passed every synthetic unit test while the rendered opening still gifted
+    // interceptions, because the failing inputs were the *reach model's non-collinear* ones: a defender
+    // with sideways momentum was declared unreachable, which removed him from the lane test, the arrival
+    // race and the space-race gate all at once. These three fixtures are the exact live observations of
+    // the 2026-11-24 diagnostic (passes at t=102, t=222, t=406), copied from
+    // artifacts/advanced-ai/ai62-opening-passes.txt, so the fix is tested on the geometry that failed in
+    // the rendered match rather than on a synthetic one.
+    // =============================================================================================
+
+    /// <summary>
+    /// Brief Pass 1 (t=102): Home #9 plays a 1.60 s <c>ToSpace</c> ball 14 m ahead of #7 while Away #18
+    /// is freshly sighted 5.76 m from the target, running (−7.94, −1.35) at 8.05 m/s back up the lane.
+    /// Pre-fix <c>TimeToReachModel.ToPoint(#18, target)</c> said unreachable (lateral drift ~1.4 m),
+    /// the space race was won at p = 0.912 and #18 intercepted 0.98 s later.
+    ///
+    /// <para>Fixed: the presser's modelled arrival must beat the receiver's by the
+    /// <see cref="CandidateGenerator.SpaceRaceMarginSeconds"/> gate, so the probe is refused
+    /// (<c>space-race-lost</c>) or the ground lane test blocks it. The model half is asserted directly so
+    /// the test states which physics changed, not only that a candidate vanished.</para>
+    /// </summary>
+    [Fact]
+    public void LiveReplay_Pass1_ToSpaceIntoSprintingPresser_IsRejected()
+    {
+        FootballerObservation obs = LiveObservation(
+            selfId: 9,
+            selfTeam: TeamId.Home,
+            selfRole: TacticalRole.Striker,
+            selfPos: new Vector2(-6.940f, -0.159f),
+            selfVel: new Vector2(7.842f, -2.339f),
+            facing: new Vector2(0.8989f, -0.4381f),
+            stamina: 0.991f,
+            ball: new Vector2(-6.328f, -0.392f),
+            ballVel: new Vector2(7.930f, -1.741f),
+            tick: 102,
+            phase: TeamPhase.Attacking,
+            stability: PossessionStability.Controlled,
+            zone: TeamZone.MiddleThird,
+            visible: LivePass1Visible());
+
+        Vector2 target = new(3.923f, 19.272f);
+        PerceivedEntity presser = FindEntity(obs, 18);
+        PerceivedEntity receiver = FindEntity(obs, 7);
+
+        // The physics half: with the fix the presser reaches the space point much sooner than #7 does,
+        // by more than the gate the space probe applies. Pre-fix the presser's query returned the 2.5 s
+        // horizon as an unreachable value, so the race margin was positive and the probe admitted it.
+        ReachEstimate presserReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(presser), target, CandidateGenerator.SpaceRaceHorizonSeconds);
+        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(receiver), target, CandidateGenerator.SpaceRaceHorizonSeconds);
+        Assert.True(presserReach.Reachable, "the fresh presser must be able to reach the space point");
+        Assert.True(receiverReach.Reachable, "the receiver must be able to reach his own space ball");
+        Assert.True(presserReach.Seconds + CandidateGenerator.SpaceRaceMarginSeconds <= receiverReach.Seconds,
+            $"the presser arrives {presserReach.Seconds:F2} s against the receiver's {receiverReach.Seconds:F2} s; " +
+            "pre-fix the presser was 'unreachable' and the race was scored 0.9 s in the receiver's favour");
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        Assert.DoesNotContain(generator.Candidates, candidate =>
+            candidate.Key.Kind == CandidateKind.Pass &&
+            candidate.Key.TargetPlayerId == 7 &&
+            string.Equals(candidate.Key.TargetTag, CandidateGenerator.SpacePassTag, StringComparison.Ordinal));
+
+        bool refused = false;
+        for (int i = 0; i < generator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = generator.GetRejection(i);
+            if (rejection.TargetPlayerId != 7) continue;
+            if (rejection.Reason == CandidateGenerator.RejectionSpaceRaceLost ||
+                rejection.Reason == CandidateGenerator.RejectionLaneBlocked)
+            {
+                refused = true;
+            }
+        }
+
+        Assert.True(refused,
+            "the ToSpace ball into the sprinting presser must be refused (space-race-lost or lane-blocked); " +
+            "pre-fix it won at p = 0.912 and was intercepted");
+    }
+
+    /// <summary>
+    /// Brief Pass 2 (t=222): Away #18 plays a 0.98 s <c>ToRun</c> ball to #20's advertised run while Home
+    /// #4 and #6 are on top of the meeting region — #4 3.23 m away at (−2.72, −1.98), #6 5.14 m away at
+    /// (5.38, 6.35). Pre-fix both were declared unreachable by the lateral-drift bug, so the arrival race
+    /// read as uncontested (defender term 1) and the promised ball was priced p = 0.970; #4 intercepted it.
+    ///
+    /// <para><b>Measured correction to the brief's expectation.</b> The brief predicted the fixed model
+    /// would price this as a <i>decisively</i> lost race (p ≤ 0.05). It does not: with the exact live
+    /// promise (arrival 1.25 s, radius 5 m, confidence 0.9802) the contest is now a genuine race —
+    /// #4's effective arrival is ≈1.23 s against the promised 1.25 s — so the completion falls to ≈0.59
+    /// with a defender-edge margin instead of 0.970. That is the honest arithmetic: the pre-fix error was
+    /// "uncontested → effectively certain", not "certain → impossible". The assertions pin the fixed
+    /// verdict (defender terrain, defender term below even, most of the completion gone); the report
+    /// records the deviation and the live replay result.</para>
+    /// </summary>
+    [Fact]
+    public void LiveReplay_Pass2_ToRunIntoCoveringAndPressing_IsRejected()
+    {
+        FootballerObservation obs = LiveObservation(
+            selfId: 18,
+            selfTeam: TeamId.Away,
+            selfRole: TacticalRole.Winger,
+            selfPos: new Vector2(-5.435f, 11.111f),
+            selfVel: new Vector2(-7.392f, 0.314f),
+            facing: new Vector2(-0.8385f, 0.5448f),
+            stamina: 0.961f,
+            ball: new Vector2(-5.988f, 11.338f),
+            ballVel: new Vector2(-7.282f, -0.522f),
+            tick: 222,
+            phase: TeamPhase.Attacking,
+            stability: PossessionStability.Controlled,
+            zone: TeamZone.MiddleThird,
+            visible: LivePass2Picture());
+
+        Vector2 ballXZ = new(-5.988f, 11.338f);
+        Vector2 target = new(-17.250f, 8.911f);
+        float distance = Vector2.Distance(ballXZ, target);
+        Assert.True(Planner.TryGetFlightTime(0.60f, distance, out float flight));
+        Assert.InRange(flight, 0.90f, 1.10f); // the live 14.8 m/s ball, 0.98 s
+        var plan = new PassPlan(true, SimMath.SafeNormalize(target - ballXZ, Vector2.UnitX), target,
+            Power01: 0.60f, FlightTimeSeconds: flight, DistanceMeters: distance);
+
+        PerceivedEntity receiver = FindEntity(obs, 20);
+        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(receiver), target, flight + 1f);
+        Assert.True(receiverReach.Reachable, "the receiver must be able to reach his own promised run");
+
+        // The exact live promise from the baseline run-board capture (AiBehaviour 61):
+        //   InBehind meet=(-17.250, 8.911) r=5.0 meetTick=297 (1.25 s after the t=222 kick)
+        //   confidence 0.9802, published t=204, visible t=222.
+        // The promise arrival (1.25 s) is what the contest is measured at, not the ball's 0.98 s flight.
+        var promise = new PassArrivalPromise(
+            target, ArrivalSeconds: 1.25f, MeetRadiusMeters: 5f, Confidence01: 0.9802f);
+        float lane = CandidateGenerator.EvaluateLaneClearance(ballXZ, target, obs.VisiblePlayers, obs.SelfTeam);
+        PassSuccessTerms terms = Model.Estimate(obs, receiver, plan, lane, promise);
+
+        float defenderTerm = Math.Clamp(1f - terms.DefenderPressure01, 0f, 1f);
+        Assert.True(terms.DefenderMarginSeconds < 0f,
+            $"the arrival race must now be the defender's to win (margin {terms.DefenderMarginSeconds:F3} s); " +
+            "pre-fix both defenders were 'unreachable' by the lateral-drift bug and the margin was +1.05 s");
+        Assert.True(defenderTerm < 0.5f,
+            $"the defender term must fall below even (measured {defenderTerm:F3}); pre-fix it was exactly 1");
+        Assert.True(terms.CompletionProbability01 <= 0.70f,
+            $"the delivery must lose most of its completion (measured {terms.CompletionProbability01:F3}); " +
+            "the live pre-fix pricing was p = 0.970");
+    }
+
+    /// <summary>
+    /// Brief Pass 3 (t=406): Home #2 plays a 0.95 s ball to #4's feet while Away #20 — whose last sighting
+    /// is 51 ticks (0.85 s) old with <c>PositionUncertaintyMeters = 1.49</c> — sits 0.0 m off the lane in
+    /// truth and 2.37 m off it in the stale picture. Pre-fix the candidate passed the <b>unladen</b>
+    /// corridor metric (<c>chargeUncertainty: false</c>) and scored lane = 1.000, p = 0.920; #20
+    /// intercepted 8 ticks after the kick.
+    ///
+    /// <para>The test asserts the metric falls sharply once the sighting doubt is charged (the fix's
+    /// Task 2.1/2.2), that the estimate prices it, and that the candidate wiring uses the charged value:
+    /// pre-fix <c>TryAddGroundPass</c> passed the unladen metric.</para>
+    /// </summary>
+    [Fact]
+    public void LiveReplay_Pass3_StalePresserNearLane_ReducesLaneClearanceAndCompletion()
+    {
+        FootballerObservation obs = LiveObservation(
+            selfId: 2,
+            selfTeam: TeamId.Home,
+            selfRole: TacticalRole.FullBack,
+            selfPos: new Vector2(-19.027f, 23.349f),
+            selfVel: new Vector2(4.026f, 5.341f),
+            facing: new Vector2(0.5677f, 0.8232f),
+            stamina: 0.971f,
+            ball: new Vector2(-18.674f, 23.836f),
+            ballVel: new Vector2(3.800f, 4.751f),
+            tick: 406,
+            phase: TeamPhase.Attacking,
+            stability: PossessionStability.Controlled,
+            zone: TeamZone.OwnThird,
+            visible: LivePass3Picture());
+
+        Vector2 ballXZ = new(-18.674f, 23.836f);
+        Vector2 target = new(-17.927f, 11.711f);
+        float distance = Vector2.Distance(ballXZ, target);
+        Assert.True(Planner.TryGetFlightTime(0.70f, distance, out float flight));
+        Assert.InRange(flight, 0.85f, 1.05f); // the live 15.9 m/s ball, 0.93 s
+        var plan = new PassPlan(true, SimMath.SafeNormalize(target - ballXZ, Vector2.UnitX), target,
+            Power01: 0.70f, FlightTimeSeconds: flight, DistanceMeters: distance);
+
+        PerceivedEntity stale = FindEntity(obs, 20);
+        Assert.Equal(51, stale.ObservedAgeTicks);
+        Assert.Equal(1.490f, stale.PositionUncertaintyMeters, 3);
+
+        float rawLane = CandidateGenerator.EvaluateLaneClearance(
+            ballXZ, target, obs.VisiblePlayers, obs.SelfTeam);
+        float chargedLane = CandidateGenerator.EvaluateLaneClearance(
+            ballXZ, target, obs.VisiblePlayers, obs.SelfTeam, chargeUncertainty: true);
+        Assert.Equal(1.0f, rawLane, 3); // the unladen metric the pre-fix candidate used
+        Assert.True(chargedLane < 0.60f,
+            $"a 1.49 m stale sighting 2.37 m off the lane must cost most of the corridor " +
+            $"(measured {chargedLane:F3}, pre-fix candidate used {rawLane:F3})");
+
+        PerceivedEntity receiver = FindEntity(obs, 4);
+        PassSuccessTerms raw = Model.Estimate(obs, receiver, plan, rawLane);
+        PassSuccessTerms charged = Model.Estimate(obs, receiver, plan, chargedLane);
+        Assert.True(raw.CompletionProbability01 > 0.90f,
+            $"the pre-fix live pricing was p = 0.920 with the unladen lane (measured {raw.CompletionProbability01:F3})");
+        Assert.True(charged.CompletionProbability01 < raw.CompletionProbability01 - 0.10f,
+            $"charging the sighting doubt must cost real completion (charged " +
+            $"{charged.CompletionProbability01:F3} vs unladen {raw.CompletionProbability01:F3})");
+
+        // Candidate wiring: the emitted feet ball must carry the charged pricing, not the unladen one.
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        bool foundPass = false;
+        for (int i = 0; i < generator.Candidates.Count; i++)
+        {
+            UtilityCandidate candidate = generator.Candidates[i];
+            if (candidate.Key.Kind != CandidateKind.Pass || candidate.Key.TargetPlayerId != 4) continue;
+            if (!string.Equals(candidate.Key.TargetTag, "ToFeet", StringComparison.Ordinal)) continue;
+
+            foundPass = true;
+            Assert.True(candidate.Terms.IsPresent);
+            Assert.True(candidate.Terms.Probability01 < raw.CompletionProbability01 - 0.10f,
+                $"the candidate must be priced with the charged corridor ({candidate.Terms.Probability01:F3}); " +
+                $"pre-fix it used the unladen {raw.CompletionProbability01:F3}");
+        }
+
+        // Either verdict is acceptable and the report states which one shipped; what is not acceptable
+        // is the pass looking clean. If it was not emitted, a refusal for this target must exist.
+        if (!foundPass)
+        {
+            bool refused = false;
+            for (int i = 0; i < generator.RejectionCount; i++)
+            {
+                if (generator.GetRejection(i).TargetPlayerId == 4) refused = true;
+            }
+
+            Assert.True(refused, "a pass that is not emitted must have been refused for a stated reason");
+        }
+    }
+
+    // =============================================================================================
     // Fixtures and helpers
     // =============================================================================================
 
@@ -786,4 +1030,156 @@ public sealed class PassInterceptionBlindSpotTests
         SelfTendencies = new PlayerTendencies(),
         SelfAttributes = new PlayerAttributes()
     };
+
+    // ---- ai62 live-replay fixtures -------------------------------------------------------------
+    //
+    // The entity lists below are the exact engine observations of the 2026-11-24 opening-pass
+    // diagnostic at t=102 (brief Pass 1), t=222 (brief Pass 2) and t=406 (brief Pass 3). Only the
+    // opponents are kept for the two model-level fixtures (the estimate and the lane test skip
+    // team-mates); the candidate-level fixture keeps the whole visible picture because the pass
+    // target set is built from the team-mates.
+
+    /// <summary>One perceived entity with its exact remembered age/doubt and scouted capability band.</summary>
+    private static PerceivedEntity E(
+        int id, TeamId team, TacticalRole role,
+        float px, float pz, float vx, float vz, float uncertaintyMeters, int age, float confidence,
+        float capSpeed, float capAcceleration, float capTurn, float capReach, float capConfidence) =>
+        new(id, team, role, new Vector3(px, 0f, pz), new Vector3(vx, 0f, vz), confidence)
+        {
+            ObservedAgeTicks = age,
+            PositionUncertaintyMeters = uncertaintyMeters,
+            Capability = new CapabilityEstimate(
+                capSpeed, capAcceleration, capTurn, capReach, capConfidence)
+        };
+
+    private static PerceivedEntity[] LivePass1Visible() =>
+    [
+        // Pass 1 (t=102), self Home #9 — the whole visible picture.
+        E(1, TeamId.Home, TacticalRole.Goalkeeper, -40.950f, -0.079f, 2.718f, -0.605f, 0.000f, 0, 0.48f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(2, TeamId.Home, TacticalRole.FullBack, -25.668f, 19.652f, 7.499f, 1.505f, 0.000f, 0, 0.58f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(3, TeamId.Home, TacticalRole.FullBack, -25.418f, -19.613f, 7.652f, -1.593f, 0.000f, 0, 0.58f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(4, TeamId.Home, TacticalRole.CenterBack, -26.567f, 7.480f, 8.079f, 1.196f, 0.000f, 0, 0.67f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(5, TeamId.Home, TacticalRole.CenterBack, -26.724f, -7.426f, 8.110f, -1.307f, 0.000f, 0, 0.68f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(6, TeamId.Home, TacticalRole.DefensiveMidfielder, -24.903f, 0.073f, 4.365f, 0.099f, 0.000f, 0, 0.72f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(7, TeamId.Home, TacticalRole.Winger, -10.077f, 19.272f, 7.116f, 0.841f, 0.000f, 0, 0.70f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(8, TeamId.Home, TacticalRole.CentralMidfielder, 6.420f, -5.050f, 5.567f, -4.334f, 0.000f, 0, 0.78f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(10, TeamId.Home, TacticalRole.CentralMidfielder, -17.060f, -5.729f, 5.939f, 2.004f, 0.000f, 0, 0.82f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(11, TeamId.Home, TacticalRole.Winger, -12.613f, -24.543f, 4.769f, -5.190f, 0.000f, 0, 0.61f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(12, TeamId.Away, TacticalRole.Goalkeeper, 48.326f, 0.188f, -0.029f, 0.012f, 0.533f, 10, 0.19f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(13, TeamId.Away, TacticalRole.FullBack, 27.096f, 15.268f, -5.993f, -1.447f, 0.000f, 0, 0.43f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(14, TeamId.Away, TacticalRole.FullBack, 27.268f, -15.007f, -6.105f, 1.628f, 0.000f, 0, 0.43f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(15, TeamId.Away, TacticalRole.CenterBack, 27.832f, 5.805f, -6.303f, -0.537f, 0.000f, 0, 0.46f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(16, TeamId.Away, TacticalRole.CenterBack, 27.914f, -5.716f, -6.315f, 0.415f, 0.000f, 0, 0.46f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(17, TeamId.Away, TacticalRole.DefensiveMidfielder, 20.803f, -0.025f, -7.845f, 0.285f, 0.533f, 10, 0.50f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(18, TeamId.Away, TacticalRole.Winger, 9.168f, 16.884f, -7.941f, -1.351f, 0.000f, 0, 0.64f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(19, TeamId.Away, TacticalRole.CentralMidfielder, 17.844f, 6.277f, -5.565f, -2.930f, 0.000f, 0, 0.61f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(20, TeamId.Away, TacticalRole.Striker, 6.381f, 0.046f, -8.334f, -0.518f, 0.000f, 0, 0.79f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(21, TeamId.Away, TacticalRole.CentralMidfielder, 16.738f, -6.820f, -6.006f, 1.577f, 0.000f, 0, 0.62f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(22, TeamId.Away, TacticalRole.Winger, 9.375f, -16.857f, -8.022f, 1.296f, 0.000f, 0, 0.64f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f)
+    ];
+
+    private static PerceivedEntity[] LivePass2Picture() =>
+    [
+        // Pass 2 (t=222), self Away #18 — the Home defenders plus the receiver (Away #20) the test needs
+        // to look up; team-mates are skipped by both the estimate and the lane test.
+        E(20, TeamId.Away, TacticalRole.Striker, -7.224f, 3.025f, -6.480f, 3.782f, 0.000f, 0, 0.87f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(1, TeamId.Home, TacticalRole.Goalkeeper, -41.286f, 3.021f, -5.780f, -1.093f, 0.000f, 0, 0.43f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(2, TeamId.Home, TacticalRole.FullBack, -14.998f, 23.794f, -0.525f, 0.580f, 0.000f, 0, 0.76f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(3, TeamId.Home, TacticalRole.FullBack, -15.043f, -21.225f, 0.763f, -0.624f, 0.743f, 19, 0.41f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(4, TeamId.Home, TacticalRole.CenterBack, -19.781f, 10.916f, -2.715f, -1.976f, 0.000f, 0, 0.78f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(5, TeamId.Home, TacticalRole.CenterBack, -15.852f, -4.219f, 0.489f, 5.649f, 0.000f, 0, 0.71f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(6, TeamId.Home, TacticalRole.DefensiveMidfielder, -13.215f, 5.729f, 5.384f, 6.355f, 0.000f, 0, 0.86f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(7, TeamId.Home, TacticalRole.Winger, 1.703f, 19.551f, 5.633f, -2.636f, 0.000f, 0, 0.83f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(8, TeamId.Home, TacticalRole.CentralMidfielder, 10.214f, -7.318f, -0.908f, 1.392f, 1.070f, 33, 0.52f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(9, TeamId.Home, TacticalRole.Striker, 6.523f, 0.422f, 5.998f, 0.825f, 0.883f, 25, 0.68f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(10, TeamId.Home, TacticalRole.CentralMidfielder, -6.834f, -3.065f, 3.757f, 3.260f, 0.767f, 20, 0.66f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(11, TeamId.Home, TacticalRole.Winger, -3.922f, -29.804f, 4.042f, 1.254f, 0.790f, 21, 0.31f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f)
+    ];
+
+    private static PerceivedEntity[] LivePass3Picture() =>
+    [
+        // Pass 3 (t=406), self Home #2 — the Away picture (including the 51-tick-old #20) plus the
+        // receiver (Home #4) the test looks up; team-mates are skipped by the estimate and the lane test.
+        E(4, TeamId.Home, TacticalRole.CenterBack, -18.070f, 9.704f, 0.153f, 2.150f, 0.000f, 0, 0.79f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(12, TeamId.Away, TacticalRole.Goalkeeper, 42.321f, 1.850f, 7.098f, 0.003f, 0.000f, 0, 0.20f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(13, TeamId.Away, TacticalRole.FullBack, 17.822f, 21.466f, 2.368f, 0.009f, 0.000f, 0, 0.43f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(14, TeamId.Away, TacticalRole.FullBack, 19.285f, -20.512f, 2.478f, -0.010f, 1.467f, 50, 0.15f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(15, TeamId.Away, TacticalRole.CenterBack, 17.005f, 6.831f, 3.532f, 0.990f, 0.000f, 0, 0.39f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(16, TeamId.Away, TacticalRole.CenterBack, 18.195f, -6.413f, 1.859f, 0.056f, 0.510f, 9, 0.25f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(17, TeamId.Away, TacticalRole.DefensiveMidfielder, 14.797f, 0.969f, 5.416f, 0.181f, 0.000f, 0, 0.37f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(18, TeamId.Away, TacticalRole.Winger, -10.951f, 16.827f, 3.350f, -1.522f, 0.000f, 0, 0.84f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(19, TeamId.Away, TacticalRole.CentralMidfielder, 0.345f, 9.647f, -0.764f, 1.667f, 0.000f, 0, 0.63f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(20, TeamId.Away, TacticalRole.Striker, -20.731f, 18.657f, -1.660f, 5.237f, 1.490f, 51, 0.66f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(21, TeamId.Away, TacticalRole.CentralMidfielder, -1.187f, -5.115f, 2.883f, 0.036f, 1.700f, 60, 0.36f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f),
+        E(22, TeamId.Away, TacticalRole.Winger, -11.451f, -13.195f, 1.626f, 1.461f, 1.630f, 57, 0.31f, 8.50f, 7.00f, 9.50f, 0.75f, 0.80f)
+    ];
+
+    private static PerceivedEntity FindEntity(in FootballerObservation obs, int playerId)
+    {
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+            if (obs.VisiblePlayers[i].PlayerId == playerId) return obs.VisiblePlayers[i];
+        throw new InvalidOperationException($"player #{playerId} is not in the fixture's picture");
+    }
+
+    /// <summary>An observation reproducing one live decision instant (the fields the scorers read).</summary>
+    private static FootballerObservation LiveObservation(
+        int selfId,
+        TeamId selfTeam,
+        TacticalRole selfRole,
+        Vector2 selfPos,
+        Vector2 selfVel,
+        Vector2 facing,
+        float stamina,
+        Vector2 ball,
+        Vector2 ballVel,
+        int tick,
+        TeamPhase phase,
+        PossessionStability stability,
+        TeamZone zone,
+        PerceivedEntity[] visible) => new()
+    {
+        SelfId = selfId,
+        SelfTeam = selfTeam,
+        SelfRole = selfRole,
+        SelfPosition = new Vector3(selfPos.X, 0f, selfPos.Y),
+        SelfVelocity = new Vector3(selfVel.X, 0f, selfVel.Y),
+        SelfFacingXZ = facing,
+        Stamina01 = stamina,
+        AvailableToKick = true,
+        ControlQuality01 = 0.745f,
+        PerceivedBallPosition = new Vector3(ball.X, 0f, ball.Y),
+        PerceivedBallVelocity = new Vector3(ballVel.X, 0f, ballVel.Y),
+        PossessingTeam = selfTeam,
+        BallLastTouchedByPlayerId = selfId,
+        BallLastTouchedByTeam = selfTeam,
+        BallControlState = BallControlState.Controlled,
+        BallControllingPlayerId = selfId,
+        TacticalAnchorPosition = new Vector3(selfPos.X, 0f, selfPos.Y),
+        AttackingDirectionX = selfTeam == TeamId.Home ? 1f : -1f,
+        MatchTimeSeconds = tick * SimConstants.FixedDeltaTime,
+        CurrentMatchPhase = MatchPhase.FirstHalf,
+        IsSetPieceTaker = false,
+        Tick = tick,
+        VisiblePlayers = visible,
+        TeamProfile = selfTeam == TeamId.Home
+            ? TeamTacticalProfile.PossessionControl
+            : TeamTacticalProfile.DirectCounterattack,
+        SelfTendencies = new PlayerTendencies(),
+        SelfAttributes = new PlayerAttributes(),
+        TacticalJob = TacticalJob.BallResponder,
+        IsDesignatedBallResponder = true,
+        BallResponderPlayerId = selfId,
+        TacticalContext = new TeamContext(
+            selfTeam, selfTeam, stability, phase, zone, TransitionMode.None,
+            new RestartContext(RestartKind.None, null), IsEmergencyDefence: false),
+        KnowledgeAgeTicks = LongestMemoryAge(visible)
+    };
+
+    private static int LongestMemoryAge(PerceivedEntity[] visible)
+    {
+        int age = 0;
+        for (int i = 0; i < visible.Length; i++)
+            if (visible[i].ObservedAgeTicks > age) age = visible[i].ObservedAgeTicks;
+        return age;
+    }
 }

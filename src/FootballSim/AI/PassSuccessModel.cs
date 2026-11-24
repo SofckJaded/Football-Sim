@@ -1416,7 +1416,16 @@ public sealed class PassSuccessModel
                 if (point == 0 && distanceToLanePoint <= LaneContactReachMeters) return true;
 
                 float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
-                float available = timeToPoint - reaction;
+                // ai62 (task 2.1): a remembered defender's stale position may be nearer the lane than it
+                // says, so the step-in is credited the same bounded sighting doubt `Estimate` step 2
+                // charges against the arrival (up to MaxUncertaintySeconds). Check 3 ignored
+                // PositionUncertaintyMeters completely while the arrival term charged it, so the two
+                // halves of one lane question disagreed about the same stale sighting. A fresh sighting
+                // (uncertainty 0) is bit-for-bit unchanged.
+                float sightTimeBonus = Math.Clamp(
+                    opponent.PositionUncertaintyMeters * UncertaintyArrivalSecondsPerMeter,
+                    0f, MaxUncertaintySeconds);
+                float available = timeToPoint - reaction + sightTimeBonus;
                 if (available <= 0f) continue;
 
                 // Another cheap floor: even at a dead sprint from his current momentum nobody covers the
