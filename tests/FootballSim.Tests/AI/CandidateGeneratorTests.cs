@@ -240,4 +240,63 @@ public sealed class CandidateGeneratorTests
         openGen.GenerateOnBallCandidates(openObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
         Assert.DoesNotContain(openGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
     }
+
+    [Fact]
+    public void BoxedInMidfieldTouchlineCarrier_WithLowUtilityPass_StillOffersEscapeClearance()
+    {
+        var pitch = new PitchDimensions();
+        FootballerObservation obs = new()
+        {
+            SelfId = 8,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(0f, 0f, 31.5f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(0.4f, 0f, 31.5f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = 8,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = 8,
+            TacticalAnchorPosition = new Vector3(0f, 0f, 31.5f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                // Open backward recycle mate (clean lane, negative progress -> low utility in 0.05..0.45):
+                // Must NOT suppress ClearBall even though Pass.UtilityScore > 0.
+                new(5, TeamId.Home, TacticalRole.FullBack, new Vector3(-16f, 0f, 18f), Vector3.Zero, 0.9f),
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(16f, 0f, 29f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(1.5f, 0f, 31.2f), Vector3.Zero, 0.9f),
+                new(21, TeamId.Away, TacticalRole.DefensiveMidfielder, new Vector3(2.8f, 0f, 29.2f), Vector3.Zero, 0.9f),
+                new(22, TeamId.Away, TacticalRole.CenterBack, new Vector3(15.5f, 0f, 29.0f), Vector3.Zero, 0.9f)
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(pitch) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+
+        UtilityCandidate clearance = Assert.Single(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Clearance);
+        bool hasWeakPass = false;
+        foreach (UtilityCandidate c in generator.Candidates)
+        {
+            if (c.Key.Kind == CandidateKind.Pass && c.UtilityScore > 0f && c.UtilityScore < 0.55f)
+            {
+                hasWeakPass = true;
+            }
+        }
+        Assert.True(hasWeakPass, "fixture must contain a low-utility (< 0.55) pass that previously suppressed ClearBall");
+        Assert.True(clearance.UtilityScore >= 0.45f,
+            $"escape clearance ({clearance.UtilityScore:F3}) must coexist with weak pass options");
+    }
 }

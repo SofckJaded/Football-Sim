@@ -971,6 +971,37 @@ public sealed class PassInterceptionBlindSpotTests
             "stale sighting (+0.20 s sightTimeBonus in Check 3) must credit step-in time and block the lane");
     }
 
+    [Fact]
+    public void Check3_ClosingTowardLanePoint_RampsReactionSmoothly_NoBinaryCliff()
+    {
+        Vector2 from = Vector2.Zero;
+        Vector2 to = new(16f, 0f);
+        PassPlan plan = Planner.PlanGroundPassToRegion(from, to, arriveInSeconds: 1.25f, minPower01: 0.70f);
+        Assert.True(plan.Feasible);
+
+        // Stationary defender at (10, 2.25) cannot cross the 1.03 m gap inside available = flight - 0.25 s.
+        PerceivedEntity stationary = Opponent(31, new Vector2(10f, 2.25f), Vector2.Zero);
+        Assert.False(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, new[] { stationary }, TeamId.Home));
+
+        // Same lateral distance, closing perpendicularly at 0.85 m/s (below the old 1.0 m/s binary cliff):
+        // smooth reaction ramp shrinks reaction below 0.25 s and closes the lane.
+        PerceivedEntity subCliffRamp = Opponent(31, new Vector2(10f, 2.25f), new Vector2(0f, -0.85f));
+        Assert.True(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, new[] { subCliffRamp }, TeamId.Home),
+            "sub-1.0 m/s closing velocity must smoothly reduce reaction instead of hitting a binary 1.0 m/s cliff");
+
+        // Diagonal run back toward a down-lane sample point (low perpendicular closingInto = 0.45 m/s,
+        // moving up-lane toward pointOnLane = (10.0, 0)): directional closing speed must beat the old cliff.
+        PerceivedEntity diagonalBack = Opponent(32, new Vector2(10.4f, 2.25f), new Vector2(-1.5f, -0.45f));
+        Assert.False(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds,
+            new[] { diagonalBack with { EstimatedVelocity = Vector3.Zero } }, TeamId.Home));
+        Assert.True(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, new[] { diagonalBack }, TeamId.Home),
+            "sprinting diagonally toward a down-lane point must lower reaction even when perpendicular speed < 1.0 m/s");
+    }
+
     // =============================================================================================
     // Fixtures and helpers
     // =============================================================================================

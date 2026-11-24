@@ -380,6 +380,54 @@ public sealed class ReceptionPlannerTests
             $"AddReceptionCandidates must keep Sprint == true at {dist:F2} m (< 1.5 m cutoff)");
     }
 
+    [Fact]
+    public void InterceptPassRay_Fallback_SprintsAndSteersInsideOldCutoffs()
+    {
+        var aiNoPlanner = new AiRuntimeConfig { EnableReceptionPlanning = false };
+        var generator = new CandidateGenerator(new PitchDimensions(), ai: aiNoPlanner);
+
+        // Ball travelling along -Z from (0, 3) to (0, 0). Self at (0.80, 0) is 0.80 m from the ray:
+        // inside the old 1.5 m sprint cutoff, outside the unified 0.35 m sprint deadband.
+        FootballerObservation obsSprint = Receiving(
+            new Vector2(0f, 3.0f),
+            new Vector2(0f, -4.0f),
+            selfPosition: new Vector2(0.80f, 0f),
+            selfFacingXZ: new Vector2(-1f, 0f));
+        generator.GenerateOffBallCandidates(
+            obsSprint,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(0f, 0f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate sprintFallback = Assert.Single(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Intercept);
+        Assert.True(sprintFallback.Command.Sprint,
+            "InterceptPassRay fallback must sprint at 0.80 m off the ray (old 1.5 m cutoff removed)");
+
+        // Self at (0.25, 0) is inside the old 0.45 m arrival deadband, outside the unified 0.15 m deadband:
+        // fallback must still steer toward the ray at (0, 0) rather than halting into ball-facing idle.
+        var steerGenerator = new CandidateGenerator(new PitchDimensions(), ai: aiNoPlanner);
+        FootballerObservation obsSteer = Receiving(
+            new Vector2(0f, 3.0f),
+            new Vector2(0f, -4.0f),
+            selfPosition: new Vector2(0.25f, 0f),
+            selfFacingXZ: new Vector2(-1f, 0f));
+        steerGenerator.GenerateOffBallCandidates(
+            obsSteer,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(0f, 0f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate steerFallback = Assert.Single(steerGenerator.Candidates,
+            c => c.Key.Kind == CandidateKind.Intercept);
+        Assert.True(steerFallback.Command.DesiredMoveDirectionXZ.X < -0.5f,
+            $"InterceptPassRay fallback must steer toward ray at 0.25 m instead of stopping (got DesiredMoveDirectionXZ={steerFallback.Command.DesiredMoveDirectionXZ})");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers: one receiver picture, stated explicitly.
     // ---------------------------------------------------------------------------------------------

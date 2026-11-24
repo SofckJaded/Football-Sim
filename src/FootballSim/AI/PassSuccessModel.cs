@@ -1347,9 +1347,6 @@ public sealed class PassSuccessModel
             float alongRun = Vector2.Dot(runVelocity, direction);
             float closingInto = -MathF.Sign(signedPerpendicular) *
                                 Vector2.Dot(runVelocity, normal);
-            float reaction = closingInto >= ClosingIntoReactionSpeedMetersPerSecond
-                ? OpponentReactionSeconds * ClosingIntoReactionScale
-                : OpponentReactionSeconds;
 
             // Bounded, allocation-free point set (the buffer is shared by the query, see above).
             int lanePointCount = 0;
@@ -1406,6 +1403,18 @@ public sealed class PassSuccessModel
                 // whatever his run does. Only the first point (his own foot projection) is a *current*
                 // position; the later points are steps, so they are always asked as a timed reach.
                 if (point == 0 && distanceToLanePoint <= LaneContactReachMeters) return true;
+
+                // ai63 follow-up: measure closing speed toward this specific pointOnLane (combined with
+                // perpendicular closingInto) and ramp reaction smoothly over [0, 1.0 m/s] so an up-lane
+                // sprinter never hits a binary cliff at ClosingIntoReactionSpeedMetersPerSecond.
+                float closingToPoint = distanceToLanePoint > 1e-4f
+                    ? Vector2.Dot(runVelocity, pointOnLane - opponentXZ) / distanceToLanePoint
+                    : 0f;
+                float effectiveClosing = MathF.Max(closingInto, closingToPoint);
+                float closingShare01 = Math.Clamp(
+                    effectiveClosing / ClosingIntoReactionSpeedMetersPerSecond, 0f, 1f);
+                float reaction = OpponentReactionSeconds *
+                                 (1f - closingShare01 * (1f - ClosingIntoReactionScale));
 
                 float timeToPoint = BallTimeToDistance(power01, projection, flightTimeSeconds, length);
                 // ai62 (task 2.1): a remembered defender's stale position may be nearer the lane than it

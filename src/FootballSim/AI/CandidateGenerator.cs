@@ -2093,26 +2093,54 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
-            // The audit's "firm ball, not a roller": the crisp floor is the plan's minimum power, and the
-            // ball is timed to the receiver's arrival so the floor makes it *early* — it rolls into the
-            // grass ahead of him, which is the point of the pass. A later `TryAddGroundPass` re-solves the
-            // ball from this promise's own aim and arrival (same floor, same wanted flight), so the two
-            // plans are the same plan.
+            // ai63 follow-up: try the crisp floor first so firm through balls keep their pace; if the crisp
+            // ball would leave the pitch or roll past EffectivePromiseCatchRadiusMeters before the runner
+            // arrives, fall back to the 6.0 m/s paced mode (matching ChoosePromisedRunPower) instead of
+            // self-rejecting behind-the-line probes.
             float minPower01 = _passPlanner.MinCrispPower01(probeDistanceMeters);
+            float minArrivalSpeed = 0f;
             PassPlan probePlan = _passPlanner.PlanGroundPassToRegion(
                 ballXZ, spaceXZ, receiverReach.Seconds, minPower01);
-            if (!probePlan.Feasible)
+            bool crispRollsOut = false;
+            bool crispRolledPast = false;
+            bool crispChecked = probePlan.Feasible && CheckSpaceBallCatchable(
+                ballXZ, probePlan, receiverReach.Seconds, probeDistanceMeters,
+                out crispRollsOut, out crispRolledPast);
+            if (!crispChecked)
             {
-                Reject(mate.PlayerId, RejectionUnplannable);
-                continue;
+                if (crispRollsOut && !crispRolledPast)
+                {
+                    Reject(mate.PlayerId, RejectionSpaceRollsOut);
+                    continue;
+                }
+
+                minPower01 = 0f;
+                minArrivalSpeed = RunPassMinArrivalSpeedMetersPerSecond;
+                PassPlan pacedPlan = _passPlanner.PlanGroundPassToRegion(
+                    ballXZ, spaceXZ, receiverReach.Seconds, minPower01, minArrivalSpeed);
+                bool pacedRollsOut = false;
+                if (pacedPlan.Feasible && CheckSpaceBallCatchable(
+                        ballXZ, pacedPlan, receiverReach.Seconds, probeDistanceMeters,
+                        out pacedRollsOut, out _))
+                {
+                    probePlan = pacedPlan;
+                }
+                else
+                {
+                    if (!probePlan.Feasible && !pacedPlan.Feasible)
+                    {
+                        Reject(mate.PlayerId, RejectionUnplannable);
+                    }
+                    else
+                    {
+                        bool anyRollsOut = (probePlan.Feasible && crispRollsOut) ||
+                                           (pacedPlan.Feasible && pacedRollsOut);
+                        Reject(mate.PlayerId, anyRollsOut ? RejectionSpaceRollsOut : RejectionSpaceRolledPast);
+                    }
+                    continue;
+                }
             }
 
-            // AIB-10 (audit 2026-11-23, finding 4): the promise's main arrival is the ball's own flight, on
-            // purpose — the pass model's promise timing term is then exactly 1 and the lead is not
-            // double-charged (AUD-P3). The 2026-11-24 owner review (A1) adds the receiver's real arrival as the
-            // promise's separate contest moment: without it the estimator's `max(flight, receiverArrival)`
-            // collapses to the flight for this candidate and the AIB-10 defender-timing fix is a no-op (an
-            // 0.80 s ball its receiver only reaches at 1.30 s would price every defender at 0.80 s).
             var promise = new PassArrivalPromise(
                 spaceXZ,
                 probePlan.FlightTimeSeconds,
@@ -2120,41 +2148,12 @@ public sealed class CandidateGenerator : IAiStateResettable
                 confidence01,
                 ContestArrivalSeconds: receiverReach.Seconds);
 
-            // The physical question the promise cannot express is asked here, on the planner's own calibrated
-            // roll. AIB-10: at the receiver's real arrival, how far past the aim point is the ball? If it is
-            // outside <see cref="PromiseCatchRadiusMeters"/> the meeting is a fiction and the probe is refused
-            // rather than promised. The same measurement is the shared criterion every promised pass uses
-            // (<see cref="RolledPastPromiseMeters"/>), so the space probe and the advertised run cannot drift.
-            float ballDistanceAtReceiverArrival = _passPlanner.BallDistanceAtTime(
-                probePlan.Power01, receiverReach.Seconds);
-            float rolledPastMeters = RolledPastPromiseMeters(probePlan, ballXZ, promise);
-
-            // 2026-11-24 owner review (A2): the ball has to still be ON the pitch at that arrival. The probe
-            // is clamped <see cref="SpaceProbePitchMarginMeters"/> inside every line, but the ball keeps
-            // rolling from wherever the carrier is; a probe near a touchline or goal line can be rolled out of
-            // play before the receiver arrives. The test is the ball's centre against the pitch rectangle: a
-            // ball on the line is still in play, so this is the conservative reading and needs no extra
-            // inward margin. (BoundaryExitRisk01 prices this in the completion; it never refuses it.)
-            Vector2 ballAtReceiverArrival = ballXZ +
-                                            probePlan.AimDirectionXZ * ballDistanceAtReceiverArrival;
-            if (MathF.Abs(ballAtReceiverArrival.X) > _pitch.HalfLength ||
-                MathF.Abs(ballAtReceiverArrival.Y) > _pitch.HalfWidth)
-            {
-                Reject(mate.PlayerId, RejectionSpaceRollsOut);
-                continue;
-            }
-
-            if (rolledPastMeters > EffectivePromiseCatchRadiusMeters(probeDistanceMeters))
-            {
-                Reject(mate.PlayerId, RejectionSpaceRolledPast);
-                continue;
-            }
-
             option = new PassOption(
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
                 MaxLeadMeters: RunPassMaxLeadMeters,
                 MinPower01: minPower01,
+                MinArrivalSpeedMetersPerSecond: minArrivalSpeed,
                 PassType: KickIntentType.ThroughPass,
                 Tag: SpacePassTag,
                 HumanCaller: false,
@@ -2167,6 +2166,24 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
 
         return false;
+    }
+
+    private bool CheckSpaceBallCatchable(
+        Vector2 ballXZ,
+        in PassPlan plan,
+        float receiverArrivalSeconds,
+        float probeDistanceMeters,
+        out bool rollsOut,
+        out bool rolledPast)
+    {
+        float ballDistanceAtReceiverArrival = _passPlanner.BallDistanceAtTime(
+            plan.Power01, receiverArrivalSeconds);
+        Vector2 ballAtReceiverArrival = ballXZ + plan.AimDirectionXZ * ballDistanceAtReceiverArrival;
+        rollsOut = MathF.Abs(ballAtReceiverArrival.X) > _pitch.HalfLength ||
+                   MathF.Abs(ballAtReceiverArrival.Y) > _pitch.HalfWidth;
+        float rolledPastMeters = ballDistanceAtReceiverArrival - probeDistanceMeters;
+        rolledPast = rolledPastMeters > EffectivePromiseCatchRadiusMeters(probeDistanceMeters);
+        return !rollsOut && !rolledPast;
     }
 
     /// <summary>
@@ -2516,9 +2533,13 @@ public sealed class CandidateGenerator : IAiStateResettable
         // (<see cref="RolledPastPromiseMeters"/>), against the same shared <see cref="PromiseCatchRadiusMeters"/>.
         // It runs after the plan exists and before the completion floor so the reason names the physical fact
         // rather than being hidden behind the probability gate.
-        if (option.Promise.IsPresent && !option.HumanCaller)
+        if (!option.HumanCaller)
         {
-            float rolledPastMeters = RolledPastPromiseMeters(plan, ballXZ, option.Promise);
+            float rolledPastMeters = option.Promise.IsPresent
+                ? RolledPastPromiseMeters(plan, ballXZ, option.Promise)
+                : terms.ReceiverArrivalSeconds > plan.FlightTimeSeconds
+                    ? _passPlanner.BallDistanceAtTime(plan.Power01, terms.ReceiverArrivalSeconds) - plan.DistanceMeters
+                    : 0f;
             if (rolledPastMeters > EffectivePromiseCatchRadiusMeters(plan.DistanceMeters))
             {
                 Reject(mate.PlayerId, RejectionRolledPastPromise);
@@ -4214,7 +4235,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         for (int i = 0; i < _lastCandidates.Count; i++)
         {
             UtilityCandidate candidate = _lastCandidates[i];
-            if (candidate.Key.Kind == CandidateKind.Pass && candidate.UtilityScore > 0f)
+            if (candidate.Key.Kind == CandidateKind.Pass && candidate.UtilityScore >= 0.55f)
                 return true;
         }
         return false;
@@ -4776,16 +4797,17 @@ public sealed class CandidateGenerator : IAiStateResettable
                 return;
             }
 
-            // The pre-A7.3 path, kept exactly as it was: with reception planning off (or no feasible
-            // plan) the receiver steps onto the pass ray and cushions it.
+            // The pre-A7.3 path, kept as fallback when reception planning is off or returns no feasible plan:
+            // use the same tight approach deadband and sprint cutoff as AddReceptionCandidates so a
+            // receiver does not jog inside 1.5 m on a fast ball.
             Vector2 toIntercept = myInterceptXZ - selfXZ;
             float distIntercept = toIntercept.Length();
-            Vector2 moveDir = distIntercept > 0.45f
+            Vector2 moveDir = distIntercept > ReceptionArrivalDeadbandMeters
                 ? toIntercept / distIntercept
                 : dirToBall * 0.35f;
 
             var receiveCmd = new FootballerCommand(
-                moveDir, dirToBall, distIntercept > 1.5f, false,
+                moveDir, dirToBall, distIntercept > ReceptionSprintDeadbandMeters, false,
                 false, false, false, Vector3.Zero,
                 KickIntentType.None, Vector3.UnitX, 0f, 0f);
 

@@ -1048,6 +1048,33 @@ public sealed class Aib3PassPhysicsTests
         Assert.True(longSpace.TargetXZ.HasValue);
     }
 
+    [Fact]
+    public void SpaceProbe_LongSprint_FallsBackToPacedBallInsteadOfSelfRejecting()
+    {
+        // Carrier at (11, -6), onside stationary runner at (6, 4) (~11.2 m away), last defender at x=18 (y=-28):
+        // Far probe places spaceXZ at (20, 4) behind the offside line (13.45 m ball, 14 m / ~2.28 s sprint).
+        // A forced crisp 9 m/s ball arrives ~1.2 s early and rolls > 6 m past EffectivePromiseCatchRadiusMeters (~3.85 m);
+        // TryBuildSpacePassOption must fall back to the 6 m/s paced floor and emit ToSpace below crispFloor.
+        Vector2 ballXZ = new(11f, -6f);
+        PerceivedEntity runner = Mate(new Vector2(6f, 4f));
+        PerceivedEntity offsideDefender = Opponent(20, new Vector2(18f, -28f), Vector2.Zero);
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(
+            Observation(Player(ballXZ), runner, offsideDefender),
+            new Vector3(Pitch.HalfLength, 0f, 0f),
+            offsideLineProjX: 18f);
+
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+
+        Vector2 targetXZ = new(space.TargetXZ!.Value.X, space.TargetXZ.Value.Z);
+        float dist = Vector2.Distance(ballXZ, targetXZ);
+        float crispFloor = Planner.MinCrispPower01(dist);
+        Assert.True(space.Command.KickPower01 < crispFloor,
+            $"long sprint ToSpace must fall back below crispFloor ({crispFloor:F3}), got {space.Command.KickPower01:F3}");
+    }
+
     // =============================================================================================
     // Fixtures and helpers
     // =============================================================================================
