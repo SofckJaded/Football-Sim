@@ -3975,9 +3975,20 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <b>Review correction (2026-11-24):</b> the first cut exempted any body whose velocity along the carry
     /// axis was <c>&lt;= -1 m/s</c> — i.e. one running <i>straight at the carrier</i>. The sign was backwards:
     /// a head-on charge is the most blocking case there is, and it was being treated as "vacating the
-    /// corridor", so the carrier sprinted into a tackle (and the A4 build-up possession clause had to be
-    /// relaxed for it). A body vacates the corridor only in the two physical senses below; along-axis motion
-    /// towards the carrier can never exempt it.
+    /// corridor", so the carrier sprinted into a tackle. A body vacates the corridor only in the two physical
+    /// senses below; along-axis motion towards the carrier can never exempt it. (The relaxed A4 build-up
+    /// possession clause is <b>not</b> this bug: measurement keeps that fixture at 260/600 ticks with the sign
+    /// fixed, and at 260/600 with the AIB-07b advance term zeroed — the cost is the sprint decision itself; see
+    /// <c>CarrierDecisionGateTests</c>.)
+    ///
+    /// <para><b>Known precision limit (2026-11-24 owner review, note-level).</b> Exemption (a) is a pure speed
+    /// test, so a body almost <i>on</i> the carry axis (e.g. 0.05 m off it) drifting sideways at the 1 m/s
+    /// threshold is exempt even though he needs (2.2 − 0.05) / 1.0 ≈ 2.2 s to clear the corridor while the
+    /// carrier reaches him in a fraction of a second. The exact form would compare the time to clear the
+    /// corridor (<c>(SprintPathHalfWidthMeters − |lateral|) / lateral-out speed</c>) with the time to contact
+    /// (<c>ahead / max(0, MaxSprintSpeed − along-speed)</c>) and exempt only when he clears first. It is
+    /// deferred rather than shipped: it changes behaviour in a rare geometry and `ai59`'s evidence set is the
+    /// one under rendered review. Recorded in `docs/KNOWN_ISSUES.md`.</para>
     /// </summary>
     private static bool IsCarryPathBlocked(in FootballerObservation obs, Vector2 selfXZ, Vector2 direction)
     {
