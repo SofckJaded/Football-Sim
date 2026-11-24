@@ -204,8 +204,10 @@ public sealed class PassInterceptionBlindSpotTests
     /// <para><b>Pre-fix defect.</b>
     /// <c>receiverTerm · ((1 − LaneWeight)·defenderTerm + LaneWeight·lane)</c> returns <b>0.30</b> for
     /// <c>defenderTerm == 0, lane == 1</c> — exactly <see cref="CandidateGenerator.MinViableDeliveryCompletion01"/>,
-    /// so a clean corridor plus the lowered delivery floor admitted the guaranteed turnover. The fixed
-    /// multiplicative blend returns 0 (reported at the <see cref="PassSuccessModel.MinCompletion01"/> floor).</para>
+    /// so a clean corridor plus the lowered delivery floor admitted the guaranteed turnover. The shipped
+    /// lost-race factor (<see cref="PassSuccessModel.LostRaceFactor01"/>, zero at the brief's own
+    /// <c>defenderMargin &lt;= −0.20 s</c> with a 0.05 s ramp) prices it at the
+    /// <see cref="PassSuccessModel.MinCompletion01"/> floor instead.</para>
     /// </summary>
     [Fact]
     public void Pass2_LostArrivalRace_CannotBeRescuedByACleanLane()
@@ -235,7 +237,7 @@ public sealed class PassInterceptionBlindSpotTests
         Assert.True(preFixBlend >= CandidateGenerator.MinViableDeliveryCompletion01,
             "the pre-fix blend must clear the delivery floor, or the lane is not what admitted the pass");
 
-        // Fixed: the defender term multiplies, so a decisively lost race cannot be bought back.
+        // Fixed: the lost-race factor zeroes the lane share once the race is decisively lost.
         Assert.True(terms.CompletionProbability01 <= PassSuccessModel.MinCompletion01 + 1e-4f,
             $"a lost arrival race must price at the floor (measured {terms.CompletionProbability01:F3}, " +
             $"pre-fix blend {preFixBlend:F2})");
@@ -245,7 +247,7 @@ public sealed class PassInterceptionBlindSpotTests
     /// Case 2 through the real candidate gate (the brief's Task 3 audit): the cleaned-up corridor takes the
     /// <b>lowered</b> 0.30 delivery floor in <c>TryAddGroundPass</c>. With <c>defenderTerm == 0</c> and a
     /// clean corridor the pre-fix completion was exactly 0.30, which is not below the floor, so the pass to
-    /// a man whose arrival is already lost was emitted. The multiplicative blend prices it at 0.02 and the
+    /// a man whose arrival is already lost was emitted. The shipped lost-race factor prices it at 0.02 and the
     /// gate refuses it for <c>low-completion</c>.
     /// </summary>
     [Fact]
@@ -420,10 +422,10 @@ public sealed class PassInterceptionBlindSpotTests
 
     /// <summary>
     /// Negative regression 2: a genuinely open target keeps its pre-change completion exactly. With
-    /// <c>defenderTerm == 1</c> (nobody can reach the arrival) the multiplicative blend is
-    /// <c>1 − LaneWeight + LaneWeight·lane</c>, which is algebraically identical to the old additive form,
-    /// so a safe pass must not lose a single point of completion. The pinned 0.85 is the pre-change value
-    /// for this fixture (the same arithmetic <c>Aib2PassPhysicsTests</c> records for a 0.5-lane pass).
+    /// <c>defenderTerm == 1</c> (nobody can reach the arrival) the shipped blend is the original additive
+    /// <c>(1 − LaneWeight)·1 + LaneWeight·lane</c> and <see cref="PassSuccessModel.LostRaceFactor01"/> is 1, so
+    /// a safe pass must not lose a single point of completion. The pinned 0.85 is the pre-change value for this
+    /// fixture (the same arithmetic <c>Aib2PassPhysicsTests</c> records for a 0.5-lane pass).
     /// </summary>
     [Fact]
     public void Regression_OpenTargetWithClearReceiverAdvantage_PreservesTheOriginalCompletion()
@@ -451,6 +453,228 @@ public sealed class PassInterceptionBlindSpotTests
             Observation(Player(from, Vector2.UnitX), receiver, farAway), receiver, plan, lane);
         Assert.Equal(0f, withBystander.DefenderPressure01, 5);
         Assert.Equal(open.CompletionProbability01, withBystander.CompletionProbability01, 4);
+    }
+
+    // =============================================================================================
+    // Follow-up patch (2026-11-24 supervisor review): ramp boundaries, the launch-delay scope, the
+    // zero-reaction cone, the past-target step-in and the long-ball horizon
+    // =============================================================================================
+
+    /// <summary>
+    /// The brief's lost-race turn is a published ramp, not a hidden multiplier: the exact factor is asserted
+    /// at its boundaries and at the A8.3 switch margin the literal multiplicative blend used to delete.
+    ///
+    /// <para>Boundaries: margin −0.14 s → 1 (close contest preserved), −0.175 s → 0.5 (mid-ramp), −0.20 s and
+    /// below → 0 (decisively lost, the brief's own criterion). Above −0.15 s the factor is exactly 1, which is
+    /// what keeps the A8.3 switch ball above the delivery floor.</para>
+    /// </summary>
+    [Fact]
+    public void FollowUp_LostRaceFactor_RampBoundaries_AreTheBriefsCriterion()
+    {
+        Assert.Equal(0.20f, PassSuccessModel.DecisiveRaceMarginSeconds, 4);
+        Assert.Equal(0.05f, PassSuccessModel.DecisiveRaceRampSeconds, 4);
+
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(-0.14f), 5);   // A8.3 switch margin: preserved
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(-0.15f), 5);   // ramp start
+        Assert.Equal(0.5f, PassSuccessModel.LostRaceFactor01(-0.175f), 5); // mid-ramp
+        Assert.Equal(0f, PassSuccessModel.LostRaceFactor01(-0.20f), 5);   // the brief's criterion
+        Assert.Equal(0f, PassSuccessModel.LostRaceFactor01(-0.30f), 5);   // defenderTerm == 0 region
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(0.30f), 5);    // uncontested: identical formula
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(float.PositiveInfinity), 5);
+
+        // End-to-end: the A8.3 switch geometry (a far-side winger whose marker arrives 0.14 s before the ball)
+        // must keep the factor at 1 and stay above the delivery floor, and the completion must be exactly the
+        // published `additive blend × factor` applied to the same no-defender fixture.
+        Vector2 from = new(0.4f, 0f);
+        Vector2 to = new(10f, 20f);
+        var plan = new PassPlan(true, SimMath.SafeNormalize(to - from, Vector2.UnitX), to,
+            Power01: 1.00f, FlightTimeSeconds: 1.583f, DistanceMeters: Vector2.Distance(from, to));
+        PerceivedEntity receiver = Mate(MateId, to);
+        PerceivedEntity marker = Opponent(206, new Vector2(13f, 26f), Vector2.Zero);
+        FootballerObservation withMarker = Observation(Player(from, Vector2.UnitX), receiver, marker);
+        FootballerObservation withoutMarker = Observation(Player(from, Vector2.UnitX), receiver);
+
+        const float lane = 0.85f; // 0.85 keeps the no-defender completion below MaxCompletion01 so the
+                                  // ratio arithmetic below is exact rather than a clamped comparison
+        PassSuccessTerms contested = Model.Estimate(withMarker, receiver, plan, lane);
+        PassSuccessTerms open = Model.Estimate(withoutMarker, receiver, plan, lane);
+        Assert.InRange(contested.DefenderMarginSeconds, -0.18f, -0.08f); // the switch's close contest
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(contested.DefenderMarginSeconds), 5);
+        Assert.True(contested.CompletionProbability01 >= CandidateGenerator.MinViableDeliveryCompletion01,
+            $"the close-contest switch ball must stay viable ({contested.CompletionProbability01:F3}); " +
+            "the literal multiplicative blend priced it 0.213 and deleted it");
+
+        float defenderTerm = Math.Clamp(1f - contested.DefenderPressure01, 0f, 1f);
+        float defendedLane = (1f - PassSuccessModel.LaneWeight) * defenderTerm +
+                             PassSuccessModel.LaneWeight * lane;
+        float openBlend = (1f - PassSuccessModel.LaneWeight) + PassSuccessModel.LaneWeight * lane;
+        float expected = open.CompletionProbability01 *
+                         (defendedLane * PassSuccessModel.LostRaceFactor01(contested.DefenderMarginSeconds)) /
+                         openBlend;
+        Assert.Equal(expected, contested.CompletionProbability01, 4);
+    }
+
+    /// <summary>
+    /// Follow-up Bug 2: the defender horizon must not have a 3.5 s ceiling. A wide-open 4.0 s ball (no
+    /// defenders at all) used to fall into the no-defender fallback <c>horizon + reaction = 3.75 s</c>, which
+    /// is *before* its own 4.0 s contest: the resulting −0.25 s margin priced it as a decisively lost race at
+    /// the 0.02 floor. The horizon now matches <c>EstimateRaised</c> (contest + slack, no ceiling).
+    /// </summary>
+    [Fact]
+    public void FollowUp_UncontestedLongBall_IsNotFlooredByTheDefenderHorizon()
+    {
+        Vector2 from = Vector2.Zero;
+        Vector2 to = new(16f, 0f);
+        var plan = new PassPlan(true, Vector2.UnitX, to, Power01: 0.20f, FlightTimeSeconds: 4.00f,
+            DistanceMeters: 16f);
+        PerceivedEntity receiver = Mate(MateId, to);
+        PassSuccessTerms terms = Model.Estimate(
+            Observation(Player(from, Vector2.UnitX), receiver), receiver, plan, laneClearance01: 1f);
+
+        // The pre-fix shape: the capped horizon's no-defender fallback is before the contest.
+        const float oldClampedHorizon = 3.5f;
+        float oldMargin = oldClampedHorizon + PassSuccessModel.OpponentReactionSeconds - plan.FlightTimeSeconds;
+        Assert.Equal(-0.25f, oldMargin, 3);
+        Assert.Equal(0f, PassSuccessModel.LostRaceFactor01(oldMargin), 5); // the pre-fix floor
+
+        // Fixed: the fallback is after the contest, so the open ball keeps its real completion.
+        Assert.Equal(0f, terms.DefenderPressure01, 5);
+        Assert.True(terms.DefenderMarginSeconds > PassSuccessModel.DecisiveRaceMarginSeconds,
+            $"the no-defender margin must be positive ({terms.DefenderMarginSeconds:F2} s)");
+        Assert.Equal(1f, PassSuccessModel.LostRaceFactor01(terms.DefenderMarginSeconds), 5);
+        Assert.False(terms.LaneBlocked);
+        Assert.True(terms.CompletionProbability01 > 0.5f,
+            $"an uncontested 4.0 s ball must not be floored by the horizon (measured {terms.CompletionProbability01:F3})");
+    }
+
+    /// <summary>
+    /// Follow-up Bug 1, first half: the passer's turn lead-in is charged only inside the close-range cone.
+    /// Execution has no kick wind-up, so phase-shifting a distant defender invents blocks on clean long balls
+    /// and hides a distant runner the shift moves past the ball's arrival window. The helper is the one owner
+    /// of the scope, and the behavioural half proves a distant defender's verdict is invariant to the delay.
+    /// </summary>
+    [Fact]
+    public void FollowUp_DistantDefender_IsNotPhaseShiftedByTheLaunchLeadIn()
+    {
+        Vector2 from = Vector2.Zero;
+
+        // The rule itself (one owner, used by both the reach bound and the sampled run).
+        Assert.Equal(0.15f, PassSuccessModel.EffectiveLaunchDelaySeconds(from, new Vector2(4.0f, 0f), 0.15f), 5);
+        Assert.Equal(0f, PassSuccessModel.EffectiveLaunchDelaySeconds(from, new Vector2(4.6f, 0f), 0.15f), 5);
+        Assert.Equal(0f, PassSuccessModel.EffectiveLaunchDelaySeconds(from, new Vector2(20f, 0f), 0.15f), 5);
+        Assert.Equal(0f, PassSuccessModel.EffectiveLaunchDelaySeconds(from, new Vector2(1f, 0f), 0f), 5);
+        Assert.True(PassSuccessModel.CloseRangeLaunchConeMeters <= 4.5f);
+
+        // Behavioural half: a defender 20 m from the launch point (the past-target closing runner fixture) gets
+        // the same verdict whether or not the caller supplies the turn lead-in.
+        Vector2 to = new(18f, 0f);
+        PassPlan plan = Planner.PlanGroundPassToRegion(from, to, arriveInSeconds: 4f);
+        Assert.True(plan.Feasible);
+        PerceivedEntity distant = Opponent(14, new Vector2(20f, 2.5f), new Vector2(-3f, -1f));
+        Assert.True(Vector2.Distance(new Vector2(20f, 2.5f), from) > PassSuccessModel.CloseRangeLaunchConeMeters,
+            "the fixture's defender must be outside the close-range cone");
+        Assert.Equal(
+            Model.IsLaneBlocked(from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds,
+                new[] { distant }, TeamId.Home, launchDelaySeconds: 0f),
+            Model.IsLaneBlocked(from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds,
+                new[] { distant }, TeamId.Home, launchDelaySeconds: PassSuccessModel.MaxPassLaunchDelaySeconds));
+    }
+
+    /// <summary>
+    /// Follow-up Bug 1, second half: the launch cone is a real <b>zero-reaction step-in</b> through the one
+    /// reach model, not a duplicate of the sampled run. Fixture: a short 8 m ball (minimum power, ~0.95 s
+    /// flight), the carrier turned 180° from the aim (0.15 s lead-in), and a stationary defender 2 m off the
+    /// lane 3.4 m past the launch point — his constant-velocity run stays 2 m from the ball's path (outside
+    /// the 1.24 m sampled reach), his own-foot step-in has no time left of the 0.25 s reaction, and the
+    /// down-lane midpoint is too far to step to; only the zero-reaction cone can reach him.
+    /// </summary>
+    [Fact]
+    public void FollowUp_CloseRangeLaunchCone_CatchesAnOpponentTheSampledRunMisses()
+    {
+        Vector2 from = Vector2.Zero;
+        Vector2 to = new(8f, 0f);
+        PassPlan plan = Planner.PlanGroundPassToRegion(from, to, arriveInSeconds: 3f);
+        Assert.True(plan.Feasible);
+        float flight = plan.FlightTimeSeconds;
+        Assert.True(flight < 1.5f, $"the fixture needs the gentlest short ball ({flight:F2} s)");
+
+        Vector2 facing = -Vector2.UnitX; // the pass demands a reversal, so the lead-in is the maximum
+        Vector2 defenderPosition = new(3.4f, 2.0f);
+        PerceivedEntity covering = Opponent(14, defenderPosition, Vector2.Zero);
+        FootballerObservation observation = Observation(
+            Player(from, facing), Mate(MateId, to), covering);
+
+        float delay = PassSuccessModel.LaunchDelaySeconds(observation, plan.AimDirectionXZ);
+        Assert.Equal(PassSuccessModel.MaxPassLaunchDelaySeconds, delay, 3);
+        Assert.Equal(delay, PassSuccessModel.EffectiveLaunchDelaySeconds(from, defenderPosition, delay), 4);
+
+        // The sampled run cannot see him: a stationary body 2 m off the lane stays 2 m from the ball.
+        float closest = ClosestSampledApproach(covering, from, to, plan.Power01, flight, delay, out _);
+        Assert.Equal(2f, closest, 2);
+        Assert.True(closest > PassSuccessModel.LaneStepInReachMeters,
+            $"the sampled run must miss the fixture's defender ({closest:F2} m), or the cone is not isolated");
+
+        // The cone's own arithmetic: zero reaction, the turn lead-in plus the ball's time to his foot point.
+        Assert.True(Planner.TryGetFlightTime(plan.Power01, 3.4f, out float coneArrival));
+        float coneAvailable = delay + coneArrival;
+        float coneMustRun = Vector2.Distance(defenderPosition, new Vector2(3.4f, 0f)) -
+                            PassSuccessModel.LaneStepInReachMeters;
+        ReachEstimate coneStep = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(covering), new Vector2(3.4f, 0f), coneAvailable);
+        Assert.True(coneStep.Reachable && coneStep.Seconds <= coneAvailable,
+            $"the fixture must be reachable by a zero-reaction step in {coneAvailable:F2} s " +
+            $"(reach {coneStep.Seconds:F2} s, must run {coneMustRun:F2} m)");
+
+        // The down-lane midpoint step-in is genuinely out of reach, so the cone is what catches him.
+        Assert.True(Planner.TryGetFlightTime(plan.Power01, 5.7f, out float midTime));
+        float midAvailable = midTime - PassSuccessModel.OpponentReactionSeconds;
+        ReachEstimate midStep = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(covering), new Vector2(5.7f, 0f), MathF.Max(midAvailable, 0.01f));
+        Assert.False(midStep.Reachable && midStep.Seconds <= midAvailable,
+            $"the midpoint step-in must be out of reach, or the cone is not isolated " +
+            $"(reach {midStep.Seconds:F2} s against {midAvailable:F2} s)");
+
+        Assert.True(Model.IsLaneBlocked(plan, observation),
+            "a body 2 m off the lane at the launch point that can step in during the turn must block the ball; " +
+            "the constant-velocity sampled run alone misses him");
+    }
+
+    /// <summary>
+    /// Follow-up: a defender past the target whose run closes on the arrival takes the *step-in* test at
+    /// <c>targetXZ</c> (the brief's Task 1.3 endpoint half), and the fixture keeps the sampled run out of the
+    /// way so the step-in is what catches him: he starts 2 m past the target, jogs back toward it, and his
+    /// constant-velocity path never comes within reach of the ball's flight.
+    /// </summary>
+    [Fact]
+    public void FollowUp_PastTargetClosingRunner_IsCaughtByTheArrivalStepIn()
+    {
+        Vector2 from = Vector2.Zero;
+        Vector2 to = new(18f, 0f);
+        PassPlan plan = Planner.PlanGroundPassToRegion(from, to, arriveInSeconds: 4f); // slow ball
+        Assert.True(plan.Feasible);
+        float flight = plan.FlightTimeSeconds;
+
+        Vector2 start = new(to.X + 2f, 2.5f);
+        Vector2 velocity = new(-0.2f, -0.2f); // closing on the target: dot(run, target - start) > 0
+        PerceivedEntity recovering = Opponent(14, start, velocity);
+        Assert.True(Vector2.Dot(velocity, to - start) > 0f);
+        Assert.True(Vector2.Dot(start - from, Vector2.UnitX) > plan.DistanceMeters +
+                    PassSuccessModel.LaneContactReachMeters);
+
+        // The sampled run misses: the ball is only near his position early in the flight, when it is still far
+        // down the lane from him.
+        float closest = ClosestSampledApproach(recovering, from, to, plan.Power01, flight, 0f, out _);
+        Assert.True(closest > PassSuccessModel.LaneStepInReachMeters,
+            $"the sampled run must miss the fixture's defender ({closest:F2} m) so the step-in is isolated");
+
+        Assert.True(Model.IsLaneBlocked(
+                from, plan.TargetXZ, plan.Power01, flight, new[] { recovering }, TeamId.Home),
+            "a defender past the target whose run closes back onto the arrival can step onto the ball there");
+
+        // A standing or receding past-target body stays clear (A6.B8): the arrival race is the defender term's.
+        PerceivedEntity standing = Opponent(15, start, Vector2.Zero);
+        Assert.False(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, flight, new[] { standing }, TeamId.Home));
     }
 
     // =============================================================================================

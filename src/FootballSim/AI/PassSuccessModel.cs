@@ -248,7 +248,7 @@ public sealed class PassSuccessModel
     /// defender, not only for one whose own run already carries him down the lane. A defender standing in
     /// the middle of the lane and stepping <i>into</i> it reads the pass and moves down-lane; the old
     /// <c>if (alongRun &lt;= 0f) break;</c> stopped the loop at his own foot before that point was asked
-    /// about, so a covering/stacionary defender abeam of the corridor was invisible even where the reach
+    /// about, so a covering/stationary defender abeam of the corridor was invisible even where the reach
     /// model says he can step into the ball's later path.
     /// </summary>
     public const float LaneTestPointDedupMeters = 0.5f;
@@ -530,6 +530,46 @@ public sealed class PassSuccessModel
         return Math.Clamp(seconds, MinPassLaunchDelaySeconds, MaxPassLaunchDelaySeconds);
     }
 
+    /// <summary>
+    /// The share of the arrival/lane blend that survives a lost arrival race, given the defender margin in
+    /// seconds (the earliest defender's arrival minus the contest moment; negative when the defender wins).
+    ///
+    /// One owner of the ramp, shared by <see cref="Estimate"/> and by any caller that wants to read the exact
+    /// charge (a trace or a test). The brief's own audit criterion for a guaranteed turnover is the turn
+    /// point: at and below −<see cref="DecisiveRaceMarginSeconds"/> the factor is 0 and a clean lane can never
+    /// buy the pass back; above it a close contest keeps the additive lane share, fading out over
+    /// <see cref="DecisiveRaceRampSeconds"/> so there is no pricing cliff at the criterion. Values above
+    /// −(margin − ramp) are exactly 1, which is what keeps an uncontested target bit-identical to the
+    /// pre-fix formula.
+    /// </summary>
+    public static float LostRaceFactor01(float defenderMarginSeconds) =>
+        !float.IsFinite(defenderMarginSeconds) ||
+        defenderMarginSeconds >= -DecisiveRaceMarginSeconds + DecisiveRaceRampSeconds
+            ? 1f
+            : defenderMarginSeconds <= -DecisiveRaceMarginSeconds
+                ? 0f
+                : (defenderMarginSeconds + DecisiveRaceMarginSeconds) / DecisiveRaceRampSeconds;
+
+    /// <summary>
+    /// The launch lead-in actually charged to one opponent: the passer's body-turn delay
+    /// (<see cref="LaunchDelaySeconds"/>) applies only inside the close-range launch cone — an opponent
+    /// within <see cref="CloseRangeLaunchConeMeters"/> of the launch point. Grouping everyone on the pitch
+    /// into the phase shift was a measured defect (2026-11-24 follow-up, supervisor Bug 1): execution has no
+    /// kick wind-up, so shifting a defender twenty metres away by 0.05–0.15 s of phantom travel both invents
+    /// blocks on clean long balls and hides a distant runner the shift moves past the ball's arrival window.
+    /// Beyond the cone the instant-launch reading is the honest one; the play is a normal lane/arrival
+    /// question there.
+    /// </summary>
+    public static float EffectiveLaunchDelaySeconds(
+        Vector2 fromXZ, Vector2 opponentXZ, float launchDelaySeconds)
+    {
+        if (!float.IsFinite(launchDelaySeconds) || launchDelaySeconds <= 0f) return 0f;
+        if (!SimMath.IsFinite(fromXZ) || !SimMath.IsFinite(opponentXZ)) return 0f;
+        return Vector2.Distance(fromXZ, opponentXZ) <= CloseRangeLaunchConeMeters
+            ? launchDelaySeconds
+            : 0f;
+    }
+
     private readonly PassPlanner _planner;
 
     public PassSuccessModel(PassPlanner planner)
@@ -625,7 +665,13 @@ public sealed class PassSuccessModel
         float defenderMargin = float.PositiveInfinity;
         float defenderArrival = float.PositiveInfinity;
         float defenderUncertainty = 0f;
-        float horizon = Math.Clamp(contestSeconds + DefenderHorizonSlackSeconds, 1f, 3.5f);
+        // 2026-11-24 pass-interception follow-up (supervisor Bug 2): no 3.5 s ceiling on the horizon. The
+        // flight is clamped to 6 s and an unreachable receiver's arrival is `flight + 1`, so a real ground
+        // ball can contest at up to ~7 s; a 3.5 s horizon made the no-defender fallback `horizon + reaction`
+        // (3.75 s) land *before* the contest (~3.95 s+) and produced a decisive lost race on a perfectly open
+        // long ball — the lost-race factor then priced it at the 0.02 floor. EstimateRaised never had the
+        // ceiling; the two estimators now share one form.
+        float horizon = MathF.Max(contestSeconds + DefenderHorizonSlackSeconds, 1f);
         // AIB-02b: the arrival window a defender has to overlap to be crowding the reception, not just
         // losing the race for it: one arrival scale after the ball (AIB-10: and after the receiver's
         // arrival, the same "when can the ball be played" moment the defender term uses).
@@ -701,12 +747,11 @@ public sealed class PassSuccessModel
         //   • defenderTerm == 0 (defenderMargin &lt;= −0.25 s) ⇒ factor 0 ⇒ completion 0, semantics of Case 2;
         //   • defenderTerm == 1 (defenderMargin &gt;= 0.25 s) ⇒ factor 1 and `(1−w)·1 + w·lane`, which is the
         //     original formula — an uncontested target loses nothing;
-        // and the ramp makes the audit's own −0.20 s turn decisively lost rather than a pricing cliff.
+        // and the ramp makes the audit's own −0.20 s turn decisively lost rather than a pricing cliff. The
+        // ramp itself is <see cref="LostRaceFactor01"/>, one owner, published so a trace or a test can read
+        // the exact factor the completion was charged.
         float defendedLane = (1f - LaneWeight) * defenderTerm + LaneWeight * lane;
-        float raceFactor = defenderMargin <= -DecisiveRaceMarginSeconds
-            ? 0f
-            : Math.Clamp(
-                (defenderMargin + DecisiveRaceMarginSeconds) / DecisiveRaceRampSeconds, 0f, 1f);
+        float raceFactor = LostRaceFactor01(defenderMargin);
         float completion = receiverTerm
                            * defendedLane
                            * raceFactor
@@ -1230,14 +1275,20 @@ public sealed class PassSuccessModel
             float projectionClamped = Math.Clamp(projectionRaw, 0f, length);
             Vector2 closestOnSegment = fromXZ + direction * projectionClamped;
             float distanceToSegment = Vector2.Distance(opponentXZ, closestOnSegment);
+            // 2026-11-24 follow-up (supervisor Bug 1): the turn lead-in is charged only inside the close-range
+            // cone. Execution has no kick wind-up, so phase-shifting a defender twenty metres away by 0.05–0.15 s
+            // of phantom travel is a two-sided error (invented blocks on clean long balls, hidden runs for a
+            // distant crossing defender); beyond the cone the honest reading is instant launch.
+            float effectiveLaunchDelay = EffectiveLaunchDelaySeconds(fromXZ, opponentXZ, launchDelay);
             float maxOpponentReach =
-                interceptReach + sightDoubt + OpponentSprintSpeed * (flight + launchDelay);
+                interceptReach + sightDoubt + OpponentSprintSpeed * (flight + effectiveLaunchDelay);
             if (distanceToSegment > maxOpponentReach) continue;
 
             // 1. Their current run, sampled against the ball's own flight: if the two ever come within
             //    touch range, the pass runs straight into them. The pass-interception fix (task 4) charges
-            //    the passer's turn lead-in to the defender's clock: the ball leaves after the body turns, so
-            //    a closing presser is a stride further into the lane than the instant-launch reading says.
+            //    the passer's turn lead-in to the defender's clock inside the close-range cone only: the ball
+            //    leaves after the body turns, so a close presser is a stride further into the lane than the
+            //    instant-launch reading says.
             float speed = opponentVelocity.Length();
             Vector2 runVelocity = speed > OpponentSprintSpeed
                 ? opponentVelocity * (OpponentSprintSpeed / speed)
@@ -1246,27 +1297,35 @@ public sealed class PassSuccessModel
             {
                 float t = flight * sample / samples;
                 if (Vector2.Distance(
-                        opponentXZ + runVelocity * (t + launchDelay), ballPath[sample]) <=
+                        opponentXZ + runVelocity * (t + effectiveLaunchDelay), ballPath[sample]) <=
                     interceptReach + sightDoubt)
                 {
                     return true;
                 }
             }
 
-            // 2. Close-range launch cone (task 4). A body within reach of the launch point, in the first
-            //    few metres of the lane, will be on the ball when it is struck; he does not need the full
-            //    OpponentReactionSeconds to shin-block a ball played past him, because he has already
-            //    noticed the carrier and is standing in front of the foot. This is the Case 3 blind spot:
-            //    the step-in test's `timeToPoint - reaction` is negative for a 1.5–2.0 m point, so a body
-            //    that close was skipped even though the physical geometry says it intercepts.
+            // 2. Close-range launch cone (task 4 / follow-up Bug 1). A body standing beside the launch point,
+            //    in the first few metres of the lane, can accelerate across into the ball during the passer's
+            //    turn and the ball's early flight; he has already noticed the carrier and is in front of the
+            //    foot, so the full OpponentReactionSeconds is the wrong charge. This is deliberately a
+            //    zero-reaction *step-in* through the one reach model, not a second sampled run: the sampled run
+            //    extrapolates the belief's constant velocity, while this asks whether a body beside the launch
+            //    can actually get a foot to the ball (turn cost, acceleration and closing velocity included).
+            //    It is the Case 3 blind spot: the step-in test's `timeToPoint - reaction` is negative for a
+            //    1.5–2.0 m point, so a body that close used to be skipped entirely.
             if (projectionRaw >= -LaneContactReachMeters &&
-                projectionRaw <= CloseRangeLaunchConeMaxProjectionMeters &&
-                Vector2.Distance(opponentXZ, fromXZ) <= CloseRangeLaunchConeMeters)
+                projectionRaw <= CloseRangeLaunchConeMaxProjectionMeters)
             {
                 float coneArrival = BallTimeToDistance(power01, projectionClamped, flightTimeSeconds, length);
-                Vector2 conePosition = opponentXZ + runVelocity * (launchDelay + coneArrival);
-                if (Vector2.Distance(conePosition, closestOnSegment) <= interceptReach + sightDoubt)
-                    return true;
+                float coneAvailable = effectiveLaunchDelay + coneArrival;
+                float coneMustRun = distanceToSegment - interceptReach;
+                if (coneMustRun <= 0f) return true;
+                if (coneMustRun <= (speed + OpponentSprintSpeed) * coneAvailable)
+                {
+                    ReachEstimate coneStep = TimeToReachModel.ToPoint(
+                        opponentKinematics, closestOnSegment, coneAvailable);
+                    if (coneStep.Reachable && coneStep.Seconds <= coneAvailable) return true;
+                }
             }
 
             // 3. They can also see the pass and step into the lane. Compare what the step actually needs
@@ -1281,7 +1340,7 @@ public sealed class PassSuccessModel
             //    LaneLookaheadSamples lookahead points in the direction of his own run are tested too.
             //
             //    Pass-interception fix (task 2): the fixed down-lane points are tested for every nearby
-            //    defender, not only for one whose run already points down the lane. A covering/stacionary
+            //    defender, not only for one whose run already points down the lane. A covering/stationary
             //    defender who reads the pass and steps *into* the corridor is otherwise invisible: his own
             //    along-lane velocity is not positive, and `if (alongRun <= 0f) break;` used to stop the
             //    loop at his perpendicular foot before the midpoint/arrival points were asked about.

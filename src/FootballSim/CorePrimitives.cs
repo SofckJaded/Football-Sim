@@ -747,12 +747,28 @@ public enum TeamId
 /// 4.5 m launch cone that needs no 0.25 s reaction time, so a body standing or lunging in front of the foot is a
 /// shin-block rather than an invisible instant-launch pass. Trajectories differ from version 59 wherever a
 /// carrier's pass lane, pass choice or completion changed.</item>
+/// <item><c>AiBehaviour 61</c> — the 2026-11-24 supervisor review of version 60
+/// (<c>docs/task-pass-interception-fixes.md</c> follow-up; report section 11): three corrections to the pass
+/// lane and blend fixes, one published-ramp cleanup. (1) <b>The turn lead-in is charged only inside the
+/// close-range launch cone</b>: version 60 added 0.05–0.15 s of phantom travel to <i>every</i> opponent in the
+/// sampled run, which invented blocks on clean long balls and hid a distant crossing defender shifted past the
+/// ball's arrival window; <see cref="AI.PassSuccessModel.EffectiveLaunchDelaySeconds"/> is the one owner of the
+/// scope. (2) <b>The close-range launch cone is a real zero-reaction step-in</b> through the one reach model,
+/// not a duplicate constant-velocity projection of the sampled run: a body beside the launch point can be
+/// caught when both the sampled run and the foot step-in miss it. (3) <b>The defender horizon has no stale
+/// 3.5 s ceiling</b>: <see cref="AI.PassSuccessModel.Estimate"/> matched <c>EstimateRaised</c>'s uncapped form,
+/// so a wide-open ground ball whose contest is 3.95 s or longer is no longer priced as a decisively lost race
+/// at the 0.02 floor by the no-defender fallback. (4) The lost-race ramp is one published owner
+/// (<see cref="AI.PassSuccessModel.LostRaceFactor01"/>) with the shipped −0.20 s / 0.05 s shape. Trajectories
+/// differ from version 60 wherever a long ball or a mid/long-range lane question decided; the 1500-tick drift
+/// fingerprint is unchanged (that window contains no affected decision) and stays at its <c>ai60</c>
+/// capture.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 60;
+    public const int AiBehaviour = 61;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
