@@ -40,12 +40,19 @@ public sealed class PassSuccessModelTests
         PerceivedEntity receiver = Mate(MateId, new Vector2(15f, 0f), new Vector2(7f, 0f));
         FootballerObservation observation = Observation(receiver);
 
-        PassPlan goalSide = ManualPlan(new Vector2(21f, 0f), 0.6f, 17.5f);
-        PassPlan behindHim = ManualPlan(new Vector2(7f, 0f), 0.6f, 7.0f);
+        // 2026-11-24 pass-interception fix: this fixture used a 17.5 s flight, which Estimate clamps to 6 s.
+        // With no defender that made the defender margin −2.25 s (a horizon artefact), so the defender term
+        // was zero and the old additive lane blend masked it by scoring the lane's 30 % share. Realistic
+        // flights keep the question on the receiver side, which is what this test is about, and both terms
+        // stay finite; the assertions below pin that (DefenderPressure01 == 0 in both plans).
+        PassPlan goalSide = ManualPlan(new Vector2(21f, 0f), 0.6f, 1.55f);
+        PassPlan behindHim = ManualPlan(new Vector2(7f, 0f), 0.6f, 0.45f);
 
         PassSuccessTerms ahead = Model.Estimate(observation, receiver, goalSide, 1f);
         PassSuccessTerms behind = Model.Estimate(observation, receiver, behindHim, 1f);
 
+        Assert.Equal(0f, ahead.DefenderPressure01, 5);
+        Assert.Equal(0f, behind.DefenderPressure01, 5);
         Assert.True(ahead.ReceiverMarginSeconds > behind.ReceiverMarginSeconds);
         Assert.True(ahead.CompletionProbability01 > behind.CompletionProbability01,
             $"a pass into the run ({ahead.CompletionProbability01:F2}) must beat one behind the runner ({behind.CompletionProbability01:F2})");

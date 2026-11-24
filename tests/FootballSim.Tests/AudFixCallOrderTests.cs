@@ -320,14 +320,23 @@ public sealed class AudFixCallOrderTests
     /// follows the path ahead rather than the nearest body. The AUD-13c property this constant guards is still
     /// pinned by the zero-delay tests above; this remains a bit-for-bit tripwire for the shipped path. The
     /// fix report is <c>docs/Bug_Fixes_2026-11-23_AI57Review.md</c>.</para>
+    ///
+    /// <para><b>2026-11-24 pass-interception re-capture (<c>ai60-rs1</c>):</b> the proposal-layer lane and
+    /// completion fixes of <c>docs/task-pass-interception-fixes.md</c> move the shipped path in this match —
+    /// a defender sprinting back into the corridor from past the receiver is now sampled, the step-in test
+    /// asks down-lane points, the passer's turn lead-in is charged to a close presser, and a clean lane no
+    /// longer rescues a decisively lost arrival race — so the constant is re-captured once at
+    /// <c>ai60-rs1</c>. The AUD-13c property is still pinned by the zero-delay tests above; this remains a
+    /// bit-for-bit drift tripwire, not a claim that AI changes never move a match. The fix report is
+    /// <c>docs/Bug_Fixes_2026-11-24_PassInterception.md</c>.</para>
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=42.810093,-1.0869186|players=1:-36.532524,0.046564113;2:6.3056135,22.778234;" +
-        "3:6.272293,-22.515945;4:-2.5230706,8.314817;5:-2.5172837,-8.037674;6:28.9981,2.115899;" +
-        "7:37.30028,18.132294;8:36.05258,-5.559685;9:37.053196,5.3325124;10:21.811684,5.5148487;" +
-        "11:39.981785,-3.0362902;12:51.29156,-0.2419245;13:42.776127,-0.7134412;14:41.06476,-14.278911;" +
-        "15:41.3167,2.0194552;16:42.581493,-0.016459892;17:23.386175,0.21386914;18:8.174484,14.822037;" +
-        "19:17.37637,6.848899;20:4.637503,0.20617434;21:16.286549,-6.421064;22:8.162723,-14.398967;" +
-        "|analytics=1052,448,400,232,12,5,10,2,1,0,0,0|calls=189,4313,182,0|" +
+        "tick=1500|ball=14.641948,-19.867302|players=1:-42.56437,-2.5123823;2:-11.704586,17.117094;" +
+        "3:13.6756,-18.205042;4:-12.097073,6.8285804;5:-11.286352,-11.553953;6:-4.3457413,-1.0765203;" +
+        "7:20.969486,11.716126;8:4.681759,1.8024306;9:17.622564,-2.018181;10:0.24247992,-6.2538095;" +
+        "11:14.793205,-19.67303;12:46.296852,-1.8189048;13:23.368748,19.288918;14:22.941374,-21.422646;" +
+        "15:23.272827,5.4988656;16:23.573807,-7.259842;17:15.327851,-3.042023;18:-1.00976,20.145355;" +
+        "19:17.938532,-12.535996;20:-13.745039,-1.8923361;21:7.182253,-13.650075;22:-5.256783,-19.034576;" +
+        "|analytics=908,592,421,250,10,4,8,1,0,0,0,0|calls=256,5731,236,2|" +
         "combinations=4,0,0,0,2,0,1";
 }

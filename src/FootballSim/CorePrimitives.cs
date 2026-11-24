@@ -725,12 +725,34 @@ public enum TeamId
 /// review item (freeing Marker/CoverDefender from the line ceiling) is <b>documented as measured and deferred</b>:
 /// all three forms moved the box-cross structural fixture below its protected 5 m floor. Trajectories differ from
 /// version 58 wherever a carrier, passer or receiver decided.</item>
+/// <item><c>AiBehaviour 60</c> — the 2026-11-24 pass-interception brief
+/// (<c>docs/task-pass-interception-fixes.md</c>, report <c>docs/Bug_Fixes_2026-11-24_PassInterception.md</c>), four
+/// proposal-layer fixes to <see cref="AI.PassSuccessModel"/>'s lane test and completion blend. (1) <b>A defender
+/// sprinting back into the corridor from past the receiver is seen</b>: the segment guard was a projection band
+/// that skipped any opponent more than one contact reach past the target before the sampled run was evaluated, so
+/// the audit's Cases 1/2 intercepted a 19.4 m/s and a 14.8 m/s ball invisibly; it is now a coarse reachability
+/// bound on the clamped segment. A defender past the target takes the step-in test only when his run is closing on
+/// the arrival — a standing or receding body stays clear, which is A6.B8's rule and the arrival term's job. (2)
+/// <b>The step-in test asks down-lane points, not only the perpendicular foot</b>: the foot projection, the
+/// down-lane midpoint and (for a defender level with the receiving half) the arrival point are all tested, and the
+/// <c>if (alongRun &lt;= 0f) break;</c> that stopped the loop for a stationary/back-pedalling covering defender is
+/// gone. (3) <b>A clean lane cannot rescue a decisively lost arrival race</b>: with the additive blend a
+/// <c>defenderTerm == 0, lane == 1</c> pass priced exactly the 0.30 delivery floor, so the lowered clean-corridor
+/// floor admitted the guaranteed turnover. A bounded lost-race factor (zero at the brief's own
+/// <c>defenderMargin &lt;= −0.20 s</c> criterion, 0.05 s ramp) now zeroes the lane share; the brief's literal
+/// multiplicative blend was measured and refined because it deleted a viable A8.3 switch ball (defender only
+/// 0.14 s early, priced 0.453 → 0.213), and both required invariants hold exactly (defenderTerm == 1 unchanged,
+/// defenderTerm == 0 still zero). (4) <b>A turning passer's close presser is priced</b>: the close-range lane test
+/// charges the body-turn lead-in (<c>AgilityTurnRate</c>-derived, 0.05–0.15 s) to the defender's clock and adds a
+/// 4.5 m launch cone that needs no 0.25 s reaction time, so a body standing or lunging in front of the foot is a
+/// shin-block rather than an invisible instant-launch pass. Trajectories differ from version 59 wherever a
+/// carrier's pass lane, pass choice or completion changed.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 59;
+    public const int AiBehaviour = 60;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;
