@@ -1358,6 +1358,13 @@ public sealed class PassSuccessModel
                 // Past the target: only a run closing back onto the arrival can step onto the ball there.
                 if (Vector2.Dot(runVelocity, toXZ - opponentXZ) <= 0f) continue;
                 lanePoints[lanePointCount++] = length;
+                if (alongRun < 0f)
+                {
+                    // ai63 (Task 3): a defender running back up-lane toward the passer can intercept mid-lane
+                    // short of targetXZ, so sample up-lane lookahead points along his closing run too.
+                    AddRunLookaheadPoints(
+                        lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
+                }
             }
             else if (projectionRaw < -LaneContactReachMeters)
             {
@@ -1385,23 +1392,8 @@ public sealed class PassSuccessModel
 
                 if (alongRun > 0f)
                 {
-                    for (int look = 1; look <= LaneLookaheadSamples; look++)
-                    {
-                        float lookaheadSeconds = flight * look / (LaneLookaheadSamples + 1f);
-                        float candidate = Math.Clamp(
-                            projectionRaw + alongRun * lookaheadSeconds, 0f, length);
-                        bool duplicate = false;
-                        for (int existing = 0; existing < lanePointCount; existing++)
-                        {
-                            if (MathF.Abs(lanePoints[existing] - candidate) >= LaneTestPointDedupMeters)
-                                continue;
-                            duplicate = true;
-                            break;
-                        }
-
-                        if (!duplicate && lanePointCount < lanePoints.Length)
-                            lanePoints[lanePointCount++] = candidate;
-                    }
+                    AddRunLookaheadPoints(
+                        lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
                 }
             }
 
@@ -1440,6 +1432,33 @@ public sealed class PassSuccessModel
         }
 
         return false;
+    }
+
+    private static void AddRunLookaheadPoints(
+        Span<float> lanePoints,
+        ref int lanePointCount,
+        float projectionRaw,
+        float alongRun,
+        float flight,
+        float length)
+    {
+        for (int look = 1; look <= LaneLookaheadSamples; look++)
+        {
+            float lookaheadSeconds = flight * look / (LaneLookaheadSamples + 1f);
+            float candidate = Math.Clamp(
+                projectionRaw + alongRun * lookaheadSeconds, 0f, length);
+            bool duplicate = false;
+            for (int existing = 0; existing < lanePointCount; existing++)
+            {
+                if (MathF.Abs(lanePoints[existing] - candidate) >= LaneTestPointDedupMeters)
+                    continue;
+                duplicate = true;
+                break;
+            }
+
+            if (!duplicate && lanePointCount < lanePoints.Length)
+                lanePoints[lanePointCount++] = candidate;
+        }
     }
 
     /// <summary>

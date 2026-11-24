@@ -335,15 +335,7 @@ public static class TimeToReachModel
         // that line — a lateral runner simply moves away from it.
         Vector2 aim = LeadPursuitPoint(state, targetXZ, targetVelocityXZ, horizon, sprint);
 
-        // ai62: with sideways momentum the closed form cannot steer onto the target line, so the whole
-        // lead-refinement loop below is wasted work — one steering integration is the answer.
-        if (NeedsSteering(state, aim, velocity, reach, sprint))
-        {
-            return SolveBySteering(
-                state, aim, targetXZ, targetVelocityXZ, horizon, reach, sprint);
-        }
-
-        for (int i = 0; i < InterceptRefinements; i++)
+        for (int i = 0; i < InterceptRefinements + 2; i++)
         {
             ReachEstimate toAim = SolveToward(
                 state, aim, aim, Vector2.Zero, velocity, speed, reach, horizon, sprint);
@@ -485,10 +477,11 @@ public static class TimeToReachModel
         if (velocity.Length() < MinSpeed) velocity = Vector2.Zero;
 
         bool movingTarget = targetVelocityXZ.LengthSquared() > MinMovingTargetSpeedSquared;
-        Vector2 steerXZ = movingTarget ? targetXZ : aimXZ;
+        bool purePursuitFallback = movingTarget && Vector2.DistanceSquared(aimXZ, targetXZ) <= 1e-6f;
+        Vector2 initialAimOffset = aimXZ - position;
         Vector2 desiredDirection = SimMath.SafeNormalize(
-            steerXZ - position,
-            SimMath.SafeNormalize(aimXZ - position, new Vector2(1f, 0f)));
+            aimXZ - position,
+            SimMath.SafeNormalize(targetXZ - position, new Vector2(1f, 0f)));
         Vector2 facing = SimMath.SafeNormalize(
             state.FacingXZ, SimMath.SafeNormalize(velocity, desiredDirection));
 
@@ -516,9 +509,9 @@ public static class TimeToReachModel
             Vector2 previousVelocity = velocity;
             Vector2 previousFacing = facing;
 
-            Vector2 stepSteer = movingTarget
+            Vector2 stepSteer = movingTarget && (purePursuitFallback || Vector2.Dot(aimXZ - position, initialAimOffset) <= 0f)
                 ? targetXZ + targetVelocityXZ * previousT
-                : steerXZ;
+                : aimXZ;
             StepSteering(
                 ref position, ref velocity, ref facing, stepSteer, stepSeconds,
                 baseCap, accelerationBase, turnRateBase, maxSprintSpeed);
@@ -536,11 +529,8 @@ public static class TimeToReachModel
                     Vector2 subPosition = previousPosition;
                     Vector2 subVelocity = previousVelocity;
                     Vector2 subFacing = previousFacing;
-                    Vector2 subSteer = movingTarget
-                        ? targetXZ + targetVelocityXZ * previousT
-                        : steerXZ;
                     StepSteering(
-                        ref subPosition, ref subVelocity, ref subFacing, subSteer, subSeconds,
+                        ref subPosition, ref subVelocity, ref subFacing, stepSteer, subSeconds,
                         baseCap, accelerationBase, turnRateBase, maxSprintSpeed);
                     Vector2 targetAtSub = targetXZ + targetVelocityXZ * (previousT + subSeconds);
                     if (Vector2.DistanceSquared(subPosition, targetAtSub) > reach * reach) continue;
@@ -576,13 +566,37 @@ public static class TimeToReachModel
         float speed = velocity.Length();
         float speedRatio = maxSprintSpeed > 1e-3f ? speed / maxSprintSpeed : 0f;
         float maxTurn = turnRateBase * (1f - 0.25f * speedRatio) * stepSeconds;
-        float currentAngle = MathF.Atan2(facing.Y, facing.X);
-        float targetAngle = MathF.Atan2(desiredDirection.Y, desiredDirection.X);
-        float turn = targetAngle - currentAngle;
-        while (turn > MathF.PI) turn -= 2f * MathF.PI;
-        while (turn < -MathF.PI) turn += 2f * MathF.PI;
-        float newAngle = currentAngle + Math.Clamp(turn, -maxTurn, maxTurn);
-        facing = new Vector2(MathF.Cos(newAngle), MathF.Sin(newAngle));
+        float dot = Vector2.Dot(facing, desiredDirection);
+        if (dot >= 0.99999f || maxTurn >= MathF.PI)
+        {
+            facing = desiredDirection;
+        }
+        else if (maxTurn > 0f)
+        {
+            // Fast alignment check without trig for typical <= 1 rad step turns:
+            // cos(x) <= 1 - x^2/2 + x^4/24, so dot >= cosUpper guarantees angle <= maxTurn.
+            float m2 = maxTurn * maxTurn;
+            if (maxTurn <= 1.0f && dot >= 1f - 0.5f * m2 + (1f / 24f) * m2 * m2)
+            {
+                facing = desiredDirection;
+            }
+            else
+            {
+                (float sinMax, float cosMax) = MathF.SinCos(maxTurn);
+                if (dot >= cosMax)
+                {
+                    facing = desiredDirection;
+                }
+                else
+                {
+                    float cross = facing.X * desiredDirection.Y - facing.Y * desiredDirection.X;
+                    float s = cross >= 0f ? sinMax : -sinMax;
+                    facing = new Vector2(
+                        facing.X * cosMax - facing.Y * s,
+                        facing.X * s + facing.Y * cosMax);
+                }
+            }
+        }
 
         float alignment = Vector2.Dot(desiredDirection, facing);
         float cap = baseCap * (0.85f + 0.15f * Math.Clamp(alignment, 0f, 1f));

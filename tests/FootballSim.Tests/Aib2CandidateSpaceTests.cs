@@ -556,39 +556,72 @@ public sealed class Aib2CandidateSpaceTests
     }
 
     /// <summary>
-    /// AUD-P3: the onside clamp. Fixture: ball at (0.4, 8), receiver at (18, 4), offside line projection 30 m
-    /// — so the far probe's unclamped point is projection 18 + 14 = 32 m, a metre past the line. The builder
-    /// keeps <see cref="OffsideTactics.MarginMeters"/> in reserve and plays the ball at projection
-    /// <c>30 − 1 = 29</c>:
-    /// <code>
-    ///   unclamped far probe = (32, 4)  -> 32 > 29  -> clamped to (29, 4)
-    ///   candidate target   = (29, 4)   (a ball at the line, never past it)
-    /// </code>
-    /// Pre-fix no space candidate existed, so this fails at <c>Single</c>.
+    /// Law 11 (ai63 Task 1): replaces the pre-ai63
+    /// <c>AIB2_Space_AProbeBeyondTheOffsideLine_IsClampedInsideTheOnsideBound</c> test, which asserted the old
+    /// unrealistic clamp on the pass target (<c>spaceXZ</c>) rather than on the receiver's position at kick
+    /// time. Under Law 11, an <b>onside</b> receiver at kick time can legally be played a <c>ToSpace</c> ball
+    /// into empty grass behind <c>offsideLineProjX</c> (clamped only to pitch boundaries), because the kick
+    /// releases him; meanwhile an <b>offside</b> receiver at kick time is still refused with
+    /// <see cref="CandidateGenerator.RejectionOffside"/>.
     /// </summary>
     [Fact]
-    public void AIB2_Space_AProbeBeyondTheOffsideLine_IsClampedInsideTheOnsideBound()
+    public void Law11_OnsideReceiver_CanReceiveToSpaceBallBehindTheOffsideLine()
     {
         const float offsideLineProjX = 30f;
-        const float receiverX = 18f;
-        Assert.True(receiverX + CandidateGenerator.SpaceProbeFarMeters
-                    > offsideLineProjX - OffsideTactics.MarginMeters,
-            "the fixture's unclamped far probe must be beyond the onside bound");
+        Vector2 ballXZ = new(12f, 8f);
+        PerceivedEntity mate = TeamMate(MateId, 26f, 4f);
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(
+            Observation(ballXZ, new Vector2(12f, 8f), mate), OpponentGoal, offsideLineProjX);
 
-        Vector2 ballXZ = new(0.4f, 8f);
-        PerceivedEntity mate = TeamMate(MateId, receiverX, 4f);
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Vector2 aim = XZ(space.TargetXZ!.Value);
+
+        Assert.True(aim.X > offsideLineProjX,
+            $"an onside receiver at x=26 must be offered ToSpace behind offsideLine={offsideLineProjX}, got {aim.X:F2}");
+        Assert.Equal(26f + CandidateGenerator.SpaceProbeFarMeters, aim.X, precision: 1);
+        Assert.Equal(4f, aim.Y, precision: 1);
+
+        for (int i = 0; i < generator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = generator.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId)
+            {
+                Assert.NotEqual(CandidateGenerator.RejectionOffside, rejection.Reason);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Law 11 (ai63 Task 1): the receiver gate still enforces <see cref="OffsideTactics.MarginMeters"/> at
+    /// kick time, so a receiver standing past <c>offsideLineProjX - MarginMeters</c> receives no pass
+    /// (<c>ToFeet</c>, <c>ToRun</c>, or <c>ToSpace</c>) and records <see cref="CandidateGenerator.RejectionOffside"/>.
+    /// </summary>
+    [Fact]
+    public void Law11_OffsideReceiver_IsStillRejectedWithOffside()
+    {
+        const float offsideLineProjX = 30f;
+        Vector2 ballXZ = new(0f, 8f);
+        PerceivedEntity mate = TeamMate(MateId, 29.5f, 4f);
         var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
         generator.GenerateOnBallCandidates(
             Observation(ballXZ, new Vector2(0f, 8f), mate), OpponentGoal, offsideLineProjX);
 
-        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
-        Vector2 aim = XZ(space.TargetXZ!.Value);
-        float onsideBound = offsideLineProjX - OffsideTactics.MarginMeters;
+        Assert.DoesNotContain(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetPlayerId == MateId);
 
-        Assert.True(aim.X <= onsideBound + 0.01f,
-            $"the space ball is aimed at projection {aim.X:F2} m, past the onside bound {onsideBound:F2} m");
-        Assert.Equal(onsideBound, aim.X, precision: 1);
-        Assert.Equal(4f, aim.Y, precision: 1);
+        bool refusedOffside = false;
+        for (int i = 0; i < generator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = generator.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId &&
+                rejection.Reason == CandidateGenerator.RejectionOffside)
+            {
+                refusedOffside = true;
+            }
+        }
+
+        Assert.True(refusedOffside, "an offside receiver at x=29.5 (> 30 - 1) must be rejected with offside");
     }
 
     /// <summary>
@@ -716,7 +749,10 @@ public sealed class Aib2CandidateSpaceTests
         Assert.DoesNotContain(generator.Candidates,
             c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == "ToFeet");
         Assert.Equal(space.UtilityScore, MaxUtility(generator), precision: 3);
-        Assert.True(space.UtilityScore > 1.3f,
+        // Note: without the pre-ai63 offside clamp on spaceXZ, the far probe lands at (32, 4) (31.85 m)
+        // instead of clamped (29, 4) (28.88 m), so it prices at 1.281 instead of 1.507 and still wins
+        // over the 1.228 carry.
+        Assert.True(space.UtilityScore > 1.25f,
             $"the first-touch space ball must be priced as the penetrative option it is, got {space.UtilityScore:F3}");
     }
 

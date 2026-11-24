@@ -785,12 +785,17 @@ public enum TeamId
 /// halves of the same lane question agree about a stale sighting. Trajectories differ from version 61 wherever a
 /// lane, arrival race, space race or the carrier's pass choice read a defender's momentum or a remembered
 /// position.</item>
+/// <item><b>63</b> (2026-11-24): Law 11 through-ball offside target fix (<c>ToSpace</c> and 1-2 return regions
+/// clamp only the receiver/pre-release initiator onside, not the behind-the-line pass target), receiver sprint
+/// promotion on tight arrivals plus distance-scaled short-pass roll-out cap, past-target up-lane lookahead in
+/// <c>IsLaneBlocked</c> Check 3, boxed-in midfield touchline escape clearance, and <c>TimeToReachModel</c>
+/// steering lead-intercept / trig fast-path.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 62;
+    public const int AiBehaviour = 63;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

@@ -686,7 +686,7 @@ public sealed class PassInterceptionBlindSpotTests
     // with sideways momentum was declared unreachable, which removed him from the lane test, the arrival
     // race and the space-race gate all at once. These three fixtures are the exact live observations of
     // the 2026-11-24 diagnostic (passes at t=102, t=222, t=406), copied from
-    // artifacts/advanced-ai/ai62-opening-passes.txt, so the fix is tested on the geometry that failed in
+    // artifacts/advanced-ai/ai62-opening-passes-before.txt, so the fix is tested on the geometry that failed in
     // the rendered match rather than on a synthetic one.
     // =============================================================================================
 
@@ -771,7 +771,7 @@ public sealed class PassInterceptionBlindSpotTests
     /// <para><b>Measured correction to the brief's expectation.</b> The brief predicted the fixed model
     /// would price this as a <i>decisively</i> lost race (p ≤ 0.05). It does not: with the exact live
     /// promise (arrival 1.25 s, radius 5 m, confidence 0.9802) the contest is now a genuine race —
-    /// #4's effective arrival is ≈1.23 s against the promised 1.25 s — so the completion falls to ≈0.59
+    /// #4's effective arrival is ≈1.23 s against the promised 1.25 s — so the completion falls to 0.5195
     /// with a defender-edge margin instead of 0.970. That is the honest arithmetic: the pre-fix error was
     /// "uncontested → effectively certain", not "certain → impossible". The assertions pin the fixed
     /// verdict (defender terrain, defender term below even, most of the completion gone); the report
@@ -919,6 +919,56 @@ public sealed class PassInterceptionBlindSpotTests
 
             Assert.True(refused, "a pass that is not emitted must have been refused for a stated reason");
         }
+    }
+
+    /// <summary>
+    /// ai63 Task 3 (Playtest Img 1): exact <c>t=128</c> Home #9 -> #8 observation from
+    /// <c>ai62-opening-passes.txt</c>. Away #21 starts past <c>targetXZ</c> (<c>projectionRaw = 17.88 m &gt;
+    /// length = 15.79 m</c>) running back up-lane (<c>(-6.154, 0.954)</c>) and intercepted the ball ~4 m
+    /// short of <c>targetXZ</c>. Pre-fix Check 3 only tested <c>length</c> for <c>projectionRaw &gt; length</c>;
+    /// testing up-lane lookahead points along his closing run catches him as <c>IsLaneBlocked == true</c>.
+    /// </summary>
+    [Fact]
+    public void LiveReplay_OpeningPass2_t128_PastTargetUpLanePresser_IsBlocked()
+    {
+        Vector2 ballXZ = new(-3.724f, -2.358f);
+        Vector2 targetXZ = new(10.822f, -8.501f);
+        const float power01 = 0.70f;
+        const float flightSeconds = 1.333f;
+
+        PerceivedEntity presser21 = Opponent(21, new Vector2(14.095f, -6.125f), new Vector2(-6.154f, 0.954f));
+        Assert.True(Model.IsLaneBlocked(
+            ballXZ, targetXZ, power01, flightSeconds, new[] { presser21 }, TeamId.Home),
+            "Away #21 running back up-lane from past targetXZ must be caught by Check 3 up-lane lookahead");
+    }
+
+    /// <summary>
+    /// ai63 Task 7 (ai62 code-review follow-up): isolated unit test for <c>sightTimeBonus</c> in
+    /// <see cref="PassSuccessModel.IsLaneBlocked"/> Check 3. A stationary defender 2.4 m off the lane at
+    /// along=10 m (outside Check 1's sampled corridor even with the 0.25 m doubt cap, and outside Check 2's
+    /// 3.5 m launch cone) is just out of reach when freshly sighted (<c>PositionUncertaintyMeters = 0</c>),
+    /// and blocks the lane when stale (<c>PositionUncertaintyMeters = 4.0f</c>, +0.20 s <c>sightTimeBonus</c>).
+    /// </summary>
+    [Fact]
+    public void Check3_StaleSightingUncertainty_CreditsStepInTime_WhileFreshStaysOpen()
+    {
+        Vector2 from = Vector2.Zero;
+        Vector2 to = new(16f, 0f);
+        PassPlan plan = Planner.PlanGroundPassToRegion(from, to, arriveInSeconds: 1.25f, minPower01: 0.70f);
+        Assert.True(plan.Feasible);
+
+        // At along = 10 m on a power-0.70 16 m ball, flight to 10 m is ~0.72 s; reaction 0.25 s -> available = 0.47 s.
+        // Stationary defender at (10, 2.25): must run 2.25 - 1.22 = 1.03 m from rest (~0.52 s: outside 0.47 s,
+        // inside 0.47 + 0.20 = 0.67 s). Also 2.25 > 0.90 + 0.25 = 1.15 m so Check 1 never triggers.
+        PerceivedEntity fresh = Opponent(31, new Vector2(10f, 2.25f), Vector2.Zero);
+        PerceivedEntity stale = fresh with { PositionUncertaintyMeters = 4.0f, ObservedAgeTicks = 40 };
+
+        Assert.False(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, new[] { fresh }, TeamId.Home),
+            "fresh stationary defender just out of reach must leave the lane open");
+        Assert.True(Model.IsLaneBlocked(
+            from, plan.TargetXZ, plan.Power01, plan.FlightTimeSeconds, new[] { stale }, TeamId.Home),
+            "stale sighting (+0.20 s sightTimeBonus in Check 3) must credit step-in time and block the lane");
     }
 
     // =============================================================================================

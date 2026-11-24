@@ -454,6 +454,146 @@ public sealed class CombinationCoordinatorTests
     }
 
     [Fact]
+    public void Law11_OneTwoInitiator_CanTargetBehindTheLine_AndHoldsOnsideUntilReleased()
+    {
+        // Initiator at (15, 0) (onside behind offsideLine=20), receiver at (19, 8) (onside: 19 <= 20-1).
+        // Return region is (15+8, 2.5) = (23, 2.5), 3 m behind offsideLine=20 (within +6 m behind-line depth).
+        var comms = new MatchCommunicationContext();
+        Vector2 behindRegion = new(23f, 2.5f);
+        FootballerObservation carrierObs = new()
+        {
+            SelfId = InitiatorId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(15f, 0f, 0f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(15.4f, 0f, 0f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = InitiatorId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = InitiatorId,
+            TacticalAnchorPosition = new Vector3(15f, 0f, 0f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = TimeOf(MatchTick),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = MatchTick,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                Mate(ReceiverId, new Vector3(19f, 0f, 8f), TacticalRole.CentralMidfielder),
+                Opponent(PresserId, new Vector3(12.5f, 0f, 0.5f)),
+                Opponent(SecondDefenderId, new Vector3(20f, 0f, 11.5f))
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var carrierGen = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig { EnableCombinations = true })
+        {
+            TimeOnBall = 0.8f
+        };
+        carrierGen.GenerateOnBallCandidates(carrierObs, OppGoal(), offsideLineProjX: 20f);
+        UtilityCandidate pass = Candidate(carrierGen, ReceiverId, "ToFeet");
+        carrierGen.NoteDecision(carrierObs, pass.Key);
+
+        Assert.True(comms.Combinations.TryGetInitiatorContract(Home, InitiatorId, MatchTick, out CombinationContract contract));
+        Assert.True(contract.ReturnXZ.X > 20f,
+            $"one-two return region must be allowed behind offsideLine=20, got {contract.ReturnXZ.X:F2}");
+
+        // Pre-release: initiator's off-ball run must stay held onside (<= 20 - 1 = 19) without abandoning.
+        FootballerObservation preRelease = new()
+        {
+            SelfId = InitiatorId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(17f, 0f, 0f),
+            SelfVelocity = new Vector3(4f, 0f, 1f),
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = false,
+            ControlQuality01 = 0f,
+            PerceivedBallPosition = new Vector3(18f, 0f, 6f),
+            PerceivedBallVelocity = new Vector3(6f, 0f, 1f),
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = InitiatorId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.InFlightPass,
+            BallControllingPlayerId = null,
+            IntendedReceiverId = ReceiverId,
+            TacticalAnchorPosition = new Vector3(17f, 0f, 0f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = TimeOf(302),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 302,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                Mate(ReceiverId, new Vector3(19f, 0f, 8f), TacticalRole.CentralMidfielder),
+                Opponent(PresserId, new Vector3(12.5f, 0f, 0.5f))
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes(),
+            Combination = ContextOf(comms, InitiatorId, 302)
+        };
+        var offBallGen = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig());
+        offBallGen.GenerateOffBallCandidates(preRelease, OppGoal(), OwnGoal(),
+            myInterceptXZ: new Vector2(17f, 0f), isPrimaryBallResponder: false, offsideLineProjX: 20f);
+
+        UtilityCandidate preRun = Assert.Single(offBallGen.Candidates,
+            c => c.Key.Kind == CandidateKind.Run && c.Key.TargetTag == CandidateGenerator.CombinationReturnTag);
+        Assert.True(preRun.TargetXZ!.Value.X <= 20f - OffsideTactics.MarginMeters + 0.01f,
+            $"pre-release initiator run target must hold onside <= 19, got {preRun.TargetXZ.Value.X:F2}");
+
+        // Post-release: once return pass is in flight to initiator, he releases into the behind-line region.
+        FootballerObservation released = new()
+        {
+            SelfId = InitiatorId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(17f, 0f, 0f),
+            SelfVelocity = new Vector3(4f, 0f, 1f),
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = false,
+            ControlQuality01 = 0f,
+            PerceivedBallPosition = new Vector3(19f, 0f, 7f),
+            PerceivedBallVelocity = new Vector3(6f, 0f, -2f),
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = ReceiverId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.InFlightPass,
+            BallControllingPlayerId = null,
+            IntendedReceiverId = InitiatorId,
+            TacticalAnchorPosition = new Vector3(17f, 0f, 0f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = TimeOf(325),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 325,
+            VisiblePlayers = preRelease.VisiblePlayers,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes(),
+            Combination = ContextOf(comms, InitiatorId, 325)
+        };
+        var releasedGen = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig());
+        releasedGen.GenerateOffBallCandidates(released, OppGoal(), OwnGoal(),
+            myInterceptXZ: behindRegion, isPrimaryBallResponder: false, offsideLineProjX: 20f);
+        UtilityCandidate postRun = Assert.Single(releasedGen.Candidates,
+            c => c.Key.Kind == CandidateKind.Run && c.Key.TargetTag == CandidateGenerator.CombinationReturnTag);
+        Assert.True(postRun.TargetXZ!.Value.X > 20f,
+            $"post-release initiator run must release into {contract.ReturnXZ.X:F2}, got {postRun.TargetXZ.Value.X:F2}");
+    }
+
+    [Fact]
     public void TheSwitchOff_IsThePreviousBuild()
     {
         // With combinations off no contract is published and no combination candidate exists, even when the

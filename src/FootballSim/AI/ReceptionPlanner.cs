@@ -571,7 +571,23 @@ public sealed class ReceptionPlanner
 
         // Feasible means the body can physically be at the meeting point by the time the ball is there:
         // one reach solve against the same arrival clock the trajectory just gave us.
-        ReachEstimate arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds);
+        // ai63 (Task 2.1): if jogging would leave less than 0.10 s margin before ball arrival, promote
+        // Kill/OpenBody/Shield to Sprint == true so a receiver never jogs onto a tight pass.
+        ReachEstimate arrival;
+        if (!sprint)
+        {
+            arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds, sprint: false);
+            if (!arrival.Reachable || arrival.Seconds > ballArrivalSeconds - 0.10f)
+            {
+                sprint = true;
+                arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds, sprint: true);
+            }
+        }
+        else
+        {
+            arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds, sprint: true);
+        }
+
         if (!arrival.Reachable || arrival.Seconds > ballArrivalSeconds + ArrivalSlackSeconds)
         {
             AddRefused(kind, ReasonUnreachable);

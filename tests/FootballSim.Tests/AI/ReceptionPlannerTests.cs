@@ -324,6 +324,62 @@ public sealed class ReceptionPlannerTests
             Assert.Equal(planner.GetOption(i), planner.GetOption(i));
     }
 
+    [Fact]
+    public void ReceptionPlanner_TightArrival_PromotesKillAndOpenBodyToSprint()
+    {
+        // Lateral pass arriving ~4.5 m away in ~0.83 s: jogging takes ~0.95 s (> 0.83 - 0.10), while
+        // sprinting reaches in ~0.78 s. Kill and OpenBody must promote Sprint == true instead of jogging.
+        FootballerObservation obs = Receiving(
+            new Vector2(4.5f, -3.5f),
+            new Vector2(0f, 5.0f),
+            visible: [Mate(ForwardMateId, 18f, 4f)],
+            selfPosition: Vector2.Zero,
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var planner = new ReceptionPlanner(new PitchDimensions());
+        Assert.True(planner.TryPlan(obs, out _), OptionsText(planner));
+
+        ReceptionOption kill = OptionOf(planner, ReceptionTouchKind.Kill);
+        Assert.True(kill.Feasible, OptionsText(planner));
+        Assert.True(kill.Sprint, $"tight arrival must promote Kill to Sprint == true ({OptionsText(planner)})");
+
+        ReceptionOption openBody = OptionOf(planner, ReceptionTouchKind.OpenBody);
+        Assert.True(openBody.Feasible, OptionsText(planner));
+        Assert.True(openBody.Sprint, $"tight arrival must promote OpenBody to Sprint == true ({OptionsText(planner)})");
+    }
+
+    [Fact]
+    public void AddReceptionCandidates_KeepsSprintEnabled_InsideOneAndHalfMeters()
+    {
+        // Receiver is moving at 7 m/s, meets ball near (0, 0), and StrideTouch places the meeting point
+        // StrideLeadMeters (0.8 m) ahead — inside the old 1.5 m sprint cutoff, outside 0.35 m.
+        FootballerObservation obs = Receiving(
+            new Vector2(0f, 2.5f),
+            new Vector2(0f, -5.0f),
+            visible: [Mate(ForwardMateId, 18f, 4f)],
+            selfPosition: Vector2.Zero,
+            selfVelocity: new Vector3(7f, 0f, 0f),
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var generator = new CandidateGenerator(new PitchDimensions());
+        generator.GenerateOffBallCandidates(
+            obs,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: Vector2.Zero,
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate stride = Assert.Single(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Intercept && c.Key.TargetTag == "stride");
+        float dist = Vector2.Distance(
+            new Vector2(obs.SelfPosition.X, obs.SelfPosition.Z),
+            new Vector2(stride.TargetXZ!.Value.X, stride.TargetXZ.Value.Z));
+        Assert.InRange(dist, 0.36f, 1.49f);
+        Assert.True(stride.Command.Sprint,
+            $"AddReceptionCandidates must keep Sprint == true at {dist:F2} m (< 1.5 m cutoff)");
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Helpers: one receiver picture, stated explicitly.
     // ---------------------------------------------------------------------------------------------

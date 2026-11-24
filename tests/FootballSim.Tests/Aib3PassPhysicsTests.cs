@@ -989,6 +989,65 @@ public sealed class Aib3PassPhysicsTests
             c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == CandidateGenerator.RunPassTag);
     }
 
+    /// <summary>
+    /// ai63 Task 2.3 (Playtest Img 2): a flat 5.22 m catch radius lets a short 6 m pass arrive ~0.35 s early
+    /// and rocket ~3.5 m past the receiver. Distance-scaling the bound keeps short passes bounded
+    /// (<c>EffectivePromiseCatchRadiusMeters(6) = 2.10 m</c>) while preserving the full 5.22 m catch radius
+    /// for 15–25 m through balls.
+    /// </summary>
+    [Fact]
+    public void ShortPromisedPass_ExceedingDistanceScaledCatchRadius_IsRejected()
+    {
+        Vector2 ballXZ = new(0f, 8f);
+        Vector2 meetXZ = new(6f, 8f);
+        const float shortDistance = 6f;
+
+        // Crisp floor for 6 m is 0.40 power (~0.50 s flight). At 0.80 s (0.30 s after ball passes aim)
+        // the ball has rolled ~2.27 m past MeetXZ — inside flat 5.22 m, outside 2.10 m scaled bound,
+        // and inside the 5 m promise timing tolerance (0.385 s) so ChoosePromisedRunPower keeps crispFloor.
+        float crispFloor = Planner.MinCrispPower01(shortDistance);
+        PassPlan shortPlan = Planner.PlanGroundPassToRegion(
+            ballXZ, meetXZ, arriveInSeconds: 0.80f, minPower01: crispFloor);
+        Assert.True(shortPlan.Feasible);
+        var shortGenerator = new CandidateGenerator(
+            Pitch, AnnouncedRun(MateId, meetXZ, ObservationTick + 48), PlainPicture())
+        {
+            TimeOnBall = 0.8f
+        };
+        float rolledPast = shortGenerator.RolledPastPromiseMeters(
+            shortPlan, ballXZ, new PassArrivalPromise(meetXZ, 0.80f, 5f, 0.85f));
+        Assert.InRange(rolledPast, 2.11f, CandidateGenerator.PromiseCatchRadiusMeters);
+
+        PerceivedEntity runner = Mate(new Vector2(2f, 3f));
+        FootballerObservation obs = Observation(
+            Player(new Vector2(0f, 8f)), runner, Opponent(20, new Vector2(-10f, 2f), Vector2.Zero));
+        shortGenerator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+
+        bool refusedForTheRoll = false;
+        for (int i = 0; i < shortGenerator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = shortGenerator.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId &&
+                rejection.Reason == CandidateGenerator.RejectionRolledPastPromise)
+            {
+                refusedForTheRoll = true;
+            }
+        }
+        Assert.True(refusedForTheRoll,
+            $"a 6 m promised ball rolled {rolledPast:F2} m past must be rejected (outside distance-scaled bound)");
+        Assert.DoesNotContain(shortGenerator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetTag == CandidateGenerator.RunPassTag);
+
+        // Long 21 m space ball rolling ~4.1 m past must still be offered.
+        Vector2 ballLong = new(20f, -10f);
+        PerceivedEntity mateLong = Mate(new Vector2(6f, 11f));
+        var longGenerator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+        longGenerator.GenerateOnBallCandidates(
+            Observation(Player(ballLong), mateLong), new Vector3(Pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate longSpace = Single(longGenerator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(longSpace.TargetXZ.HasValue);
+    }
+
     // =============================================================================================
     // Fixtures and helpers
     // =============================================================================================

@@ -146,6 +146,12 @@ public sealed class ShallowActionSearch
     /// <summary>Smallest progression a return region must offer, in metres (A8.1's gate, reused).</summary>
     internal const float MinReturnProgressionMeters = CandidateGenerator.OneTwoMinProgressionMeters;
 
+    /// <summary>Maximum attack-relative projection a one-two return region may target (Law 11).</summary>
+    internal static float MaxOneTwoReturnProjection(float offsideLineProjX, float pitchHalfLength) =>
+        MathF.Min(
+            offsideLineProjX + CandidateGenerator.OneTwoBehindLineMaxMeters,
+            pitchHalfLength - ReturnRegionPitchMarginX);
+
     private readonly PitchDimensions _pitch;
     private readonly PassPlanner _planner;
     private readonly PassSuccessModel _passSuccess;
@@ -343,9 +349,13 @@ public sealed class ShallowActionSearch
         float progression = (region.X - selfXZ.X) * obs.AttackingDirectionX;
         if (progression < MinReturnProgressionMeters) return false;
 
-        // A8.1's initiator re-checks these every decision and abandons the contract when they fail, so a region
-        // that fails them here would be a promise nobody can keep.
-        if (region.X * obs.AttackingDirectionX > OffsideTactics.MaxAttackingProjection(offsideLineProjX)) return false;
+        if (selfXZ.X * obs.AttackingDirectionX > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
+            return false;
+
+        // A8.1's initiator holds onside until release and runs into behind-the-line return space up to
+        // OneTwoBehindLineMaxMeters; reject regions beyond that depth so contracts stay reachable.
+        if (region.X * obs.AttackingDirectionX > MaxOneTwoReturnProjection(offsideLineProjX, _pitch.HalfLength))
+            return false;
 
         float space = CandidateGenerator.EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam);
         if (space < CandidateGenerator.CombinationReturnRunMinSpace01) return false;

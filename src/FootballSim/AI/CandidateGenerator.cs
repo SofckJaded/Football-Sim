@@ -642,6 +642,9 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>How far sideways (toward the receiver's side) the return region is placed, in metres.</summary>
     public const float OneTwoReturnLateralMeters = 2.5f;
 
+    /// <summary>Maximum behind-the-offside-line depth a one-two return region may target, in metres (Law 11).</summary>
+    internal const float OneTwoBehindLineMaxMeters = 6.0f;
+
     /// <summary>Shortest progression the return region must offer for the move to be worth making, in metres.</summary>
     internal const float OneTwoMinProgressionMeters = 5f;
 
@@ -839,6 +842,23 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     public const float PromiseCatchRadiusMeters =
         SpacePromiseRadiusMeters + PassSuccessModel.LaneStepInReachMeters;
+
+    /// <summary>
+    /// ai63 (Task 2.3): distance-scaled catch bound, in metres. On a short 6–8 m pass, the flat 5.22 m
+    /// radius allows a ball to arrive early and roll nearly another full pass length past the receiver;
+    /// scaling with <c>0.35 × distance</c> (floored at <c>LaneStepInReachMeters + 0.5</c> = 1.72 m, capped at
+    /// <see cref="PromiseCatchRadiusMeters"/>) keeps short passes tight (~2.1 m at 6 m, ~3.5 m at 10 m) while
+    /// preserving the exact 5.22 m bound for passes ≥ 15 m.
+    /// </summary>
+    public static float EffectivePromiseCatchRadiusMeters(float passDistanceMeters)
+    {
+        if (!float.IsFinite(passDistanceMeters) || passDistanceMeters <= 0f)
+            return PromiseCatchRadiusMeters;
+
+        return MathF.Min(
+            PromiseCatchRadiusMeters,
+            MathF.Max(PassSuccessModel.LaneStepInReachMeters + 0.5f, 0.35f * passDistanceMeters));
+    }
 
     /// <summary>
     /// AUD-P3: base confidence of a space promise. The confidence is derived from the measured race
@@ -1972,27 +1992,33 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         float mateProjX = mate.EstimatedPosition.X * obs.AttackingDirectionX;
         if (mateProjX < -_pitch.HalfLength / 3f) return false;
+        if (mateProjX > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
+        {
+            Reject(mate.PlayerId, RejectionOffside);
+            return false;
+        }
 
         Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
         if (!SimMath.IsFinite(ballXZ) || !SimMath.IsFinite(mateXZ)) return false;
 
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
-        bool hasLiveAdvertisement =
+        bool hasForwardDepthAdvert =
             _communication is not null &&
             _communication.Runs.TryGetAdvertisement(
                 obs.SelfTeam, mate.PlayerId, obs.Tick, out RunAdvertisement advertisement) &&
-            advertisement.MeetTick > obs.Tick;
-        // A committed, already-sprinting runner is served by the promised ToRun ball; the space probe is for
-        // the receiver who has not (or has stopped), which is the audit's Capture 4 player.
-        if (hasLiveAdvertisement && mateVelocityXZ.Length() >= MinUncommittedRunSpeed) return false;
+            advertisement.MeetTick > obs.Tick &&
+            advertisement.Kind == RunKind.InBehind &&
+            (advertisement.MeetXZ.X - mateXZ.X) * obs.AttackingDirectionX >= SpaceProbeMinForwardMeters;
+        // A committed, already-sprinting forward depth runner is served by the promised ToRun ball; an
+        // onside HoldWidth/Pin advert or a receiver who has stopped still gets the space probe behind the line.
+        if (hasForwardDepthAdvert && mateVelocityXZ.Length() >= MinUncommittedRunSpeed) return false;
 
-        float maxOnsideProjX = MathF.Min(
-            OffsideTactics.MaxAttackingProjection(offsideLineProjX),
-            _pitch.HalfLength - SpaceProbePitchMarginMeters);
+        float maxPitchProjX = _pitch.HalfLength - SpaceProbePitchMarginMeters;
         float laneMarginZ = _pitch.HalfWidth - SpaceProbePitchMarginMeters;
 
-        // Two probes, farthest first: the penetrative ball when the far grass is onside and won, the near
-        // fallback when it is not. Never a third probe to compensate for a refused one.
+        // Two probes, farthest first: the penetrative ball when the far grass is won, the near
+        // fallback when it is not. Under Law 11 the receiver is already verified onside at kick time;
+        // spaceXZ itself is clamped only to the pitch boundary so through balls can go behind the line.
         ReadOnlySpan<float> probes = [SpaceProbeFarMeters, SpaceProbeNearMeters];
         foreach (float forwardMeters in probes)
         {
@@ -2000,18 +2026,12 @@ public sealed class CandidateGenerator : IAiStateResettable
                 mate.EstimatedPosition.X + obs.AttackingDirectionX * forwardMeters,
                 Math.Clamp(mate.EstimatedPosition.Z, -laneMarginZ, laneMarginZ));
 
-            // The audit's onside clamp: a probe is never offered beyond the line the carrier keeps its
-            // own margin behind. A clamped probe can land on the line; it is played there, not past it.
-            bool clampedByOffside =
-                spaceXZ.X * obs.AttackingDirectionX > maxOnsideProjX;
-            if (clampedByOffside) spaceXZ.X = obs.AttackingDirectionX * maxOnsideProjX;
+            if (spaceXZ.X * obs.AttackingDirectionX > maxPitchProjX)
+                spaceXZ.X = obs.AttackingDirectionX * maxPitchProjX;
 
             float forwardGain = (spaceXZ.X - mateXZ.X) * obs.AttackingDirectionX;
             if (forwardGain < SpaceProbeMinForwardMeters)
-            {
-                if (clampedByOffside) Reject(mate.PlayerId, RejectionOffside);
                 continue;
-            }
 
             // Crowded grass is not space: a body in the landing area, or too little room to attack the
             // point, refuses the probe rather than turning this into a hopeful punt.
@@ -2124,7 +2144,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
-            if (rolledPastMeters > PromiseCatchRadiusMeters)
+            if (rolledPastMeters > EffectivePromiseCatchRadiusMeters(probeDistanceMeters))
             {
                 Reject(mate.PlayerId, RejectionSpaceRolledPast);
                 continue;
@@ -2471,7 +2491,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         // Lane clearance must be judged against the point the pass is actually aimed at, and (ai62) a
         // remembered defender must be charged the positional doubt the sighting carries — the same
-        // `chargeUncertainty` the shallow search and the run-region passes already ask for. Pre-fix this
+        // `chargeUncertainty` that `ShallowActionSearch` and `TryAddGroundPass` pass `true` for
+        // (lofted/cross/driven/cutback/recycle still pass `false`). Pre-fix this
         // call used the unladen metric, so a stale presser 2.37 m off the lane with 1.49 m of doubt
         // scored the corridor 1.000 and the delivery was priced as open (the 2026-11-24 live Pass 3).
         float laneOpenness = EvaluateLaneClearance(
@@ -2498,7 +2519,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (option.Promise.IsPresent && !option.HumanCaller)
         {
             float rolledPastMeters = RolledPastPromiseMeters(plan, ballXZ, option.Promise);
-            if (rolledPastMeters > PromiseCatchRadiusMeters)
+            if (rolledPastMeters > EffectivePromiseCatchRadiusMeters(plan.DistanceMeters))
             {
                 Reject(mate.PlayerId, RejectionRolledPastPromise);
                 return false;
@@ -2987,8 +3008,11 @@ public sealed class CandidateGenerator : IAiStateResettable
         float progression = (region.X - selfXZ.X) * obs.AttackingDirectionX;
         if (progression < OneTwoMinProgressionMeters) return false;
 
-        float maxOnsideProj = OffsideTactics.MaxAttackingProjection(offsideLineProjX);
-        if (region.X * obs.AttackingDirectionX > maxOnsideProj) return false;
+        if (selfXZ.X * obs.AttackingDirectionX > OffsideTactics.MaxAttackingProjection(offsideLineProjX))
+            return false;
+
+        float maxReturnProj = ShallowActionSearch.MaxOneTwoReturnProjection(offsideLineProjX, _pitch.HalfLength);
+        if (region.X * obs.AttackingDirectionX > maxReturnProj) return false;
 
         float space = EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam);
         if (space < OneTwoMinSpace01) return false;
@@ -3238,22 +3262,28 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
 
         // "Any participant may abandon an invalid lane": the return region was chosen from this player's
-        // picture when he made the pass. If the line has now moved him offside, the region has slid off the
-        // pitch or a defender has taken the room, the lane is no longer valid and he stops running it. The
-        // contract ends on the same decision, so the receiver cannot be asked to play into a space nobody is
-        // going to.
+        // picture when he made the pass. If the return region exceeds the bounded behind-the-line depth,
+        // has slid off the pitch or a defender has taken the room, the lane is no longer valid and he stops
+        // running it. Before release, his actual run target holds onside at MaxAttackingProjection so he is
+        // not caught offside before the return pass is kicked (Law 11).
+        float maxOnsideProj = OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+        float maxReturnProj = ShallowActionSearch.MaxOneTwoReturnProjection(offsideLineProjX, _pitch.HalfLength);
         bool insidePitch = MathF.Abs(region.X) <= _pitch.HalfLength - 3f &&
                            MathF.Abs(region.Y) <= _pitch.HalfWidth - 2f;
-        bool onside = region.X * obs.AttackingDirectionX <=
-                      OffsideTactics.MaxAttackingProjection(offsideLineProjX);
+        bool released = OffsideTactics.IsReleased(obs);
+        bool validDepth = released || region.X * obs.AttackingDirectionX <= maxReturnProj;
         float space = EvaluateSpaceFreedom(region, obs.VisiblePlayers, obs.SelfTeam);
-        if (!insidePitch || !onside || space < CombinationReturnRunMinSpace01)
+        if (!insidePitch || !validDepth || space < CombinationReturnRunMinSpace01)
         {
             AbandonCombination(obs, CombinationEndReason.AbandonedByInitiator);
             return;
         }
 
-        Vector2 toRegion = region - selfXZ;
+        Vector2 runTarget = region;
+        if (!released && runTarget.X * obs.AttackingDirectionX > maxOnsideProj)
+            runTarget.X = obs.AttackingDirectionX * maxOnsideProj;
+
+        Vector2 toRegion = runTarget - selfXZ;
         float distance = toRegion.Length();
         Vector2 moveDir = distance > 0.4f
             ? (toRegion / distance) * Math.Clamp(distance / 3.5f, 0.35f, 1.0f)
@@ -3269,7 +3299,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         _lastCandidates.Add(new UtilityCandidate(CombinationReturnActionName, utility, command)
         {
-            TargetXZ = new Vector3(region.X, 0f, region.Y),
+            TargetXZ = new Vector3(runTarget.X, 0f, runTarget.Y),
             Key = new CandidateKey(CandidateKind.Run, TargetTag: CombinationReturnTag)
         });
     }
@@ -4131,10 +4161,10 @@ public sealed class CandidateGenerator : IAiStateResettable
     }
 
     /// <summary>
-    /// Action: clear the ball out of danger. Only in a player's own third, only under pressure, and only
-    /// after a first touch — aimed upfield and toward the nearer touchline, because a clearance down the
-    /// middle is a turnover in the most dangerous place on the pitch. Its value is documented in
-    /// <see cref="ActionValueScale"/> with the other actions.
+    /// Action: clear the ball out of danger. Fires in a player's own third under pressure after a first touch,
+    /// or (ai63 Task 4) as a bounded escape clearance when boxed in outside the own third (near a touchline
+    /// or surrounded by ≥ 2 close opponents) with no viable pass candidate. Aimed upfield along the touchline
+    /// channel so a pinned carrier has an escape rather than stalling.
     /// </summary>
     private void AddClearanceCandidate(
         in FootballerObservation obs,
@@ -4142,18 +4172,30 @@ public sealed class CandidateGenerator : IAiStateResettable
         float myAttackProjX,
         float nearestOppDist)
     {
-        if (myAttackProjX > ClearanceOwnThirdProjX) return;
-        if (nearestOppDist > ClearancePressureMeters) return;
-        if (_timeOnBall < ClearanceMinTimeOnBall) return;
+        bool ownThirdClearance = myAttackProjX <= ClearanceOwnThirdProjX &&
+                                 nearestOppDist <= ClearancePressureMeters &&
+                                 _timeOnBall >= ClearanceMinTimeOnBall;
+        bool boxedInEscape = false;
+        if (!ownThirdClearance)
+        {
+            if (nearestOppDist > 2.5f) return;
+            bool nearTouchline = _pitch.HalfWidth - MathF.Abs(selfXZ.Y) <= 4.0f;
+            if (!nearTouchline && CountOpponentsWithin(obs, selfXZ, 3.5f) < 2) return;
+            if (HasAnyViablePassCandidate()) return;
+            boxedInEscape = true;
+        }
 
         float lateral = obs.SelfPosition.Z >= 0f ? 1f : -1f;
+        float touchlineMarginZ = boxedInEscape ? 3.0f : 1.5f;
         Vector2 aimTarget = new(
             Math.Clamp(selfXZ.X + obs.AttackingDirectionX * 25f, -_pitch.HalfLength + 2f, _pitch.HalfLength - 2f),
-            Math.Clamp(selfXZ.Y + lateral * 10f, -_pitch.HalfWidth + 1.5f, _pitch.HalfWidth - 1.5f));
+            Math.Clamp(selfXZ.Y + lateral * 10f, -_pitch.HalfWidth + touchlineMarginZ, _pitch.HalfWidth - touchlineMarginZ));
         Vector2 direction = SimMath.SafeNormalize(aimTarget - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
 
-        float urgency = 1f - nearestOppDist / ClearancePressureMeters;
-        float utility = ActionValueScale.ClearanceBaseValue + ActionValueScale.ClearanceUrgencyBonus * urgency;
+        float utility = boxedInEscape
+            ? 0.52f + 0.08f * (1f - Math.Clamp(nearestOppDist / 2.5f, 0f, 1f))
+            : ActionValueScale.ClearanceBaseValue +
+              ActionValueScale.ClearanceUrgencyBonus * (1f - nearestOppDist / ClearancePressureMeters);
 
         var command = new FootballerCommand(
             direction, direction, false, false, false, false, false, Vector3.Zero,
@@ -4165,6 +4207,31 @@ public sealed class CandidateGenerator : IAiStateResettable
             Key = new CandidateKey(CandidateKind.Clearance, TargetTag: "touchline"),
             Terms = new ValueTerms(1f, utility, 0f, 0f)
         });
+    }
+
+    private bool HasAnyViablePassCandidate()
+    {
+        for (int i = 0; i < _lastCandidates.Count; i++)
+        {
+            UtilityCandidate candidate = _lastCandidates[i];
+            if (candidate.Key.Kind == CandidateKind.Pass && candidate.UtilityScore > 0f)
+                return true;
+        }
+        return false;
+    }
+
+    private static int CountOpponentsWithin(in FootballerObservation obs, Vector2 pointXZ, float radiusMeters)
+    {
+        float radiusSq = radiusMeters * radiusMeters;
+        int count = 0;
+        for (int i = 0; i < obs.VisiblePlayers.Count; i++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[i];
+            if (entity.Team == obs.SelfTeam) continue;
+            Vector2 posXZ = new(entity.EstimatedPosition.X, entity.EstimatedPosition.Z);
+            if (Vector2.DistanceSquared(posXZ, pointXZ) <= radiusSq) count++;
+        }
+        return count;
     }
 
     /// <summary>
@@ -4874,6 +4941,9 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// </summary>
     internal const float ReceptionArrivalDeadbandMeters = 0.15f;
 
+    /// <summary>ai63 (Task 2.2): sprint cutoff distance for reception approach; lowers the old 1.5 m cutoff so a tight reception keeps sprinting into trap reach.</summary>
+    internal const float ReceptionSprintDeadbandMeters = 0.35f;
+
     /// <summary>
     /// A7.3: turns the reception plan into this decision's candidate set. Every feasible
     /// (orientation, touch) pair becomes one candidate — the receiver's options are now the touches he
@@ -4905,7 +4975,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                 ? toMeeting / distance
                 : dirToBall * 0.35f;
             var command = new FootballerCommand(
-                moveDir, plan.FacingXZ, plan.Sprint && distance > 1.5f, plan.Shield,
+                moveDir, plan.FacingXZ, plan.Sprint && distance > ReceptionSprintDeadbandMeters, plan.Shield,
                 false, false, false, Vector3.Zero,
                 KickIntentType.None, Vector3.UnitX, 0f, 0f)
             {
@@ -5608,8 +5678,8 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// perpendicular distance is shortened by <see cref="PerceivedEntity.PositionUncertaintyMeters"/> before
     /// it is scored.
     ///
-    /// The shallow search, the pass-lane candidates and (since ai62) every ground pass built through
-    /// <see cref="TryAddGroundPass"/> ask for it. The A8.1 heuristic and the structural lane tests keep the
+    /// <c>ShallowActionSearch</c> and (since ai62) every ground pass built through <see cref="TryAddGroundPass"/>
+    /// pass <c>chargeUncertainty: true</c> (lofted/cross/driven/cutback/recycle still pass <c>false</c>). The A8.1 heuristic and the structural lane tests keep the
     /// unladen metric exactly — a fresh sighting has zero uncertainty, so the two agree, and the difference
     /// is a deliberately more conservative second ball rather than a re-tuned first one. Public so a
     /// regression or a probe can price the same corridor the carrier does (ai62: the opening-pass replay

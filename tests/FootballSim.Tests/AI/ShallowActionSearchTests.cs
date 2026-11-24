@@ -190,16 +190,36 @@ public sealed class ShallowActionSearchTests
     {
         ShallowActionSearch search = NewSearch();
 
-        // Max attacking projection is 4 - 1 = 3 m: neither the deep (8 m) nor the short (5 m) region is
-        // onside, so the initiator could never legally run into it.
+        // With Law 11 allowing one-two return regions up to offsideLineProjX + 6 m, a line at -2 m
+        // puts the behind-the-line cap at 4 m: neither deep (8 m) nor short (5 m) is reachable, and
+        // the initiator at x=0 is already offside.
         search.Search(
             Observation(100, Mate(ReceiverId, new Vector2(9f, 4f))),
+            new[] { ReceiverId },
+            BallXZ,
+            offsideLineProjX: -2f,
+            runs: null);
+
+        Assert.Equal(0, search.ProposalCount);
+    }
+
+    [Fact]
+    public void Law11_OneTwoBehindTheLine_IsProposedWithinDepthCap()
+    {
+        ShallowActionSearch search = NewSearch();
+
+        // Onside initiator at x=0 with offsideLine=4 m can propose a behind-the-line return at x=8 m
+        // (4 m behind the line, inside the +6 m cap).
+        search.Search(
+            Observation(100, Mate(ReceiverId, new Vector2(3f, 4f))),
             new[] { ReceiverId },
             BallXZ,
             offsideLineProjX: 4f,
             runs: null);
 
-        Assert.Equal(0, search.ProposalCount);
+        Assert.Equal(1, search.ProposalCount);
+        Assert.True(search.TryGetBestProposal(out ShallowContinuation best));
+        Assert.True(best.RegionXZ.X > 4f, $"expected behind-the-line return > 4 m, got {best.RegionXZ.X:F2}");
     }
 
     // ---------------------------------------------------------------------------------------------

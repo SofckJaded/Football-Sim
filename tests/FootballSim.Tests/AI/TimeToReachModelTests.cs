@@ -503,6 +503,43 @@ public sealed class TimeToReachModelTests
             $"the meeting must be ahead of the runner, not at his start (y={estimate.MeetingPointXZ.Y:F2} m)");
     }
 
+    /// <summary>
+    /// ai63 Task 5 (ai62 code-review follow-up): <c>SolveBySteering</c> must use lead-intercept for moving
+    /// targets rather than dropping back to pure pursuit when <c>NeedsSteering == true</c>. A laterally moving
+    /// chaser intercepts a fast crossing runner materially earlier via lead-intercept than via pure pursuit.
+    /// </summary>
+    [Fact]
+    public void ToMovingPoint_LateralChaser_UsesLeadInterceptNotPurePursuit()
+    {
+        ReachKinematics chaser = Kinematics(
+            Vector2.Zero, new Vector2(0f, -1f), velocity: new Vector2(0f, -3.0f));
+        Vector2 targetStart = new(10f, 0f);
+        Vector2 targetVelocity = new(0f, 5.0f);
+
+        ReachEstimate estimate = TimeToReachModel.ToMovingPoint(
+            chaser, targetStart, targetVelocity, horizonSeconds: 4.0f);
+
+        Assert.True(estimate.Reachable, "a chaser with lead-intercept must catch the crossing runner");
+        // Pure pursuit from (0,0) with initial velocity (0,-3) lags behind y = 5*t and takes ~3.05 s;
+        // lead-intercept aims ahead on y = 5*t and meets earlier (~2.66 s).
+        Assert.True(estimate.Seconds < 2.80f,
+            $"expected lead-intercept arrival < 2.80 s (pure pursuit takes > 2.95 s), got {estimate.Seconds:F3} s");
+        Vector2 targetAtArrival = targetStart + targetVelocity * estimate.Seconds;
+        Assert.True(Vector2.Distance(estimate.MeetingPointXZ, targetAtArrival) < 1e-3f);
+
+        // Continuity across the NeedsSteering boundary: small lateral speed (closed-form) vs just above
+        // the threshold (steering solver) should not jump discontinuously.
+        ReachEstimate justCollinear = TimeToReachModel.ToMovingPoint(
+            Kinematics(Vector2.Zero, new Vector2(1f, 0f), velocity: new Vector2(0f, -0.15f)),
+            targetStart, targetVelocity, horizonSeconds: 4.0f);
+        ReachEstimate justSteering = TimeToReachModel.ToMovingPoint(
+            Kinematics(Vector2.Zero, new Vector2(1f, 0f), velocity: new Vector2(0f, -0.60f)),
+            targetStart, targetVelocity, horizonSeconds: 4.0f);
+        Assert.True(justCollinear.Reachable && justSteering.Reachable);
+        Assert.True(MathF.Abs(justSteering.Seconds - justCollinear.Seconds) < 0.25f,
+            $"NeedsSteering boundary should remain continuous: {justCollinear.Seconds:F3} s vs {justSteering.Seconds:F3} s");
+    }
+
     private static void AssertWithinLocomotionTolerance(float measured, float predicted, string label)
     {
         float error = MathF.Abs(predicted - measured);
