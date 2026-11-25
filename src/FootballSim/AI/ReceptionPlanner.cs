@@ -420,7 +420,7 @@ public sealed class ReceptionPlanner
             float passerSpeed = new Vector2(passer.EstimatedVelocity.X, passer.EstimatedVelocity.Z).Length();
             float perceivedBallSpeed = new Vector2(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z).Length();
             if (Vector2.Distance(perceivedBallXZ, passerXZ) <= 1.25f &&
-                perceivedBallSpeed <= passerSpeed + 1.5f)
+                perceivedBallSpeed <= MathF.Min(passerSpeed + 1.5f, 9.0f))
             {
                 Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
                 Vector2 faceBall = SafeNormalize(perceivedBallXZ - selfXZ, AttackVector(obs));

@@ -1216,7 +1216,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         AddCarryCandidate(carry, nearestOppDist);
         AddDribbleCandidate(obs, selfXZ, goalXZ, carry, nearestOppXZ, nearestOppDist);
         AddShieldCandidate(obs, selfXZ, nearestOppXZ, nearestOppDist);
-        AddClearanceCandidate(obs, selfXZ, myAttackProjX, nearestOppDist);
+        AddClearanceCandidate(obs, selfXZ, myAttackProjX, nearestOppXZ, nearestOppDist);
         // A8.1: the receiver's continuation is judged against the full priced action set, before the carrier
         // cap trims it — a continuation that was priced but lost the cap is still a promise the team holds.
         CheckCombinationContinuation(obs, offsideLineProjX);
@@ -1533,6 +1533,8 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         bool anyGroundPass = false;
         bool anyLaneBlocked = false;
+        float bestGroundLaneClearance = 0f;
+        bool anyLowCompletion = false;
 
         if (isHumanCaller)
         {
@@ -1604,9 +1606,14 @@ public sealed class CandidateGenerator : IAiStateResettable
                 var feet = new PassOption(
                     Vector2.Zero, 0f, FeetPassMaxLeadMeters, 0f, KickIntentType.GroundPass, "ToFeet", false,
                     CombinationPreference: combinationPreference, ReceiverCommittedToRun: false);
-                anyGroundPass = TryAddGroundPass(
-                    obs, mate, feet, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool blocked);
+                bool addedFeet = TryAddGroundPass(
+                    obs, mate, feet, ballXZ, selfXZ, forwardMeters, groundCompletionFloor,
+                    out bool blocked, out float feetLaneClearance, out bool feetLowCompletion);
+                anyGroundPass = addedFeet;
+                if (addedFeet)
+                    bestGroundLaneClearance = MathF.Max(bestGroundLaneClearance, feetLaneClearance);
                 feetBlocked = blocked;
+                anyLowCompletion |= feetLowCompletion;
             }
 
             if (TryBuildRunPassOption(obs, mate, offsideLineProjX, out PassOption run))
@@ -1620,9 +1627,14 @@ public sealed class CandidateGenerator : IAiStateResettable
                     // A8.1: the run-region variant is the same pass, so it earns the same initiation
                     // preference (zero on a first touch, by the no-contract rule above).
                     run = run with { CombinationPreference = combinationPreference };
-                    anyGroundPass |= TryAddGroundPass(
-                        obs, mate, run, ballXZ, selfXZ, forwardMeters, groundCompletionFloor, out bool runBlocked);
+                    bool addedRun = TryAddGroundPass(
+                        obs, mate, run, ballXZ, selfXZ, forwardMeters, groundCompletionFloor,
+                        out bool runBlocked, out float runLaneClearance, out bool runLowCompletion);
+                    anyGroundPass |= addedRun;
+                    if (addedRun)
+                        bestGroundLaneClearance = MathF.Max(bestGroundLaneClearance, runLaneClearance);
                     feetBlocked |= runBlocked;
+                    anyLowCompletion |= runLowCompletion;
                 }
             }
 
@@ -1640,14 +1652,18 @@ public sealed class CandidateGenerator : IAiStateResettable
             anyLaneBlocked = feetBlocked;
         }
 
-        // The raised alternative is offered when the ground route is physically blocked and no ground
-        // pass to this receiver survived. It is priced on its own flight, never on a ground flight time,
-        // and it is aimed at the meeting region the runner announced when the team has heard one (A5.3).
+        // The raised alternative is offered when the ground route is physically blocked, refused as
+        // low-completion over a medium+ distance, or survives only through a degraded corridor. It is priced
+        // on its own flight, never on a ground flight time, and it is aimed at the meeting region the runner
+        // announced when the team has heard one (A5.3).
         //
         // AUD-P6: it is also part of the *routine* set and keeps the tempo delay. A first-touch release is a
         // ground ball by design (a promised run, the space probe, or a line-breaking feet pass); a lofted
         // fallback is the settling player's alternative, not a one-touch penetrative act.
-        if (!penetrativeOnly && anyLaneBlocked && !anyGroundPass && loftedBudget > 0 && !isHumanCaller)
+        bool groundBlockedOrPoor = (anyLaneBlocked && !anyGroundPass)
+                                   || (anyLowCompletion && !anyGroundPass && rawDistance >= 12f)
+                                   || (anyGroundPass && bestGroundLaneClearance < 0.55f && rawDistance >= 14f);
+        if (!penetrativeOnly && groundBlockedOrPoor && loftedBudget > 0 && !isHumanCaller)
         {
             Vector2 raisedTarget = mateXZ;
             RunAdvertisement advert = default;
@@ -1766,10 +1782,18 @@ public sealed class CandidateGenerator : IAiStateResettable
             advert.MeetTick > obs.Tick)
         {
             float arriveInSeconds = advert.TicksUntilMeeting(obs.Tick) * SimConstants.FixedDeltaTime;
+            ReachEstimate liveReach = TimeToReachModel.ToPoint(
+                ReachKinematics.FromEntity(mate),
+                advert.MeetXZ,
+                TimeToReachModel.DefaultHorizonSeconds);
+            bool behindSchedule = liveReach.Reachable && liveReach.Seconds > arriveInSeconds;
+            float effectiveArriveSeconds = behindSchedule ? liveReach.Seconds : arriveInSeconds;
+            float contestArrivalSeconds = behindSchedule ? liveReach.Seconds : 0f;
+
             ChoosePromisedRunPower(
                 ballXZ,
                 advert.MeetXZ,
-                arriveInSeconds,
+                effectiveArriveSeconds,
                 advert.MeetRadiusMeters,
                 out float runMinPower01,
                 out float runMinArrivalSpeed);
@@ -1786,9 +1810,10 @@ public sealed class CandidateGenerator : IAiStateResettable
                 HumanCaller: false,
                 Promise: new PassArrivalPromise(
                     advert.MeetXZ,
-                    arriveInSeconds,
+                    effectiveArriveSeconds,
                     advert.MeetRadiusMeters,
-                    advert.Promise01(obs.Tick)),
+                    advert.Promise01(obs.Tick),
+                    ContestArrivalSeconds: contestArrivalSeconds),
                 // AUD-P2: a promised ball into a run is scored on the announced region, not on the feet.
                 ProgressFromTarget: true);
             return true;
@@ -1804,11 +1829,18 @@ public sealed class CandidateGenerator : IAiStateResettable
             obs.Combination.ContinuationTargetId == mate.PlayerId &&
             obs.Combination.ExpectedArrivalTick > obs.Tick + 2)
         {
+            ReachEstimate liveReach = TimeToReachModel.ToPoint(
+                ReachKinematics.FromEntity(mate),
+                obs.Combination.ReturnXZ,
+                TimeToReachModel.DefaultHorizonSeconds);
+            if (!liveReach.Reachable) return false;
+
             float arriveInSeconds = (obs.Combination.ExpectedArrivalTick - obs.Tick) * SimConstants.FixedDeltaTime;
+            float effectiveArriveSeconds = MathF.Max(arriveInSeconds, liveReach.Seconds);
             ChoosePromisedRunPower(
                 ballXZ,
                 obs.Combination.ReturnXZ,
-                arriveInSeconds,
+                effectiveArriveSeconds,
                 obs.Combination.ReturnRadiusMeters,
                 out float oneTwoMinPower01,
                 out float oneTwoMinArrivalSpeed);
@@ -1826,9 +1858,10 @@ public sealed class CandidateGenerator : IAiStateResettable
                 HumanCaller: false,
                 Promise: new PassArrivalPromise(
                     obs.Combination.ReturnXZ,
-                    arriveInSeconds,
+                    effectiveArriveSeconds,
                     obs.Combination.ReturnRadiusMeters,
-                    obs.Combination.Promise01(obs.Tick)),
+                    obs.Combination.Promise01(obs.Tick),
+                    ContestArrivalSeconds: liveReach.Seconds),
                 // AUD-P2: the one-two's return region is a run target, so the progression follows the region.
                 ProgressFromTarget: true);
             return true;
@@ -2053,14 +2086,17 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
-            float defenderArrivalSeconds = SpaceRaceHorizonSeconds;
+            float defenderHorizon = MathF.Max(
+                SpaceRaceHorizonSeconds,
+                receiverReach.Seconds + SpaceRaceMarginSeconds + 0.25f);
+            float defenderArrivalSeconds = defenderHorizon;
             for (int index = 0; index < obs.VisiblePlayers.Count; index++)
             {
                 PerceivedEntity opponent = obs.VisiblePlayers[index];
                 if (opponent.Team == obs.SelfTeam) continue;
 
                 ReachEstimate opponentReach = TimeToReachModel.ToPoint(
-                    ReachKinematics.FromEntity(opponent), spaceXZ, SpaceRaceHorizonSeconds);
+                    ReachKinematics.FromEntity(opponent), spaceXZ, defenderHorizon);
                 // An unreachable defender is the horizon itself: nobody in the picture can be there inside
                 // the decision's own look-ahead, which is the conservative bound (not "free").
                 if (!opponentReach.Reachable) continue;
@@ -2372,7 +2408,8 @@ public sealed class CandidateGenerator : IAiStateResettable
             // cheap geometry half of the recognition is used here because a trajectory (and its completion
             // probability) does not exist until this budget has chosen who gets planned — the same split the
             // run advertisement and A8.1's continuation target use.
-            if (_ai.EnableSwitchRecognition && SwitchRecognition.IsSwitchGeometry(obs, mateXZ, ballXZ))
+            if (_ai.EnableSwitchRecognition &&
+                SwitchRecognition.IsSwitchGeometry(obs, mateXZ, ballXZ, _pitch.HalfLength))
                 rank += SwitchRecognitionRankBonus;
 
             // A8.1: the first receiver's continuation target must survive the pre-rank too, or the contract
@@ -2427,9 +2464,26 @@ public sealed class CandidateGenerator : IAiStateResettable
         Vector2 selfXZ,
         float forwardMeters,
         float minCompletion01,
-        out bool laneBlocked)
+        out bool laneBlocked) =>
+        TryAddGroundPass(
+            obs, mate, option, ballXZ, selfXZ, forwardMeters, minCompletion01,
+            out laneBlocked, out _, out _);
+
+    private bool TryAddGroundPass(
+        in FootballerObservation obs,
+        in PerceivedEntity mate,
+        in PassOption option,
+        Vector2 ballXZ,
+        Vector2 selfXZ,
+        float forwardMeters,
+        float minCompletion01,
+        out bool laneBlocked,
+        out float laneClearance01,
+        out bool lowCompletion)
     {
         laneBlocked = false;
+        laneClearance01 = 0f;
+        lowCompletion = false;
 
         Vector2 mateXZ = new(mate.EstimatedPosition.X, mate.EstimatedPosition.Z);
         Vector2 mateVelocityXZ = new(mate.EstimatedVelocity.X, mate.EstimatedVelocity.Z);
@@ -2516,6 +2570,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             ballXZ, targetXZ, obs.VisiblePlayers, obs.SelfTeam, chargeUncertainty: true);
         PassSuccessTerms terms = _passSuccess.Estimate(obs, mate, plan, laneOpenness, option.Promise);
         laneBlocked = terms.LaneBlocked;
+        laneClearance01 = terms.LaneClearance01;
 
         // Hard rejection for a clearly blocked ground pass survives (A4.2), and a pass the model prices
         // as hopeless is not offered at all. A caller's request is never dropped by either rule.
@@ -2560,6 +2615,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             : minCompletion01;
         if (!option.HumanCaller && terms.CompletionProbability01 < completionFloor)
         {
+            lowCompletion = true;
             Reject(mate.PlayerId, RejectionLowCompletion);
             return false;
         }
@@ -2648,7 +2704,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (_ai.EnableSwitchRecognition)
         {
             SwitchOpportunity opportunity = SwitchRecognition.Evaluate(
-                obs, mate, targetXZ, terms.CompletionProbability01);
+                obs, mate, targetXZ, terms.CompletionProbability01, _pitch.HalfLength);
             if (opportunity.IsRecognized)
             {
                 preference += opportunity.Preference;
@@ -4191,6 +4247,7 @@ public sealed class CandidateGenerator : IAiStateResettable
         in FootballerObservation obs,
         Vector2 selfXZ,
         float myAttackProjX,
+        Vector2 nearestOppXZ,
         float nearestOppDist)
     {
         bool ownThirdClearance = myAttackProjX <= ClearanceOwnThirdProjX &&
@@ -4199,18 +4256,26 @@ public sealed class CandidateGenerator : IAiStateResettable
         bool boxedInEscape = false;
         if (!ownThirdClearance)
         {
+            if (_timeOnBall < ClearanceMinTimeOnBall) return;
+            if (myAttackProjX > CarryFinalThirdProjX) return;
             if (nearestOppDist > 2.5f) return;
             bool nearTouchline = _pitch.HalfWidth - MathF.Abs(selfXZ.Y) <= 4.0f;
-            if (!nearTouchline && CountOpponentsWithin(obs, selfXZ, 3.5f) < 2) return;
+            int closeOpponents = CountOpponentsWithin(obs, selfXZ, 3.5f);
+            bool nearestAheadOrLevel = (nearestOppXZ.X - selfXZ.X) * obs.AttackingDirectionX >= -0.5f;
+            if (!((nearTouchline && (nearestAheadOrLevel || closeOpponents >= 2)) || closeOpponents >= 2)) return;
             if (HasAnyViablePassCandidate()) return;
             boxedInEscape = true;
         }
 
         float lateral = obs.SelfPosition.Z >= 0f ? 1f : -1f;
-        float touchlineMarginZ = boxedInEscape ? 3.0f : 1.5f;
-        Vector2 aimTarget = new(
-            Math.Clamp(selfXZ.X + obs.AttackingDirectionX * 25f, -_pitch.HalfLength + 2f, _pitch.HalfLength - 2f),
-            Math.Clamp(selfXZ.Y + lateral * 10f, -_pitch.HalfWidth + touchlineMarginZ, _pitch.HalfWidth - touchlineMarginZ));
+        Vector2 aimTarget = boxedInEscape
+            ? new Vector2(
+                Math.Clamp(selfXZ.X + obs.AttackingDirectionX * 18f, -_pitch.HalfLength + 4f, _pitch.HalfLength - 4f),
+                Math.Clamp(selfXZ.Y - lateral * 2.0f, -_pitch.HalfWidth + 4.5f, _pitch.HalfWidth - 4.5f))
+            : new Vector2(
+                Math.Clamp(selfXZ.X + obs.AttackingDirectionX * 25f, -_pitch.HalfLength + 2f, _pitch.HalfLength - 2f),
+                Math.Clamp(selfXZ.Y + lateral * 10f, -_pitch.HalfWidth + 1.5f, _pitch.HalfWidth - 1.5f));
+        float kickPower = boxedInEscape ? 0.55f : 0.85f;
         Vector2 direction = SimMath.SafeNormalize(aimTarget - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
 
         float utility = boxedInEscape
@@ -4220,7 +4285,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         var command = new FootballerCommand(
             direction, direction, false, false, false, false, false, Vector3.Zero,
-            KickIntentType.Clearance, new Vector3(direction.X, 0f, direction.Y), 0.85f, 0f);
+            KickIntentType.Clearance, new Vector3(direction.X, 0f, direction.Y), kickPower, 0f);
 
         _lastCandidates.Add(new UtilityCandidate("ClearBall", utility, command)
         {

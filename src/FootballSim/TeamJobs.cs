@@ -594,9 +594,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
                 !(inPossession &&
                   existing.Job == TacticalJob.NearOutlet &&
                   Vector2.Distance(
-                      ClampToPitch(referenceXZ + SimMath.SafeNormalize(
-                          new Vector2(-attackDirX * _pitch.HalfLength, 0f) - referenceXZ,
-                          new Vector2(-attackDirX, 0f)) * 11f),
+                      DefensiveCoverNominalAnchor(referenceXZ, attackDirX),
                       new Vector2(existing.Anchor.X, existing.Anchor.Z)) < JobRegionScoring.MinRefinedSeparationMeters))
             {
                 counts[existing.Job] = counts.GetValueOrDefault(existing.Job) + 1;
@@ -676,7 +674,7 @@ public sealed class TeamJobCoordinator : IAiStateResettable
             int forwardCommitted = 0;
 
             AssignUniqueJob(available, counts, taken, TacticalJob.DefensiveCover, opponents, referenceXZ, attackDirX, offsideLineProj, tick,
-                _ => ClampToPitch(referenceXZ + SimMath.SafeNormalize(ownGoalXZ - referenceXZ, new Vector2(-attackDirX, 0f)) * 11f));
+                _ => DefensiveCoverNominalAnchor(referenceXZ, attackDirX));
 
             // A depth run (a box run) only makes sense when there is space behind the line to attack,
             // *and* the side can afford to send somebody: the transition picture decides that, not a
@@ -1837,6 +1835,12 @@ public sealed class TeamJobCoordinator : IAiStateResettable
         if (target.X * attackDirX > maxProj)
             target.X = attackDirX * MathF.Max(0f, maxProj);
         return target;
+    }
+
+    private Vector2 DefensiveCoverNominalAnchor(Vector2 referenceXZ, float attackDirX)
+    {
+        Vector2 ownGoalXZ = new(-attackDirX * _pitch.HalfLength, 0f);
+        return ClampToPitch(referenceXZ + SimMath.SafeNormalize(ownGoalXZ - referenceXZ, new Vector2(-attackDirX, 0f)) * 11f);
     }
 
     private Vector2 ClampToPitch(Vector2 point) => new(

@@ -299,4 +299,95 @@ public sealed class CandidateGeneratorTests
         Assert.True(clearance.UtilityScore >= 0.45f,
             $"escape clearance ({clearance.UtilityScore:F3}) must coexist with weak pass options");
     }
+
+    [Fact]
+    public void WingCarrier_OnFirstTouchOrInFinalThird_DoesNotHoofClearanceOutOfBounds()
+    {
+        var pitch = new PitchDimensions();
+
+        static FootballerObservation WingObs(Vector3 pos, List<PerceivedEntity> visible) => new()
+        {
+            SelfId = 8,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Winger,
+            SelfPosition = pos,
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(pos.X + 0.4f, 0f, pos.Z),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = 8,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = 8,
+            TacticalAnchorPosition = pos,
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = visible,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        // 1. Touchline wing carrier on tick 1 (TimeOnBall = 0.05s < 0.35s): must NOT clear before pass candidates exist.
+        FootballerObservation firstTouchObs = WingObs(
+            new Vector3(10f, 0f, 32.0f),
+            new List<PerceivedEntity>
+            {
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(22f, 0f, 10f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(8.2f, 0f, 31.8f), Vector3.Zero, 0.9f)
+            });
+        var firstTouchGen = new CandidateGenerator(pitch) { TimeOnBall = 0.05f };
+        firstTouchGen.GenerateOnBallCandidates(firstTouchObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        Assert.DoesNotContain(firstTouchGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+
+        // 2. Final-third wing carrier (myAttackProjX = 32 > CarryFinalThirdProjX = 26): must NOT hoof clearance.
+        FootballerObservation finalThirdObs = WingObs(
+            new Vector3(32f, 0f, 31.5f),
+            new List<PerceivedEntity>
+            {
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(40f, 0f, 4f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(30.5f, 0f, 31.0f), Vector3.Zero, 0.9f),
+                new(21, TeamId.Away, TacticalRole.CenterBack, new Vector3(33.5f, 0f, 29.0f), Vector3.Zero, 0.9f)
+            });
+        var finalThirdGen = new CandidateGenerator(pitch) { TimeOnBall = 0.60f };
+        finalThirdGen.GenerateOnBallCandidates(finalThirdObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        Assert.DoesNotContain(finalThirdGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+
+        // 3. Midfield wing carrier with ONLY 1 trailing chaser behind him: must NOT trigger boxed-in escape.
+        FootballerObservation trailingChaserObs = WingObs(
+            new Vector3(0f, 0f, 31.5f),
+            new List<PerceivedEntity>
+            {
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(16f, 0f, 29f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(-2.0f, 0f, 31.2f), Vector3.Zero, 0.9f),
+                new(22, TeamId.Away, TacticalRole.CenterBack, new Vector3(15.5f, 0f, 29.0f), Vector3.Zero, 0.9f)
+            });
+        var trailingGen = new CandidateGenerator(pitch) { TimeOnBall = 0.60f };
+        trailingGen.GenerateOnBallCandidates(trailingChaserObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        Assert.DoesNotContain(trailingGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+
+        // 4. Genuine boxed-in midfield touchline carrier aims inward (>= 4.5 m inside touchline) at <= 0.60 power.
+        FootballerObservation boxedObs = WingObs(
+            new Vector3(0f, 0f, 31.5f),
+            new List<PerceivedEntity>
+            {
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(16f, 0f, 29f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(1.5f, 0f, 31.2f), Vector3.Zero, 0.9f),
+                new(21, TeamId.Away, TacticalRole.DefensiveMidfielder, new Vector3(2.8f, 0f, 29.2f), Vector3.Zero, 0.9f),
+                new(22, TeamId.Away, TacticalRole.CenterBack, new Vector3(15.5f, 0f, 29.0f), Vector3.Zero, 0.9f)
+            });
+        var boxedGen = new CandidateGenerator(pitch) { TimeOnBall = 0.80f };
+        boxedGen.GenerateOnBallCandidates(boxedObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate clearance = Assert.Single(boxedGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+        Assert.True(clearance.TargetXZ.HasValue);
+        Assert.True(pitch.HalfWidth - MathF.Abs(clearance.TargetXZ!.Value.Z) >= 4.5f - 1e-3f,
+            $"escape clearance must aim inward (>= 4.5 m inside touchline), aimed at z={clearance.TargetXZ.Value.Z:F2}");
+        Assert.True(clearance.Command.KickPower01 <= 0.60f,
+            $"escape clearance must use bounded power <= 0.60, got {clearance.Command.KickPower01:F2}");
+    }
 }

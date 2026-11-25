@@ -222,6 +222,81 @@ public sealed class RaisedDeliveryTests
             BallXZ, BoxRegion, RaisedPassProfile.Cross, 0.85f, nearLaunch.VisiblePlayers, TeamId.Home));
     }
 
+    [Fact]
+    public void CoveredGroundCorridor_EvaluatesLoftedAlternative_WhenGroundDegradedOrLowCompletion()
+    {
+        var ballXZ = new Vector2(10.4f, -28f);
+        var mateXZ = new Vector2(26f, -28f);
+        // Defender 1.6 m off the 15.6 m wing lane near proj ~12.1 m: laneClearance01 ~0.54 (< 0.55),
+        // moving away in +Z at 2.5 m/s so IsLaneBlocked stays false and landing contest isn't dominated.
+        var defender = new PerceivedEntity(
+            25, TeamId.Away, TacticalRole.FullBack,
+            new Vector3(22.5f, 0f, -26.4f), new Vector3(0f, 0f, 2.5f), 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.Winger,
+            new Vector3(mateXZ.X, 0f, mateXZ.Y), Vector3.Zero, 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Winger,
+            SelfPosition = new Vector3(10f, 0f, -28f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(ballXZ.X, 0.11f, ballXZ.Y),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(10f, 0f, -28f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 20f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 500,
+            VisiblePlayers = new List<PerceivedEntity> { mate, defender },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = PlayerTendencyProfile.ForRole(TacticalRole.Winger),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        float laneClearance = CandidateGenerator.EvaluateLaneClearance(
+            ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam, chargeUncertainty: true);
+        Assert.True(laneClearance < 0.55f, $"expected degraded laneClearance < 0.55, got {laneClearance:F3}");
+
+        var generator = new CandidateGenerator(Pitch) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 40f);
+
+        var rejections = new List<string>();
+        for (int i = 0; i < generator.RejectionCount; i++)
+        {
+            rejections.Add(generator.GetRejection(i).ToString());
+        }
+        bool hasLofted = false;
+        foreach (UtilityCandidate c in generator.Candidates)
+        {
+            if (c.Key.Kind == CandidateKind.Pass &&
+                c.Key.TargetPlayerId == MateId &&
+                c.Command.KickType == KickIntentType.LoftedPass)
+            {
+                hasLofted = true;
+            }
+        }
+        Assert.True(hasLofted, $"expected LoftedPass candidate; rejections=[{string.Join(", ", rejections)}]");
+    }
+
     // ---- fixtures ----------------------------------------------------------------------------------
 
     private static readonly Vector2 BallXZ = new(34.4f, 24f);

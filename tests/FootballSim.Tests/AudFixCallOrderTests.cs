@@ -356,14 +356,22 @@ public sealed class AudFixCallOrderTests
     /// <c>ShieldBall</c> slowdown move this match (784/684 possession ticks, 315/356 controlled ticks,
     /// 5/7 attempted, 4/6 completed passes, 0/0 shots/goals), so the constant is re-captured at
     /// <c>ai64-rs1</c>. The AUD-13c property is still pinned by the zero-delay tests above.</para>
+    ///
+    /// <para><b>2026-11-25 playtest &amp; clearance re-capture (<c>ai65-rs1</c>):</b> tightened touchline
+    /// escape clearance, 1v1 central breakaway switch suppression, covered/degraded-corridor lofted pass
+    /// evaluation, dynamic <c>ToSpace</c> race horizon, live-reach pacing on one-two/advertised run
+    /// returns, and the 9.0 m/s cap on <see cref="AI.ReceptionPlanner"/>'s pre-kick dribble guard move this
+    /// match (1068/402 possession ticks, 796/153 controlled ticks, 2/4 attempted, 2/3 completed passes,
+    /// 3/0 shots/goals), so the constant is re-captured at <c>ai65-rs1</c>. The AUD-13c property is still
+    /// pinned by the zero-delay tests above.</para>
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=11.155429,-12.664506|players=1:-42.640522,-1.9829129;2:-11.350866,20.575994;" +
-        "3:3.5829942,-30.38057;4:-9.577749,2.5579104;5:-2.4793286,-18.674519;6:13.113016,-23.259922;" +
-        "7:12.387011,27.077692;8:2.2289724,-9.435977;9:21.798048,-4.3050036;10:-3.6434615,-10.930125;" +
-        "11:21.832474,-21.700878;12:43.841827,-2.828359;13:26.143385,18.502;14:7.4630547,-25.33702;" +
-        "15:26.581322,5.41973;16:23.690683,-18.9485;17:22.831991,-16.47581;18:-1.3747958,12.629588;" +
-        "19:8.963623,4.1282754;20:-6.337225,-4.453559;21:11.088808,-11.946928;22:-3.0042698,-19.794743;" +
-        "|analytics=784,684,315,356,5,7,4,6,0,0,0,0|calls=187,4287,170,0|" +
-        "combinations=6,2,0,0,3,0,1";
+        "tick=1500|ball=-28.546286,5.210514|players=1:-49.9962,0.57145697;2:-16.676529,11.773635;" +
+        "3:-22.517626,-22.53093;4:-17.682652,9.02332;5:-19.044397,3.1445584;6:-17.135387,5.3520126;" +
+        "7:3.9450305,15.772723;8:-5.322596,7.9281197;9:7.7954173,0.80381787;10:-4.2651377,-5.762659;" +
+        "11:4.0767922,-14.162918;12:36.54537,1.2015779;13:11.083937,21.399136;14:11.268886,-20.225668;" +
+        "15:0.33173063,9.282501;16:15.07934,-6.936836;17:5.065247,1.2213339;18:-13.000913,17.309753;" +
+        "19:-14.725794,12.813912;20:-19.587618,8.702872;21:-1.4231169,1.2480313;22:-11.987765,-14.335539;" +
+        "|analytics=1068,402,796,153,2,4,2,3,3,0,1,0|calls=170,5905,163,0|" +
+        "combinations=2,0,0,0,2,0,0";
 }

@@ -795,12 +795,16 @@ public enum TeamId
 /// Reception Assist throttle preservation, unstoppable fly-by rejection in <c>BallTrajectoryEstimate.TryMeet</c>,
 /// and <c>ReceptionPlanner</c> pre-kick dribble guard, pressure-gated escape bonus, and delayed
 /// <c>ShieldBall</c> slowdown.</item>
+/// <item><b>65</b> (2026-11-25): Tightened touchline escape clearance (settle time, non-final-third,
+/// frontal/crowded trap, inward aim and 0.55 power), 1v1 central breakaway switch suppression,
+/// covered/degraded-corridor lofted pass evaluation, dynamic <c>ToSpace</c> race horizon, live-reach
+/// pacing on one-two/advertised run returns, and 9.0 m/s cap on <c>ReceptionPlanner</c> pre-kick guard.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 64;
+    public const int AiBehaviour = 65;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

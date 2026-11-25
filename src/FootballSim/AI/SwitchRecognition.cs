@@ -168,7 +168,8 @@ public static class SwitchRecognition
         in FootballerObservation obs,
         in PerceivedEntity receiver,
         Vector2 arrivalPointXZ,
-        float completionProbability01)
+        float completionProbability01,
+        float pitchHalfLength = 52.5f)
     {
         Vector2 ballXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
         Vector2 carrierXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
@@ -197,7 +198,8 @@ public static class SwitchRecognition
             Confidence01: 0f,
             Preference: 0f);
 
-        if (!IsEligible(obs, lateralMeters, openness, carrierNearestOpponent, feasibility)) return opportunity;
+        if (!IsEligible(obs, lateralMeters, openness, carrierNearestOpponent, feasibility, ballXZ, pitchHalfLength))
+            return opportunity;
 
         float confidence = Math.Clamp(
             WeightCarrierPressure * carrierPressure
@@ -222,13 +224,16 @@ public static class SwitchRecognition
     public static bool IsSwitchGeometry(
         in FootballerObservation obs,
         Vector2 receiverXZ,
-        Vector2 ballXZ)
+        Vector2 ballXZ,
+        float pitchHalfLength = 52.5f)
     {
         float lateralMeters = MathF.Abs(receiverXZ.Y - ballXZ.Y);
         float openness = CandidateGenerator.EvaluateSpaceFreedom(receiverXZ, obs.VisiblePlayers, obs.SelfTeam);
         Vector2 carrierXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
         float carrierNearestOpponent = NearestOpponentDistance(obs, carrierXZ);
-        return IsEligible(obs, lateralMeters, openness, carrierNearestOpponent, completionProbability01: 1f);
+        return IsEligible(
+            obs, lateralMeters, openness, carrierNearestOpponent, completionProbability01: 1f,
+            ballXZ, pitchHalfLength);
     }
 
     /// <summary>
@@ -241,10 +246,16 @@ public static class SwitchRecognition
         float lateralMeters,
         float openness01,
         float carrierNearestOpponentMeters,
-        float completionProbability01)
+        float completionProbability01,
+        Vector2 ballXZ,
+        float pitchHalfLength)
     {
         // A keeper's distribution is the keeper's own decision (A6.5b); the recognizer does not re-price it.
         if (obs.SelfRole == TacticalRole.Goalkeeper) return false;
+
+        // ai65: a central carrier clean through 1v1 on goal must not be pulled out to the touchline by a
+        // wide-switch bonus triggered by trailing chasers.
+        if (IsCentralOneOnOneTowardGoal(obs, ballXZ, pitchHalfLength)) return false;
 
         // Turnover cost: without a rest-defence picture the carrier cannot say what losing the ball costs,
         // and an unknown must not read as "safe". Below the allocator's own commitment threshold it is short.
@@ -263,6 +274,34 @@ public static class SwitchRecognition
 
         // The ball has to be one the pass model can actually complete.
         if (completionProbability01 < MinCompletionProbability01) return false;
+
+        return true;
+    }
+
+    private static bool IsCentralOneOnOneTowardGoal(
+        in FootballerObservation obs,
+        Vector2 ballXZ,
+        float pitchHalfLength)
+    {
+        float ballProj = ballXZ.X * obs.AttackingDirectionX;
+        if (ballProj < 12f || MathF.Abs(ballXZ.Y) > 14f) return false;
+
+        Vector2 oppGoalXZ = new(obs.AttackingDirectionX * pitchHalfLength, 0f);
+        if (CandidateGenerator.EvaluateLaneClearance(
+                ballXZ, oppGoalXZ, obs.VisiblePlayers, obs.SelfTeam, excludeGoalkeeper: true) < 0.75f)
+        {
+            return false;
+        }
+
+        float corridorHalfWidth = MathF.Max(8.0f, MathF.Abs(ballXZ.Y) + 3.0f);
+        for (int index = 0; index < obs.VisiblePlayers.Count; index++)
+        {
+            PerceivedEntity entity = obs.VisiblePlayers[index];
+            if (entity.Team == obs.SelfTeam || entity.Role == TacticalRole.Goalkeeper) continue;
+            float oppProj = entity.EstimatedPosition.X * obs.AttackingDirectionX;
+            if (oppProj > ballProj + 1.0f && MathF.Abs(entity.EstimatedPosition.Z) <= corridorHalfWidth)
+                return false;
+        }
 
         return true;
     }

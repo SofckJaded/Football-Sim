@@ -733,4 +733,32 @@ public sealed class ReceptionPlannerTests
         Assert.True(shield.Command.Sprint, "Pressed Shield reception 1.8 m away must sprint to meet the ball");
         Assert.False(shield.Command.ShieldBall, "ShieldBall slowdown must not engage while still > 1.25 m from meeting point");
     }
+
+    [Fact]
+    public void ReceptionPlanner_HighPaceCarrierMinimumPowerPass_ReleasesPreKickGuard()
+    {
+        // High-pace 9.5 m/s winger plays a minimum-power (10.3 m/s) forward pass; ball is still 0.8 m
+        // from passer once reaction delay ends. Speed cap min(passerSpeed + 1.5, 9.0) must release the guard.
+        var passer = new PerceivedEntity(
+            102, TeamId.Home, TacticalRole.Winger,
+            new Vector3(0f, 0f, 0f),
+            new Vector3(9.5f, 0f, 0f),
+            1f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+
+        FootballerObservation obs = Receiving(
+            new Vector2(0.8f, 0f),
+            new Vector2(10.3f, 0f),
+            visible: [passer, Mate(ForwardMateId, 20f, 6f)],
+            selfPosition: new Vector2(10f, 0f),
+            selfVelocity: Vector3.Zero,
+            selfFacingXZ: new Vector2(-1f, 0f));
+
+        var planner = new ReceptionPlanner(new PitchDimensions());
+        Assert.True(planner.TryPlan(obs, out ReceptionPlan plan));
+        Assert.True(plan.ArrivalSeconds > 0f,
+            $"minimum-power pass at 10.3 m/s must release pre-kick dribble guard (got ArrivalSeconds={plan.ArrivalSeconds:F3})");
+    }
 }

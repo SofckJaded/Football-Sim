@@ -336,6 +336,91 @@ public sealed class SwitchRecognitionTests
             new Vector2(nearSideObs.PerceivedBallPosition.X, nearSideObs.PerceivedBallPosition.Z)));
     }
 
+    [Fact]
+    public void SwitchRecognition_CentralOneOnOneCarrier_DoesNotAwardWideSwitchPreference()
+    {
+        const int wideWingerId = 107;
+        var visible = new List<PerceivedEntity>
+        {
+            Mate(wideWingerId, 24f, 26f),
+            Opponent(PresserId, 19.5f, 1f),
+            Opponent(202, 18.0f, 3f),
+            new(201, TeamId.Away, TacticalRole.Goalkeeper, new Vector3(50f, 0f, 0f), Vector3.Zero, 1f)
+            {
+                Capability = CapabilityEstimate.Generic
+            }
+        };
+
+        static FootballerObservation CentralObs(IReadOnlyList<PerceivedEntity> entities) => new()
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Striker,
+            SelfPosition = new Vector3(22f, 0f, 2f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(22.4f, 0.11f, 2f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(22f, 0f, 2f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 100,
+            VisiblePlayers = entities,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = PlayerTendencyProfile.ForRole(TacticalRole.Striker),
+            SelfAttributes = new PlayerAttributes(),
+            TeamSecurity = new RestDefence(5, 1.2f, 0.25f, 0.20f, 0.1f, 0.75f)
+        };
+
+        FootballerObservation oneOnOneObs = CentralObs(visible);
+        PerceivedEntity winger = Find(oneOnOneObs, wideWingerId);
+
+        SwitchOpportunity opportunity = SwitchRecognition.Evaluate(
+            oneOnOneObs, winger, new Vector2(24f, 26f), completionProbability01: 0.85f);
+        Assert.False(opportunity.IsRecognized, opportunity.Describe());
+        Assert.Equal(0f, opportunity.Preference);
+
+        // Verify CandidateGenerator drives toward goal rather than switching wide to the touchline.
+        var pitch = new PitchDimensions();
+        var generator = new CandidateGenerator(pitch) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(oneOnOneObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate? carry = null;
+        UtilityCandidate? wideSwitch = null;
+        foreach (UtilityCandidate candidate in generator.Candidates)
+        {
+            if (candidate.Key.Kind == CandidateKind.Carry) carry = candidate;
+            if (candidate.Key.Kind == CandidateKind.Pass && candidate.Key.TargetPlayerId == wideWingerId)
+                wideSwitch = candidate;
+        }
+        Assert.NotNull(carry);
+        if (wideSwitch is not null)
+        {
+            Assert.True(carry.Value.UtilityScore > wideSwitch.Value.UtilityScore,
+                $"1v1 carry ({carry.Value.UtilityScore:F3}) must beat wide switch ({wideSwitch.Value.UtilityScore:F3})");
+        }
+
+        // Control: placing one center-back ahead in the central corridor restores the switch recognition.
+        var blockedVisible = new List<PerceivedEntity>(visible)
+        {
+            Opponent(205, 32f, 1f)
+        };
+        FootballerObservation blockedObs = CentralObs(blockedVisible);
+        SwitchOpportunity blockedOpp = SwitchRecognition.Evaluate(
+            blockedObs, winger, new Vector2(24f, 26f), completionProbability01: 0.85f);
+        Assert.True(blockedOpp.IsRecognized, blockedOpp.Describe());
+        Assert.True(blockedOpp.Preference > 0f);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // The picture builder.
     // ---------------------------------------------------------------------------------------------

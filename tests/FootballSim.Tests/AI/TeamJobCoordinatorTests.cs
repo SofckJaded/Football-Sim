@@ -105,6 +105,68 @@ public sealed class TeamJobCoordinatorTests
         Assert.Equal(2, homeMarkers);
     }
 
+    [Fact]
+    public void NearOutlet_HeldAssignment_ReleasesWhenDefensiveCoverMovesWithinSeparationFloor()
+    {
+        var carrier = Player(101, TeamId.Home, TacticalRole.CentralMidfielder, new Vector3(0f, 0f, 0f));
+        var cover = Player(102, TeamId.Home, TacticalRole.CenterBack, new Vector3(-12f, 0f, 0f));
+        var outlet = Player(103, TeamId.Home, TacticalRole.CentralMidfielder, new Vector3(-5f, 0f, 7f));
+        var awayGk = Player(201, TeamId.Away, TacticalRole.Goalkeeper, new Vector3(48f, 0f, 0f));
+        var players = new List<FootballerState> { carrier, cover, outlet, awayGk };
+
+        var homeFormation = new TeamFormation(TeamId.Home, Pitch);
+        homeFormation.AssignFromPositions(new[] { carrier, cover, outlet }, 1f);
+        var awayFormation = new TeamFormation(TeamId.Away, Pitch);
+        awayFormation.AssignFromPositions(new[] { awayGk }, -1f);
+
+        var coordinator = new TeamJobCoordinator(Pitch);
+        var ball = new BallState
+        {
+            Position = carrier.Position with { Y = 0.11f },
+            PreviousPosition = carrier.Position with { Y = 0.11f },
+            Velocity = Vector3.Zero
+        };
+        var possession = new BallPossessionSnapshot(
+            BallControlState.Controlled, TeamId.Home, carrier.Id, null);
+
+        coordinator.Update(
+            players, ball, possession, possessingTeam: TeamId.Home,
+            homeResponderId: null, awayResponderId: null, homeDirX: 1f, tick: 1,
+            homeProfile: TeamTacticalProfile.PossessionControl,
+            awayProfile: TeamTacticalProfile.PossessionControl,
+            homeOpponents: TeamBelief.FromTruth(TeamId.Home, players),
+            awayOpponents: TeamBelief.FromTruth(TeamId.Away, players),
+            homeFormation: homeFormation, awayFormation: awayFormation);
+
+        TeamJobAssignment? initialOutlet = coordinator.Get(outlet.Id);
+        Assert.NotNull(initialOutlet);
+        Assert.Equal(TacticalJob.NearOutlet, initialOutlet!.Value.Job);
+        Vector3 initialAnchor = initialOutlet.Value.Anchor;
+
+        // Move carrier so live DefensiveCover nominal anchor (~(-4.9, 5.7)) falls within MinRefinedSeparationMeters (6 m)
+        // of #103's held NearOutlet anchor (~(-5, 7)); tick 7 is inside MinimumHoldTicks so only the guard can release it.
+        carrier.Position = new Vector3(6f, 0f, 7f);
+        ball.Position = carrier.Position with { Y = 0.11f };
+        ball.PreviousPosition = ball.Position;
+
+        coordinator.Update(
+            players, ball, possession, possessingTeam: TeamId.Home,
+            homeResponderId: null, awayResponderId: null, homeDirX: 1f, tick: 7,
+            homeProfile: TeamTacticalProfile.PossessionControl,
+            awayProfile: TeamTacticalProfile.PossessionControl,
+            homeOpponents: TeamBelief.FromTruth(TeamId.Home, players),
+            awayOpponents: TeamBelief.FromTruth(TeamId.Away, players),
+            homeFormation: homeFormation, awayFormation: awayFormation);
+
+        TeamJobAssignment? updatedOutlet = coordinator.Get(outlet.Id);
+        Assert.NotNull(updatedOutlet);
+        float movedMeters = Vector2.Distance(
+            new Vector2(initialAnchor.X, initialAnchor.Z),
+            new Vector2(updatedOutlet!.Value.Anchor.X, updatedOutlet.Value.Anchor.Z));
+        Assert.True(movedMeters > 1.0f || updatedOutlet.Value.Job != TacticalJob.NearOutlet,
+            $"held NearOutlet anchor ({initialAnchor.X:F1},{initialAnchor.Z:F1}) must be released/re-anchored when DefensiveCover moves within 6 m");
+    }
+
     private static FootballerState Player(int id, TeamId team, TacticalRole role, Vector3 position) => new()
     {
         Id = id,

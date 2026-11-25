@@ -858,6 +858,84 @@ public sealed class CombinationCoordinatorTests
         throw new Xunit.Sdk.XunitException($"no pass match to #{targetId} tag {tag}; candidates: {KeysOf(generator)}");
     }
 
+    [Fact]
+    public void OneTwoReturn_WhenInitiatorHeldOnsideBehindSchedule_PacesPassToLiveReachInsteadOfMaxPowerRocket()
+    {
+        var comms = new MatchCommunicationContext();
+        var returnRegion = new Vector2(30f, 0f);
+        const int publishTick = 300;
+        const int evalTick = 390;
+        // Stale ExpectedArrivalTick = evalTick + 30 (0.50 s remaining) while initiator is still at (24, 0).
+        Assert.True(comms.Combinations.Publish(
+            CombinationKind.OneTwo,
+            Home,
+            InitiatorId,
+            ReceiverId,
+            thirdPlayerId: 0,
+            returnRegion,
+            returnRadiusMeters: 3f,
+            expectedArrivalTick: evalTick + 30,
+            confidence01: 0.9f,
+            tick: publishTick));
+
+        var receiverPos = new Vector3(18f, 0f, 8f);
+        var ballPos = new Vector3(18.4f, 0f, 8f);
+        var initiatorPos = new Vector3(24f, 0f, 0f);
+        var visible = new List<PerceivedEntity>
+        {
+            Mate(InitiatorId, initiatorPos, TacticalRole.CentralMidfielder),
+            Opponent(PresserId, new Vector3(8f, 0f, -10f)),
+            Opponent(SecondDefenderId, new Vector3(40f, 0f, -15f))
+        };
+
+        var obs = new FootballerObservation
+        {
+            SelfId = ReceiverId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = receiverPos,
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = ballPos,
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = ReceiverId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = ReceiverId,
+            TacticalAnchorPosition = receiverPos,
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = TimeOf(evalTick),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = evalTick,
+            VisiblePlayers = visible,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes(),
+            Combination = ContextOf(comms, ReceiverId, evalTick)
+        };
+
+        var generator = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, OppGoal(), offsideLineProjX: 25f);
+
+        UtilityCandidate returnPass = Candidate(generator, InitiatorId, CandidateGenerator.RunPassTag);
+        Assert.True(returnPass.Command.KickPower01 <= 0.75f,
+            $"one-two return must be paced to live reach instead of slamming power={returnPass.Command.KickPower01:F2}");
+
+        var planner = new PassPlanner(Pitch);
+        float distance = Vector2.Distance(new Vector2(ballPos.X, ballPos.Z), returnRegion);
+        ReachEstimate liveReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(visible[0]), returnRegion, TimeToReachModel.DefaultHorizonSeconds);
+        Assert.True(liveReach.Reachable);
+        float rolledPastAtLiveReach = planner.BallDistanceAtTime(returnPass.Command.KickPower01, liveReach.Seconds) - distance;
+        Assert.True(rolledPastAtLiveReach <= CandidateGenerator.EffectivePromiseCatchRadiusMeters(distance),
+            $"paced pass rolled {rolledPastAtLiveReach:F2} m past return region at runner live reach {liveReach.Seconds:F2} s");
+    }
+
     private static bool HasCandidate(CandidateGenerator generator, int targetId, string tag)
     {
         foreach (UtilityCandidate candidate in generator.Candidates)

@@ -861,4 +861,30 @@ public sealed class Aib2CandidateSpaceTests
         Assert.Contains(called.Candidates,
             c => c.Key.Kind == CandidateKind.Pass && c.Key.TargetPlayerId == MateId);
     }
+
+    [Fact]
+    public void SpaceProbe_ReceiverTurningForFourteenMetreOpenSpace_IsNotRejectedByHorizonCeiling()
+    {
+        const float offsideLineProjX = 40f;
+        Vector2 ballXZ = new(10.4f, 10f);
+        // Open THIRD_OPTION moving/facing -X so turning 180 deg to attack (32, 10) takes ~2.25 s,
+        // with nearest defenders unreachable inside 3.0 s.
+        PerceivedEntity openMate = TeamMate(MateId, 18f, 10f, velocity: new Vector3(-2.0f, 0f, 0f));
+        FootballerObservation observation = Observation(
+            ballXZ, new Vector2(10f, 10f), openMate,
+            Opponent(14, 46f, -15f), Opponent(15, 48f, 30f));
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.8f };
+
+        generator.GenerateOnBallCandidates(observation, OpponentGoal, offsideLineProjX);
+
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+        Vector2 aim = XZ(space.TargetXZ!.Value);
+        var rejections = new List<string>();
+        for (int i = 0; i < generator.RejectionCount; i++)
+            rejections.Add(generator.GetRejection(i).ToString());
+        Assert.True(MathF.Abs(aim.X - 32f) < 0.1f,
+            $"expected 32, got {aim.X:F2}; rejections=[{string.Join(", ", rejections)}]");
+        Assert.Equal(10f, aim.Y, precision: 1);
+    }
 }
