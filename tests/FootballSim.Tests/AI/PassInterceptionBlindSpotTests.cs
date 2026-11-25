@@ -1300,4 +1300,47 @@ public sealed class PassInterceptionBlindSpotTests
         Assert.Equal(1.0f, CandidateGenerator.EvaluateLaneClearance(
             ball, target, new[] { receding }, TeamId.Home, chargeUncertainty: true));
     }
+
+    // =============================================================================================
+    // ai66 — in-segment up-lane sprinters (t=2594, t=7414) & close-range launch cone (t=13776)
+    // =============================================================================================
+
+    [Fact]
+    public void InSegmentUpLaneSprinter_IsCaughtByCheck3Lookahead_LiveReplays_t2594_And_t7414()
+    {
+        Vector2 ball2594 = new(-11.95f, -13.06f);
+        Vector2 tgt2594 = new(-19.38f, -5.46f);
+        Assert.True(Planner.TryGetFlightTime(0.50f, Vector2.Distance(ball2594, tgt2594), out float flight2594));
+        PerceivedEntity p5 = Opponent(5, new Vector2(-20.14f, -8.43f), new Vector2(4.20f, -1.46f));
+        Assert.True(
+            Model.IsLaneBlocked(ball2594, tgt2594, power01: 0.50f, flightTimeSeconds: flight2594,
+                new[] { p5 }, TeamId.Home),
+            "Live replay t=2594: in-segment defender p5 sprinting up-lane must block the pass");
+
+        Vector2 ball7414 = new(25.11f, -9.35f);
+        Vector2 tgt7414 = new(35.11f, -5.75f);
+        Assert.True(Planner.TryGetFlightTime(0.50f, Vector2.Distance(ball7414, tgt7414), out float flight7414));
+        PerceivedEntity p16 = Opponent(16, new Vector2(31.92f, -8.22f), new Vector2(-3.94f, -2.16f));
+        Assert.True(
+            Model.IsLaneBlocked(ball7414, tgt7414, power01: 0.50f, flightTimeSeconds: flight7414,
+                new[] { p16 }, TeamId.Home),
+            "Live replay t=7414: in-segment defender p16 sprinting up-lane must block the pass");
+    }
+
+    [Fact]
+    public void CloseRangeLaunchCone_CreditsSightingUncertaintyAndUpLaneClosing_LiveReplay_t13776()
+    {
+        Vector2 ball = new(-12.90f, 4.06f);
+        Vector2 tgt = new(-11.86f, 25.60f);
+        Assert.True(Planner.TryGetFlightTime(1.00f, Vector2.Distance(ball, tgt), out float flight));
+        PerceivedEntity p2 = Opponent(2, new Vector2(-10.65f, 7.33f), new Vector2(-1.59f, -5.39f)) with
+        {
+            PositionUncertaintyMeters = 0.88f
+        };
+
+        Assert.True(
+            Model.IsLaneBlocked(ball, tgt, power01: 1.00f, flightTimeSeconds: flight,
+                new[] { p2 }, TeamId.Home, launchDelaySeconds: 0.10f),
+            "Live replay t=13776: close-cone defender p2 with 0.88 m sighting uncertainty closing up-lane must block");
+    }
 }

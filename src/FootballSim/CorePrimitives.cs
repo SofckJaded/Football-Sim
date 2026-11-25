@@ -799,12 +799,17 @@ public enum TeamId
 /// frontal/crowded trap, inward aim and 0.55 power), 1v1 central breakaway switch suppression,
 /// covered/degraded-corridor lofted pass evaluation, dynamic <c>ToSpace</c> race horizon, live-reach
 /// pacing on one-two/advertised run returns, and 9.0 m/s cap on <c>ReceptionPlanner</c> pre-kick guard.</item>
+/// <item><b>66</b> (2026-11-25): <c>ClearanceBoxedInMaxProjX</c> zone gate and 0.45 lofted channel launch for
+/// <c>boxedInEscape</c>, in-segment up-lane crossing/lookahead and close-cone sighting doubt in
+/// <c>IsLaneBlocked</c>, forward-ray convergence fallback in <c>ComputeBallInterceptTarget</c>, crossing-angle
+/// <c>ToSpace</c> catch radius, and removal of the ground-blocker preference double penalty in
+/// <c>AddLoftedPass</c>.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 65;
+    public const int AiBehaviour = 66;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

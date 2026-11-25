@@ -1267,4 +1267,68 @@ public sealed class Aib3PassPhysicsTests
         throw new Xunit.Sdk.XunitException(
             $"no '{tag}' pass to #{targetPlayerId}: {(names.Count == 0 ? "(empty candidate set)" : string.Join(" | ", names))}");
     }
+
+    [Fact]
+    public void SpaceProbe_PerpendicularCrossingPass_FallsBackToPacedBallInsteadOfMaxPowerRocket()
+    {
+        // Crossing-angle ToSpace pass (~70 deg across mate's sprint, mirroring t=9396): align01 ~0.35
+        // tightens catchRadius to ~3.14 m so the crisp rocket falls back to paced power (<= 0.75f).
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.CentralMidfielder,
+            new Vector3(11.53f, 0f, -0.40f), new Vector3(-3.28f, 0f, -1.71f), 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(3.70f, 0f, 15.56f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(-1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(3.50f, 0f, 15.56f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(10.0f, 0f, 15.56f),
+            AttackingDirectionX = -1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = ObservationTick,
+            VisiblePlayers = new[] { mate },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(-Pitch.HalfLength, 0f, 0f), offsideLineProjX: 40f);
+
+        var rejections = new List<string>();
+        for (int i = 0; i < generator.RejectionCount; i++)
+            rejections.Add(generator.GetRejection(i).ToString());
+        UtilityCandidate? space = null;
+        for (int i = 0; i < generator.CandidateCount; i++)
+        {
+            UtilityCandidate c = generator.Candidates[i];
+            if (c.Key.Kind == CandidateKind.Pass &&
+                c.Key.TargetPlayerId == MateId &&
+                string.Equals(c.Key.TargetTag, CandidateGenerator.SpacePassTag, StringComparison.Ordinal))
+            {
+                space = c;
+                break;
+            }
+        }
+        Assert.True(space.HasValue, $"expected ToSpace candidate; rejections=[{string.Join(", ", rejections)}]");
+        Assert.True(space.Value.Command.KickPower01 <= 0.75f,
+            $"crossing ToSpace pass must fall back to paced ball (<= 0.75), got power={space.Value.Command.KickPower01:F2}");
+    }
 }

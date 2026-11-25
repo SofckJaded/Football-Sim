@@ -761,4 +761,62 @@ public sealed class ReceptionPlannerTests
         Assert.True(plan.ArrivalSeconds > 0f,
             $"minimum-power pass at 10.3 m/s must release pre-kick dribble guard (got ArrivalSeconds={plan.ArrivalSeconds:F3})");
     }
+
+    [Fact]
+    public void InterceptPassRay_WhenBallOutrunsConstantVelocitySolve_ConvergesAheadAlongBallRayInsteadOfChasingTail()
+    {
+        // Exact t=1380 live geometry: ball outruns constant-velocity TrySolveInterception, so
+        // ComputeBallInterceptTarget must aim ahead along the ball ray (-X) instead of chasing ballXZ (+Z).
+        var pitch = new PitchDimensions();
+        var controller = new TacticalUtilityAiController(pitch);
+        FootballerObservation obs = Receiving(
+            new Vector2(-9.50f, 14.06f),
+            new Vector2(-14.80f, -6.88f),
+            visible: [Mate(ForwardMateId, -28f, 4f)],
+            selfPosition: new Vector2(-8.44f, 8.25f),
+            selfVelocity: new Vector3(-2.0f, 0f, 0f),
+            selfFacingXZ: new Vector2(-0.8f, -0.6f));
+        var interceptObs = new FootballerObservation
+        {
+            SelfId = obs.SelfId,
+            SelfTeam = obs.SelfTeam,
+            SelfRole = obs.SelfRole,
+            SelfPosition = obs.SelfPosition,
+            SelfVelocity = obs.SelfVelocity,
+            SelfFacingXZ = obs.SelfFacingXZ,
+            Scan = obs.Scan,
+            Calls = obs.Calls,
+            Stamina01 = obs.Stamina01,
+            AvailableToKick = obs.AvailableToKick,
+            ControlQuality01 = obs.ControlQuality01,
+            PerceivedBallPosition = obs.PerceivedBallPosition,
+            PerceivedBallVelocity = obs.PerceivedBallVelocity,
+            PossessingTeam = obs.PossessingTeam,
+            BallLastTouchedByPlayerId = obs.BallLastTouchedByPlayerId,
+            BallLastTouchedByTeam = obs.BallLastTouchedByTeam,
+            BallControlState = obs.BallControlState,
+            BallControllingPlayerId = obs.BallControllingPlayerId,
+            IntendedReceiverId = obs.IntendedReceiverId,
+            TacticalAnchorPosition = obs.TacticalAnchorPosition,
+            AttackingDirectionX = -1f,
+            MatchTimeSeconds = obs.MatchTimeSeconds,
+            CurrentMatchPhase = obs.CurrentMatchPhase,
+            IsSetPieceTaker = obs.IsSetPieceTaker,
+            Tick = obs.Tick,
+            KnowledgeAgeTicks = obs.KnowledgeAgeTicks,
+            VisiblePlayers = obs.VisiblePlayers,
+            TeamProfile = obs.TeamProfile,
+            SelfTendencies = obs.SelfTendencies,
+            SelfAttributes = obs.SelfAttributes,
+            IsDesignatedBallResponder = true,
+            BallResponderPlayerId = obs.SelfId
+        };
+
+        FootballerCommand cmd = controller.Decide(interceptObs, SimConstants.FixedDeltaTime);
+
+        Assert.True(cmd.DesiredMoveDirectionXZ.X < -0.5f,
+            $"receiver must converge downfield along the ball ray (-X), got move=({cmd.DesiredMoveDirectionXZ.X:F2},{cmd.DesiredMoveDirectionXZ.Y:F2})");
+        Assert.True(cmd.DesiredMoveDirectionXZ.Y < 0.75f,
+            $"receiver must converge along ball ray rather than chasing ballXZ (+Z), got move=({cmd.DesiredMoveDirectionXZ.X:F2},{cmd.DesiredMoveDirectionXZ.Y:F2})");
+    }
 }

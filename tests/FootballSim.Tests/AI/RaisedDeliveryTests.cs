@@ -297,6 +297,73 @@ public sealed class RaisedDeliveryTests
         Assert.True(hasLofted, $"expected LoftedPass candidate; rejections=[{string.Join(", ", rejections)}]");
     }
 
+    [Fact]
+    public void LoftedAlternative_OverGroundBlocker_UsesEffectiveAirborneLaneInPreference()
+    {
+        var ballXZ = new Vector2(0.4f, 0f);
+        var mateXZ = new Vector2(20f, 0f);
+        // Blocker stands right on the ground lane (lane = 0.0) mid-segment where a lofted ball flies over (> 2.2 m).
+        var blocker = new PerceivedEntity(
+            25, TeamId.Away, TacticalRole.DefensiveMidfielder,
+            new Vector3(10f, 0f, 0f), Vector3.Zero, 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.Striker,
+            new Vector3(mateXZ.X, 0f, mateXZ.Y), Vector3.Zero, 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(0f, 0f, 0f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(ballXZ.X, 0.11f, ballXZ.Y),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(0f, 0f, 0f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 20f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = 500,
+            VisiblePlayers = new List<PerceivedEntity> { mate, blocker },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = PlayerTendencyProfile.ForRole(TacticalRole.CentralMidfielder),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        float rawLane = CandidateGenerator.EvaluateLaneClearance(ballXZ, mateXZ, obs.VisiblePlayers, obs.SelfTeam);
+        Assert.Equal(0f, rawLane, 3);
+
+        var generator = new CandidateGenerator(Pitch) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 40f);
+
+        UtilityCandidate lofted = Assert.Single(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Pass &&
+                 c.Key.TargetPlayerId == MateId &&
+                 c.Command.KickType == KickIntentType.LoftedPass);
+        float groundTaxedPreference = CandidateGenerator.PassPreference(obs, 20f, 0f);
+        float expectedEffectivePreference = CandidateGenerator.PassPreference(
+            obs, 20f, 1f - PassSuccessModel.LaneWeight * (1f - rawLane));
+        Assert.True(lofted.Terms.Preference > groundTaxedPreference + 0.05f,
+            $"lofted preference ({lofted.Terms.Preference:F3}) must not pay ground-blocker tax ({groundTaxedPreference:F3})");
+        Assert.Equal(expectedEffectivePreference, lofted.Terms.Preference, 3);
+    }
+
     // ---- fixtures ----------------------------------------------------------------------------------
 
     private static readonly Vector2 BallXZ = new(34.4f, 24f);

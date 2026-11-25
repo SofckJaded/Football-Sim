@@ -1231,7 +1231,7 @@ public sealed class PassSuccessModel
         // query: the perpendicular foot, the down-lane midpoint, the arrival point, an optional closed-form
         // head-on crossing point for past-target up-lane sprinters, and up to
         // <see cref="LaneLookaheadSamples"/> points along the defender's own run.
-        Span<float> lanePoints = stackalloc float[4 + LaneLookaheadSamples];
+        Span<float> lanePoints = stackalloc float[5 + LaneLookaheadSamples];
 
         for (int i = 0; i < visiblePlayers.Count; i++)
         {
@@ -1305,6 +1305,8 @@ public sealed class PassSuccessModel
                 }
             }
 
+            float alongRun = Vector2.Dot(runVelocity, direction);
+
             // 2. Close-range launch cone (task 4 / follow-up Bug 1). A body standing beside the launch point,
             //    in the first few metres of the lane, can accelerate across into the ball during the passer's
             //    turn and the ball's early flight; he has already noticed the carrier and is in front of the
@@ -1317,15 +1319,41 @@ public sealed class PassSuccessModel
             if (projectionRaw >= -LaneContactReachMeters &&
                 projectionRaw <= CloseRangeLaunchConeMaxProjectionMeters)
             {
+                float coneSightBonus = Math.Clamp(
+                    opponent.PositionUncertaintyMeters * UncertaintyArrivalSecondsPerMeter, 0f, MaxUncertaintySeconds);
+                float coneUncertainty = Math.Clamp(opponent.PositionUncertaintyMeters, 0f, 0.75f);
+                float coneReach = interceptReach + coneUncertainty;
+                ReachKinematics coneKinematics = coneUncertainty > 0f
+                    ? opponentKinematics.WithReachRadius(opponentKinematics.ReachRadius + coneUncertainty)
+                    : opponentKinematics;
                 float coneArrival = BallTimeToDistance(power01, projectionClamped, flightTimeSeconds, length);
-                float coneAvailable = effectiveLaunchDelay + coneArrival;
-                float coneMustRun = distanceToSegment - interceptReach;
+                float coneAvailable = effectiveLaunchDelay + coneArrival + coneSightBonus;
+                float coneMustRun = distanceToSegment - coneReach;
                 if (coneMustRun <= 0f) return true;
                 if (coneMustRun <= (speed + OpponentSprintSpeed) * coneAvailable)
                 {
                     ReachEstimate coneStep = TimeToReachModel.ToPoint(
-                        opponentKinematics, closestOnSegment, coneAvailable);
+                        coneKinematics, closestOnSegment, coneAvailable);
                     if (coneStep.Reachable && coneStep.Seconds <= coneAvailable) return true;
+                }
+
+                if (alongRun < -0.5f && projectionRaw > 0.5f)
+                {
+                    float upProj = Math.Clamp(projectionRaw + alongRun * coneAvailable, 0f, projectionClamped);
+                    if (projectionClamped - upProj >= LaneTestPointDedupMeters)
+                    {
+                        Vector2 upPoint = fromXZ + direction * upProj;
+                        float upAvailable = effectiveLaunchDelay
+                                            + BallTimeToDistance(power01, upProj, flightTimeSeconds, length)
+                                            + coneSightBonus;
+                        float upMustRun = Vector2.Distance(opponentXZ, upPoint) - coneReach;
+                        if (upMustRun <= 0f) return true;
+                        if (upMustRun <= (speed + OpponentSprintSpeed) * upAvailable)
+                        {
+                            ReachEstimate upStep = TimeToReachModel.ToPoint(coneKinematics, upPoint, upAvailable);
+                            if (upStep.Reachable && upStep.Seconds <= upAvailable) return true;
+                        }
+                    }
                 }
             }
 
@@ -1345,7 +1373,6 @@ public sealed class PassSuccessModel
             //    defender who reads the pass and steps *into* the corridor is otherwise invisible: his own
             //    along-lane velocity is not positive, and `if (alongRun <= 0f) break;` used to stop the
             //    loop at his perpendicular foot before the midpoint/arrival points were asked about.
-            float alongRun = Vector2.Dot(runVelocity, direction);
             float closingInto = -MathF.Sign(signedPerpendicular) *
                                 Vector2.Dot(runVelocity, normal);
 
@@ -1358,19 +1385,8 @@ public sealed class PassSuccessModel
                 lanePoints[lanePointCount++] = length;
                 if (alongRun < 0f)
                 {
-                    // ai64 (Task 1.1): closed-form 1D head-on crossing estimate along the pass axis so a
-                    // defender sprinting up-lane from past targetXZ does not slip between lookahead samples.
-                    float avgBallSpeed = length / MathF.Max(flight, 0.05f);
-                    float closingRate = avgBallSpeed - alongRun; // alongRun < 0 => positive sum
-                    if (closingRate > 0.5f)
-                    {
-                        float tCross = projectionRaw / closingRate;
-                        float crossProj = Math.Clamp(projectionRaw + alongRun * tCross, 0f, length);
-                        TryAddLanePoint(lanePoints, ref lanePointCount, crossProj);
-                    }
-
-                    // ai63 (Task 3): a defender running back up-lane toward the passer can intercept mid-lane
-                    // short of targetXZ, so sample up-lane lookahead points along his closing run too.
+                    AddHeadOnCrossingPoint(
+                        lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
                     AddRunLookaheadPoints(
                         lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
                 }
@@ -1401,6 +1417,13 @@ public sealed class PassSuccessModel
 
                 if (alongRun > 0f)
                 {
+                    AddRunLookaheadPoints(
+                        lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
+                }
+                else if (alongRun < 0f)
+                {
+                    AddHeadOnCrossingPoint(
+                        lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
                     AddRunLookaheadPoints(
                         lanePoints, ref lanePointCount, projectionRaw, alongRun, flight, length);
                 }
@@ -1453,6 +1476,23 @@ public sealed class PassSuccessModel
         }
 
         return false;
+    }
+
+    private static void AddHeadOnCrossingPoint(
+        Span<float> lanePoints,
+        ref int lanePointCount,
+        float projectionRaw,
+        float alongRun,
+        float flight,
+        float length)
+    {
+        float avgBallSpeed = length / MathF.Max(flight, 0.05f);
+        float closingRate = avgBallSpeed - alongRun; // alongRun < 0 => positive sum
+        if (closingRate <= 0.5f) return;
+
+        float tCross = projectionRaw / closingRate;
+        float crossProj = Math.Clamp(projectionRaw + alongRun * tCross, 0f, length);
+        TryAddLanePoint(lanePoints, ref lanePointCount, crossProj);
     }
 
     private static void AddRunLookaheadPoints(

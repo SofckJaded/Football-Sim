@@ -402,6 +402,12 @@ public sealed class CandidateGenerator : IAiStateResettable
     /// <summary>Own-half projection (metres, attack-relative) from which a clearance is considered.</summary>
     internal const float ClearanceOwnThirdProjX = -25.0f;
 
+    /// <summary>
+    /// Highest attack-relative projection (metres) at which a boxed-in touchline escape lob is permitted
+    /// (ai66): keeps midfield escapes active while strictly forbidding attacking-half goal-kick hoofs.
+    /// </summary>
+    internal const float ClearanceBoxedInMaxProjX = 12.0f;
+
     /// <summary>Earliest time on the ball before a clearance is allowed, in seconds.</summary>
     internal const float ClearanceMinTimeOnBall = 0.35f;
 
@@ -2140,7 +2146,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             bool crispRollsOut = false;
             bool crispRolledPast = false;
             bool crispChecked = probePlan.Feasible && CheckSpaceBallCatchable(
-                ballXZ, probePlan, receiverReach.Seconds, probeDistanceMeters,
+                ballXZ, mateXZ, mateVelocityXZ, spaceXZ, probePlan, receiverReach.Seconds, probeDistanceMeters,
                 out crispRollsOut, out crispRolledPast);
             if (!crispChecked)
             {
@@ -2156,7 +2162,7 @@ public sealed class CandidateGenerator : IAiStateResettable
                     ballXZ, spaceXZ, receiverReach.Seconds, minPower01, minArrivalSpeed);
                 bool pacedRollsOut = false;
                 if (pacedPlan.Feasible && CheckSpaceBallCatchable(
-                        ballXZ, pacedPlan, receiverReach.Seconds, probeDistanceMeters,
+                        ballXZ, mateXZ, mateVelocityXZ, spaceXZ, pacedPlan, receiverReach.Seconds, probeDistanceMeters,
                         out pacedRollsOut, out _))
                 {
                     probePlan = pacedPlan;
@@ -2206,6 +2212,9 @@ public sealed class CandidateGenerator : IAiStateResettable
 
     private bool CheckSpaceBallCatchable(
         Vector2 ballXZ,
+        Vector2 mateXZ,
+        Vector2 mateVelocityXZ,
+        Vector2 spaceXZ,
         in PassPlan plan,
         float receiverArrivalSeconds,
         float probeDistanceMeters,
@@ -2218,7 +2227,18 @@ public sealed class CandidateGenerator : IAiStateResettable
         rollsOut = MathF.Abs(ballAtReceiverArrival.X) > _pitch.HalfLength ||
                    MathF.Abs(ballAtReceiverArrival.Y) > _pitch.HalfWidth;
         float rolledPastMeters = ballDistanceAtReceiverArrival - probeDistanceMeters;
-        rolledPast = rolledPastMeters > EffectivePromiseCatchRadiusMeters(probeDistanceMeters);
+        float alignedCatchRadius = EffectivePromiseCatchRadiusMeters(probeDistanceMeters);
+        float catchRadius = alignedCatchRadius;
+        if (mateVelocityXZ.LengthSquared() > 1.5f * 1.5f)
+        {
+            // A moving runner crossing the ball's flight at a steep angle cannot pivot sideways to chase
+            // 5 m past spaceXZ; stationary receivers keep the full aligned catch radius (AIB10).
+            Vector2 runDir = SimMath.SafeNormalize(spaceXZ - mateXZ, plan.AimDirectionXZ);
+            float align01 = Math.Clamp(Vector2.Dot(plan.AimDirectionXZ, runDir), 0f, 1f);
+            float perpendicularCatchRadius = MathF.Min(alignedCatchRadius, PassSuccessModel.LaneStepInReachMeters + 0.80f);
+            catchRadius = perpendicularCatchRadius + (alignedCatchRadius - perpendicularCatchRadius) * align01;
+        }
+        rolledPast = rolledPastMeters > catchRadius;
         return !rollsOut && !rolledPast;
     }
 
@@ -2933,14 +2953,18 @@ public sealed class CandidateGenerator : IAiStateResettable
         }
 
         // Same scale as a ground pass (A4.4): the reception at the landing point, the pass score's own
-        // completion estimate, and the passer's loss cost.
+        // completion estimate, and the passer's loss cost. Use the effective airborne lane clearance when the
+        // loft flies over a ground blocker so we do not double-charge a ground-lane tax.
         ReceptionValueTerms reception = _receptionValue.Evaluate(
             obs, mate.PlayerId, terms.LandingXZ, terms.LandingPressure01);
         float loss = ActionValueScale.LossCost(obs.PerceivedBallPosition.X * obs.AttackingDirectionX);
         float forwardMeters = (targetXZ.X - obs.SelfPosition.X) * obs.AttackingDirectionX;
+        float effectiveLoftLane = terms.LaneBlocked
+            ? lane
+            : 1f - PassSuccessModel.LaneWeight * (1f - lane);
         ValueTerms valueTerms = new(
             terms.CompletionProbability01, reception.Value, loss,
-            PassPreference(obs, forwardMeters, lane));
+            PassPreference(obs, forwardMeters, effectiveLoftLane));
         float score = valueTerms.Value;
 
         // Aim at the meeting point; the power is what the model says puts the landing there.
@@ -4257,12 +4281,14 @@ public sealed class CandidateGenerator : IAiStateResettable
         if (!ownThirdClearance)
         {
             if (_timeOnBall < ClearanceMinTimeOnBall) return;
-            if (myAttackProjX > CarryFinalThirdProjX) return;
+            if (myAttackProjX > ClearanceBoxedInMaxProjX) return;
             if (nearestOppDist > 2.5f) return;
             bool nearTouchline = _pitch.HalfWidth - MathF.Abs(selfXZ.Y) <= 4.0f;
             int closeOpponents = CountOpponentsWithin(obs, selfXZ, 3.5f);
             bool nearestAheadOrLevel = (nearestOppXZ.X - selfXZ.X) * obs.AttackingDirectionX >= -0.5f;
-            if (!((nearTouchline && (nearestAheadOrLevel || closeOpponents >= 2)) || closeOpponents >= 2)) return;
+            bool trappedTouchline = nearTouchline && (nearestAheadOrLevel || closeOpponents >= 2);
+            bool trappedOwnHalfCentral = myAttackProjX <= 0f && closeOpponents >= 2;
+            if (!trappedTouchline && !trappedOwnHalfCentral) return;
             if (HasAnyViablePassCandidate()) return;
             boxedInEscape = true;
         }
@@ -4275,7 +4301,8 @@ public sealed class CandidateGenerator : IAiStateResettable
             : new Vector2(
                 Math.Clamp(selfXZ.X + obs.AttackingDirectionX * 25f, -_pitch.HalfLength + 2f, _pitch.HalfLength - 2f),
                 Math.Clamp(selfXZ.Y + lateral * 10f, -_pitch.HalfWidth + 1.5f, _pitch.HalfWidth - 1.5f));
-        float kickPower = boxedInEscape ? 0.55f : 0.85f;
+        KickIntentType kickType = boxedInEscape ? KickIntentType.LoftedPass : KickIntentType.Clearance;
+        float kickPower = boxedInEscape ? 0.45f : 0.85f;
         Vector2 direction = SimMath.SafeNormalize(aimTarget - selfXZ, new Vector2(obs.AttackingDirectionX, 0f));
 
         float utility = boxedInEscape
@@ -4285,7 +4312,7 @@ public sealed class CandidateGenerator : IAiStateResettable
 
         var command = new FootballerCommand(
             direction, direction, false, false, false, false, false, Vector3.Zero,
-            KickIntentType.Clearance, new Vector3(direction.X, 0f, direction.Y), kickPower, 0f);
+            kickType, new Vector3(direction.X, 0f, direction.Y), kickPower, 0f);
 
         _lastCandidates.Add(new UtilityCandidate("ClearBall", utility, command)
         {

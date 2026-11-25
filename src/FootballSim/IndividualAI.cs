@@ -595,9 +595,16 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
             return ClampToPitch(meeting, pitch);
         }
 
-        // The ball is outrunning this player. Chase where it is: a run at a point 20 m upfield that
-        // cannot be reached is a player leaving the play.
-        return ClampToPitch(ballXZ, pitch);
+        // Constant-velocity interception returned unreachable (often because grass deceleration is not
+        // modelled in TrySolveInterception). Never chase the ball's tail behind its path: converge onto
+        // the ball's forward ray at/ahead of the player's own projection so the receiver sprints into the
+        // decelerating ball's lane instead of running backward toward the passer.
+        float ballSpeed = ballVelXZ.Length();
+        Vector2 ballDir = ballVelXZ / ballSpeed;
+        float along = Vector2.Dot(kinematics.PositionXZ - ballXZ, ballDir);
+        float maxLead = Math.Clamp(ballSpeed * 1.25f, 3.0f, 18.0f);
+        float leadAhead = Math.Clamp(MathF.Max(along, 0f) + 3.0f, 3.0f, maxLead);
+        return ClampToPitch(ballXZ + ballDir * leadAhead, pitch);
     }
 
     private static Vector2 ClampToPitch(Vector2 point, PitchDimensions pitch) => new(

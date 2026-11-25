@@ -390,4 +390,131 @@ public sealed class CandidateGeneratorTests
         Assert.True(clearance.Command.KickPower01 <= 0.60f,
             $"escape clearance must use bounded power <= 0.60, got {clearance.Command.KickPower01:F2}");
     }
+
+    [Fact]
+    public void AttackingHalfCentralCarrier_SurroundedByTwoOpponents_DoesNotHoofGoalKickClearance()
+    {
+        var pitch = new PitchDimensions();
+        // Exact t=3089 live geometry: central attacker at (21.0, -15.9) surrounded by 2 opponents within 2.5 m.
+        var obs = new FootballerObservation
+        {
+            SelfId = 9,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Striker,
+            SelfPosition = new Vector3(21.0f, 0f, -15.9f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(21.4f, 0f, -15.9f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = 9,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = 9,
+            TacticalAnchorPosition = new Vector3(21.0f, 0f, -15.9f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 51f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                new(20, TeamId.Away, TacticalRole.CenterBack, new Vector3(22.2f, 0f, -15.2f), Vector3.Zero, 0.9f),
+                new(21, TeamId.Away, TacticalRole.DefensiveMidfielder, new Vector3(20.0f, 0f, -14.3f), Vector3.Zero, 0.9f)
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(pitch) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+
+        Assert.DoesNotContain(generator.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+    }
+
+    [Fact]
+    public void BoxedInMidfieldTouchlineCarrier_UsesLoftedChannelEscape_NotLongClearanceHoof()
+    {
+        var pitch = new PitchDimensions();
+        var boxedObs = new FootballerObservation
+        {
+            SelfId = 8,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.Winger,
+            SelfPosition = new Vector3(0f, 0f, 31.5f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(0.4f, 0f, 31.5f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = 8,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = 8,
+            TacticalAnchorPosition = new Vector3(0f, 0f, 31.5f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                new(9, TeamId.Home, TacticalRole.Striker, new Vector3(16f, 0f, 29f), Vector3.Zero, 0.9f),
+                new(20, TeamId.Away, TacticalRole.FullBack, new Vector3(1.5f, 0f, 31.2f), Vector3.Zero, 0.9f),
+                new(21, TeamId.Away, TacticalRole.DefensiveMidfielder, new Vector3(2.8f, 0f, 29.2f), Vector3.Zero, 0.9f),
+                new(22, TeamId.Away, TacticalRole.CenterBack, new Vector3(15.5f, 0f, 29.0f), Vector3.Zero, 0.9f)
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var boxedGen = new CandidateGenerator(pitch) { TimeOnBall = 0.80f };
+        boxedGen.GenerateOnBallCandidates(boxedObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate escape = Assert.Single(boxedGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+        Assert.Equal(KickIntentType.LoftedPass, escape.Command.KickType);
+        Assert.True(escape.Command.KickPower01 <= 0.50f,
+            $"boxed-in escape must use <= 0.50 lofted power, got {escape.Command.KickPower01:F2}");
+
+        // Own-third clearance at (-30, 28) still uses KickIntentType.Clearance at 0.85f.
+        var ownThirdObs = new FootballerObservation
+        {
+            SelfId = 4,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.FullBack,
+            SelfPosition = new Vector3(-30f, 0f, 28f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(-29.6f, 0f, 28f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = 4,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = 4,
+            TacticalAnchorPosition = new Vector3(-30f, 0f, 28f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            VisiblePlayers = new List<PerceivedEntity>
+            {
+                new(20, TeamId.Away, TacticalRole.Striker, new Vector3(-28f, 0f, 27.5f), Vector3.Zero, 0.9f)
+            },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var ownThirdGen = new CandidateGenerator(pitch) { TimeOnBall = 0.80f };
+        ownThirdGen.GenerateOnBallCandidates(ownThirdObs, new Vector3(pitch.HalfLength, 0f, 0f), 40f);
+        UtilityCandidate ownClear = Assert.Single(ownThirdGen.Candidates, c => c.Key.Kind == CandidateKind.Clearance);
+        Assert.Equal(KickIntentType.Clearance, ownClear.Command.KickType);
+        Assert.Equal(0.85f, ownClear.Command.KickPower01, 2);
+    }
 }
