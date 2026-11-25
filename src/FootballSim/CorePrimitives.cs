@@ -804,12 +804,17 @@ public enum TeamId
 /// <c>IsLaneBlocked</c>, forward-ray convergence fallback in <c>ComputeBallInterceptTarget</c>, crossing-angle
 /// <c>ToSpace</c> catch radius, and removal of the ground-blocker preference double penalty in
 /// <c>AddLoftedPass</c>.</item>
+/// <item><b>67</b> (2026-11-25): defending <c>onBall</c> ownership guard in <c>IndividualAI</c>, moving-carry
+/// shield stance scaling and <c>ShieldTacklePenaltyFactor</c> (0.20) in <c>FootballerLocomotion</c>,
+/// inside-reach <c>tackleTriggerMultiplier</c> (&lt;= 1.58x), angled <c>GK:ReflexParry</c> flank deflection,
+/// and <c>OneTwo</c> <c>ToRun</c> protection (scoped <c>CombinationContinuationBonus</c>, <c>ToSpace</c>
+/// suppression, and live-arrival timing when ahead of schedule).</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 66;
+    public const int AiBehaviour = 67;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

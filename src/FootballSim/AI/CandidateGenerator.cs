@@ -1842,7 +1842,18 @@ public sealed class CandidateGenerator : IAiStateResettable
             if (!liveReach.Reachable) return false;
 
             float arriveInSeconds = (obs.Combination.ExpectedArrivalTick - obs.Tick) * SimConstants.FixedDeltaTime;
-            float effectiveArriveSeconds = MathF.Max(arriveInSeconds, liveReach.Seconds);
+            float returnDistance = Vector2.Distance(ballXZ, obs.Combination.ReturnXZ);
+            float crispFloor = _passPlanner.MinCrispPower01(returnDistance);
+            float minReasonableFlight = _passPlanner.TryGetFlightTime(crispFloor, returnDistance, out float crispFlight)
+                ? crispFlight
+                : arriveInSeconds;
+            // If the initiator is behind schedule (held onside, liveReach > arriveInSeconds), pace to liveReach.
+            // If the initiator is already near ReturnXZ ahead of schedule (liveReach < arriveInSeconds), do not
+            // force a 1.75 s slow-motion clock that destroys timingTerm — time to max(liveReach, crispFlight)
+            // capped by arriveInSeconds so the return arrives crisply as he enters ReturnXZ.
+            float effectiveArriveSeconds = liveReach.Seconds >= arriveInSeconds
+                ? liveReach.Seconds
+                : MathF.Max(liveReach.Seconds, MathF.Min(arriveInSeconds, minReasonableFlight));
             ChoosePromisedRunPower(
                 ballXZ,
                 obs.Combination.ReturnXZ,
@@ -2051,6 +2062,15 @@ public sealed class CandidateGenerator : IAiStateResettable
         // A committed, already-sprinting forward depth runner is served by the promised ToRun ball; an
         // onside HoldWidth/Pin advert or a receiver who has stopped still gets the space probe behind the line.
         if (hasForwardDepthAdvert && mateVelocityXZ.Length() >= MinUncommittedRunSpeed) return false;
+
+        // ai67: when the initiator is actively running into a frozen OneTwo ReturnXZ, suppress the +8/+14 m
+        // ToSpace probe so it cannot steal the pass past ReturnXZ.
+        bool isLiveOneTwoReturnTarget = _ai.EnableCombinations &&
+                                        obs.Combination.IsReceiver &&
+                                        obs.Combination.Kind == CombinationKind.OneTwo &&
+                                        obs.Combination.ContinuationTargetId == mate.PlayerId &&
+                                        obs.Combination.ExpectedArrivalTick > obs.Tick + 2;
+        if (isLiveOneTwoReturnTarget) return false;
 
         float maxPitchProjX = _pitch.HalfLength - SpaceProbePitchMarginMeters;
         float laneMarginZ = _pitch.HalfWidth - SpaceProbePitchMarginMeters;
@@ -2759,7 +2779,8 @@ public sealed class CandidateGenerator : IAiStateResettable
         // action-value scale, and a blocked or unreachable return is still rejected before it is scored.
         preference += option.CombinationPreference;
         if (_ai.EnableCombinations && obs.Combination.IsReceiver &&
-            obs.Combination.ContinuationTargetId == receiverId)
+            obs.Combination.ContinuationTargetId == receiverId &&
+            string.Equals(option.Tag, RunPassTag, StringComparison.Ordinal))
         {
             preference += CombinationContinuationBonus * obs.Combination.Promise01(obs.Tick);
         }
@@ -4849,9 +4870,11 @@ public sealed class CandidateGenerator : IAiStateResettable
 
                 Vector2 toBallDirect = chasePoint - selfXZ;
                 Vector2 pressDir = toBallDirect.LengthSquared() > 1e-4f ? Vector2.Normalize(toBallDirect) : dirToBall;
-                // Audit F18: pressing aggression moves the commitment range (~1.24 m at the 0.60 baseline).
-                float tackleTriggerMultiplier = 1.65f
-                    + 0.35f * (obs.SelfTendencies.PressingAggression01 - PlayerTendencyBaselines.PressingAggression);
+                // Audit F18 + ai67: pressing aggression moves the commitment range inside execution's 1.60x tackle reach.
+                float tackleTriggerMultiplier = Math.Clamp(
+                    1.45f + 0.20f * (obs.SelfTendencies.PressingAggression01 - PlayerTendencyBaselines.PressingAggression),
+                    1.30f,
+                    1.58f);
                 bool attemptTackle = _tackleCooldown <= 0f &&
                                      distToBallNow <= obs.SelfAttributes.ReachRadius * tackleTriggerMultiplier;
                 if (attemptTackle) _tackleCooldown = TackleCooldownSeconds;

@@ -936,6 +936,100 @@ public sealed class CombinationCoordinatorTests
             $"paced pass rolled {rolledPastAtLiveReach:F2} m past return region at runner live reach {liveReach.Seconds:F2} s");
     }
 
+    /// <summary>
+    /// ai67 (Task 4): exact <c>t=11040</c> one-two continuation geometry — when the receiver holds the ball
+    /// under an active <c>OneTwo</c> contract and the initiator is already near <c>ReturnXZ</c> ahead of
+    /// <c>ExpectedArrivalTick</c>:
+    /// (1) no <c>ToSpace</c> candidate may be generated for the initiator,
+    /// (2) <c>ToFeet</c> must not receive <c>CombinationContinuationBonus</c>, and
+    /// (3) <c>ToRun</c> aimed at <c>ReturnXZ</c> is generated and outscores <c>ToFeet</c>.
+    /// </summary>
+    [Fact]
+    public void OneTwoReceiver_DoesNotGenerateToSpaceOrAwardContinuationBonusToFeet_AndTimesToLiveArrivalWhenAheadOfSchedule()
+    {
+        var comms = new MatchCommunicationContext();
+        var retXZ = new Vector2(7.0f, 27.6f);
+        const int publishTick = 11000;
+        const int evalTick = 11040;
+        Assert.True(comms.Combinations.Publish(
+            CombinationKind.OneTwo,
+            Home,
+            InitiatorId,
+            ReceiverId,
+            thirdPlayerId: 0,
+            retXZ,
+            returnRadiusMeters: 3f,
+            expectedArrivalTick: evalTick + 105, // 1.75 s remaining while initiator is 1.5 m from retXZ
+            confidence01: 0.9f,
+            tick: publishTick));
+
+        var receiverPos = new Vector3(3.2f, 0f, 18.3f);
+        var ballPos = new Vector3(3.5f, 0f, 18.6f);
+        var initiatorPos = new Vector3(5.8f, 0f, 28.6f);
+        var visible = new List<PerceivedEntity>
+        {
+            new(InitiatorId, Home, TacticalRole.FullBack, initiatorPos, new Vector3(2.5f, 0f, -1.5f), 0.95f),
+            Opponent(PresserId, new Vector3(-5f, 0f, 5f)),
+            Opponent(SecondDefenderId, new Vector3(30f, 0f, -10f))
+        };
+
+        FootballerObservation MakeObs(CombinationContext combination) => new()
+        {
+            SelfId = ReceiverId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = receiverPos,
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = SimMath.SafeNormalize(new Vector2(initiatorPos.X - receiverPos.X, initiatorPos.Z - receiverPos.Z), Vector2.UnitX),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = ballPos,
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = ReceiverId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = ReceiverId,
+            TacticalAnchorPosition = receiverPos,
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = TimeOf(evalTick),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = evalTick,
+            VisiblePlayers = visible,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes(),
+            Combination = combination
+        };
+
+        FootballerObservation obs = MakeObs(ContextOf(comms, ReceiverId, evalTick));
+        var controlComms = new MatchCommunicationContext();
+        FootballerObservation controlObs = MakeObs(CombinationContext.None);
+
+        var treated = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig()) { TimeOnBall = 0.8f };
+        var control = new CandidateGenerator(Pitch, controlComms, new AiRuntimeConfig()) { TimeOnBall = 0.8f };
+        treated.GenerateOnBallCandidates(obs, OppGoal(), offsideLineProjX: 25f);
+        control.GenerateOnBallCandidates(controlObs, OppGoal(), offsideLineProjX: 25f);
+
+        Assert.False(HasCandidate(treated, InitiatorId, CandidateGenerator.SpacePassTag),
+            "ToSpace must not be generated for a live OneTwo continuation target");
+
+        UtilityCandidate treatedFeet = Candidate(treated, InitiatorId, "ToFeet");
+        UtilityCandidate controlFeet = Candidate(control, InitiatorId, "ToFeet");
+        Assert.Equal(controlFeet.Terms.Preference, treatedFeet.Terms.Preference, 4);
+
+        UtilityCandidate toRun = Candidate(treated, InitiatorId, CandidateGenerator.RunPassTag);
+        Vector2 toRetXZ = SimMath.SafeNormalize(retXZ - new Vector2(ballPos.X, ballPos.Z), Vector2.UnitX);
+        Assert.True(Vector2.Dot(
+                new Vector2(toRun.Command.KickAimDirectionXZ.X, toRun.Command.KickAimDirectionXZ.Z),
+                toRetXZ) > 0.98f,
+            "OneTwo ToRun return pass must aim at ReturnXZ");
+        Assert.True(toRun.UtilityScore > treatedFeet.UtilityScore,
+            $"ToRun ({toRun.UtilityScore:F3}) must outscore ToFeet ({treatedFeet.UtilityScore:F3})");
+    }
+
     private static bool HasCandidate(CandidateGenerator generator, int targetId, string tag)
     {
         foreach (UtilityCandidate candidate in generator.Candidates)

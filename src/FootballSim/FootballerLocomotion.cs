@@ -84,8 +84,8 @@ public static class BallContactRules
     /// <summary>Contest penalty for an opponent trying to take a shielded ball.</summary>
     public const float ShieldOpponentPenalty = 0.40f;
 
-    /// <summary>A tackling opponent suffers only half the shielding penalty — a real tackle still works.</summary>
-    public const float ShieldTacklePenaltyFactor = 0.50f;
+    /// <summary>A tackling opponent suffers only 20% of the shielding penalty — a real tackle still contests a moving shielded carrier.</summary>
+    public const float ShieldTacklePenaltyFactor = 0.20f;
 
     /// <summary>Movement speed while shielding: the player uses their body instead of running.</summary>
     public const float ShieldSpeedFactor = 0.72f;
@@ -802,7 +802,12 @@ public sealed class FootballerExecutionSystem
             // Give active tacklers a decisive +0.65 priority so defenders actually dispossess dribblers!
             float shieldAdjustment = 0f;
             if (p.LastCommand.ShieldBall)
-                shieldAdjustment += BallContactRules.ShieldContestBonus;
+            {
+                float holderSpeed = new Vector2(p.Velocity.X, p.Velocity.Z).Length();
+                // Full shield leverage when planted/slow (<= 2.0 m/s); reduced to half when driving forward at pace (>= 4.0 m/s).
+                float shieldStanceScale = 1f - 0.5f * Math.Clamp((holderSpeed - 2.0f) / 2.0f, 0f, 1f);
+                shieldAdjustment += BallContactRules.ShieldContestBonus * shieldStanceScale;
+            }
             if (shieldingHolderId is int shieldedId && p.Id != shieldedId && p.Team != shieldingTeam)
             {
                 shieldAdjustment -= BallContactRules.ShieldOpponentPenalty *
@@ -1008,13 +1013,17 @@ public sealed class FootballerExecutionSystem
                 }
                 else
                 {
-                    // Audit F02: a parry used to keep the incoming rolling spin, which then drove the
-                    // ball back into the goal. Drive the exit from the ball's own incoming path (back
-                    // out of the goal) plus lateral clearance, and give it a small controlled spin.
+                    // Audit F02 + ai67: drive the parry outward away from the own goal line and wide of the goal mouth.
+                    // For an angled shot from a flank (|incomingDir.Y| > 0.35), deflect away from the shooter's side
+                    // (continuing across/wide past the far post or out toward the flank) rather than reversing along
+                    // -incomingXZ straight back onto the shooter's foot.
                     Vector2 incomingXZ = new(ball.Velocity.X, ball.Velocity.Z);
-                    Vector2 backOut = -SimMath.SafeNormalize(incomingXZ, player.FacingXZ);
-                    float sideSign = ball.Position.Z >= player.Position.Z ? 1f : -1f;
-                    Vector2 parryDir = SimMath.SafeNormalize(backOut + new Vector2(0f, sideSign * 0.85f), player.FacingXZ);
+                    Vector2 incomingDir = SimMath.SafeNormalize(incomingXZ, -player.FacingXZ);
+                    Vector2 outward = new(-MathF.Sign(ownGoalX), 0f);
+                    float sideSign = MathF.Abs(incomingDir.Y) > 0.35f
+                        ? MathF.Sign(incomingDir.Y)
+                        : (ball.Position.Z >= player.Position.Z ? 1f : -1f);
+                    Vector2 parryDir = SimMath.SafeNormalize(outward * 0.85f + new Vector2(0f, sideSign * 1.15f), outward);
 
                     float parrySpeed = Math.Clamp(shotSpeed * 0.45f, 6.0f, 12.0f);
                     ball.Velocity = new Vector3(parryDir.X * parrySpeed, 1.4f, parryDir.Y * parrySpeed);

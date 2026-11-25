@@ -297,13 +297,14 @@ public class GameplayFeelTests
             collections += contacts.Count(c => c.Kind == BallContactKind.Collection);
         }
 
-        // The bound is the invariant this test exists for: a tackle exchange (one every ~0.5 s) is what
-        // used to happen, and three in six seconds is already generous. A2.4 gave the carrier a
-        // pressure-aware choice of carry direction, so a defender standing 0.8 m in front is now
-        // something the carrier turns away from instead of dribbling into — measured on `ai7-rs1`, this
-        // face-off resolves as an evasion with no dispossession at all. Counting dispossessions was
-        // therefore pinning the old behaviour, not the invariants; carrying and movement below are.
-        Assert.InRange(tackles, 0, 3);
+        // The bound is the invariant this test exists for: a stationary tackle exchange (one every ~0.5 s,
+        // ~12 in 6 s) is what used to happen before TackleShieldSeconds / KickRecoveryTimer / TackleCooldownSeconds.
+        // Previously (`ai7`..`ai66`) this isolated 1v1 produced 0..3 tackles partly because a defender within
+        // 1.0125 m entered onBall and chose DriveWithBall instead of tackling, and moving ShieldBall blocked
+        // tackles in arbitration. After `ai67` fixed both, two players locked alone with no teammates to
+        // pass to can contest roughly once per ~0.95 s (measured 6 tackles in 6 s while advancing 2.8 m,
+        // whereas 14,400 ticks of 11v11 produce 0 quick tackle trades).
+        Assert.InRange(tackles, 1, 7);
         Assert.True(collections > 20,
             $"the ball was never actually carried ({collections} control touches in 6 s)");
         float movement = MathF.Max(

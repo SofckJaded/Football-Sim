@@ -238,7 +238,13 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         bool ballAtFeetHeight = BallContactRules.IsHeightReachable(
             obs.PerceivedBallPosition.Y, obs.SelfPosition.Y,
             BallContactRules.MaxContactHeight(keeperHandling: false, jumpingOrHeading: false));
-        bool onBall = distToBall <= obs.SelfAttributes.ReachRadius * 1.35f && obs.AvailableToKick && ballAtFeetHeight;
+        bool anotherControlsBall = obs.BallControlState is BallControlState.Controlled or BallControlState.KeeperHeld
+                                   && obs.BallControllingPlayerId is int ballOwnerId
+                                   && ballOwnerId != obs.SelfId;
+        bool onBall = !anotherControlsBall
+                      && distToBall <= obs.SelfAttributes.ReachRadius * 1.35f
+                      && obs.AvailableToKick
+                      && ballAtFeetHeight;
 
         if (obs.IsSetPieceTaker && distToBall < 4.5f)
         {

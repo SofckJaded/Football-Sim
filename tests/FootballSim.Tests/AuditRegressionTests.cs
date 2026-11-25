@@ -4030,6 +4030,8 @@ public sealed class AuditRegressionTests
 
     /// <summary>
     /// Audit F18: pressing aggression must move the tackle commitment range (same distance, one field).
+    /// ai67 tightened the trigger multiplier inside execution's 1.60x (1.20 m) tackle reach
+    /// (1.0275 m at 0.20 vs 1.1475 m at 1.00), so the probe sits at 1.10 m inside physical tackle reach.
     /// </summary>
     [Fact]
     public void F18_PressingAggression_MovesTheTackleCommitmentRange()
@@ -4039,10 +4041,10 @@ public sealed class AuditRegressionTests
             var self = WithTendencies(
                 Player(4, TeamId.Home, TacticalRole.CenterBack, new Vector3(0f, 0f, 0f)),
                 Tendencies(pressing: aggression));
-            var carrier = Player(12, TeamId.Away, TacticalRole.Striker, new Vector3(1.30f, 0f, 0f));
+            var carrier = Player(12, TeamId.Away, TacticalRole.Striker, new Vector3(1.10f, 0f, 0f));
             var ball = new BallState
             {
-                Position = new Vector3(1.30f, 0.11f, 0f),
+                Position = new Vector3(1.10f, 0.11f, 0f),
                 LastTouchedByTeam = TeamId.Away,
                 LastTouchedByPlayerId = 12
             };
@@ -4318,6 +4320,139 @@ public sealed class AuditRegressionTests
         Assert.True(sim.IsSpectatorFastForwardActive);
         Assert.Same(human, sim.GetController(5));
         Assert.Throws<InvalidOperationException>(() => sim.OverrideController(5, ai));
+    }
+
+    // =============================================================================================
+    // ai67 — defending onBall guard, moving-carry shield arbitration, angled keeper parry
+    // =============================================================================================
+
+    /// <summary>
+    /// ai67 (Task 1): a defending presser closing within <c>ReachRadius * 1.35f</c> (1.0125 m) of an
+    /// opponent carrier's controlled ball used to enter <c>onBall</c> and emit <c>DriveWithBall</c>
+    /// (<c>ShieldBall = true</c>, <c>Sprint = false</c>) side-by-side instead of pressing/tackling.
+    /// </summary>
+    [Fact]
+    public void DefendingPresser_WithinOnBallRadiusOfOpponentCarrier_StaysInOffBallPressInsteadOfDriveWithBall()
+    {
+        var carrier = Player(11, TeamId.Home, TacticalRole.Winger, new Vector3(12f, 0f, -29.9f));
+        carrier.FacingXZ = new Vector2(1f, 0f);
+        carrier.Velocity = new Vector3(4.2f, 0f, 0f);
+
+        var presser = Player(22, TeamId.Away, TacticalRole.FullBack, new Vector3(12.2f, 0f, -29.1f));
+        presser.FacingXZ = new Vector2(0f, -1f);
+
+        var ball = new BallState
+        {
+            Position = new Vector3(12.2f, 0.11f, -29.9f), // 0.80 m from presser (<= 1.0125 m onBall radius)
+            Velocity = new Vector3(4.2f, 0f, 0f),
+            LastTouchedByTeam = TeamId.Home,
+            LastTouchedByPlayerId = carrier.Id
+        };
+
+        var possession = new BallPossessionSnapshot(
+            BallControlState.Controlled,
+            TeamId.Home,
+            carrier.Id,
+            IntendedReceiverId: null);
+
+        var obs = Observe(
+            presser,
+            new[] { carrier, presser },
+            ball,
+            possession: possession,
+            isDesignatedBallResponder: true);
+
+        var controller = new TacticalUtilityAiController(new PitchDimensions());
+        FootballerCommand cmd = controller.Decide(obs, Dt);
+
+        Assert.NotEqual(CandidateKind.Carry, controller.LastSelected.Key.Kind);
+        Assert.NotEqual("DriveWithBall", controller.LastSelected.ActionName);
+        Assert.Equal(CandidateKind.Press, controller.LastSelected.Key.Kind);
+        Assert.True(
+            controller.LastSelected.ActionName is "ExecuteTackle" or "CloseDownCarrier",
+            $"Expected off-ball press candidate, got {controller.LastSelected.ActionName}");
+        Assert.True(cmd.Sprint, "Off-ball presser should sprint instead of jogging in DriveWithBall");
+    }
+
+    /// <summary>
+    /// ai67 (Task 2): exact <c>t=481</c> side-by-side carry geometry — a moving carrier with
+    /// <c>ShieldBall = true</c> must be dispossessable by an active <c>RequestTackle = true</c> presser
+    /// instead of losing every arbitration, while stationary shielding against a plain touch
+    /// (<see cref="F18_ShieldingUnderPressure_KeepsTheBallAgainstAnOpponent"/>) keeps its full leverage.
+    /// </summary>
+    [Fact]
+    public void ActiveStandingTackle_DispossessesMovingShieldedCarrier_InsteadOfLosingArbitrationRepeatedly()
+    {
+        var carrier = Player(11, TeamId.Home, TacticalRole.Winger, new Vector3(0f, 0f, 0f));
+        carrier.FacingXZ = new Vector2(1f, 0f);
+        carrier.Velocity = new Vector3(4.2f, 0f, 0f);
+        carrier.LastCommand = FootballerCommand.Idle with
+        {
+            DesiredMoveDirectionXZ = new Vector2(1f, 0f),
+            DesiredFacingDirectionXZ = new Vector2(1f, 0f),
+            ShieldBall = true
+        };
+
+        // Side-by-side presser at dB = 1.02 m executing an active standing tackle.
+        var presser = Player(22, TeamId.Away, TacticalRole.FullBack, new Vector3(0.45f, 0f, -1.02f));
+        presser.FacingXZ = new Vector2(0f, 1f);
+        presser.Velocity = new Vector3(4.2f, 0f, 0f);
+        presser.LastCommand = FootballerCommand.Idle with
+        {
+            DesiredMoveDirectionXZ = new Vector2(0f, 1f),
+            DesiredFacingDirectionXZ = new Vector2(0f, 1f),
+            Sprint = true,
+            RequestTackle = true
+        };
+
+        var ball = new BallState
+        {
+            Position = new Vector3(0.45f, 0.11f, 0f),
+            Velocity = new Vector3(4.2f, 0f, 0f),
+            LastTouchedByTeam = TeamId.Home,
+            LastTouchedByPlayerId = carrier.Id
+        };
+
+        var execution = new FootballerExecutionSystem(new PitchDimensions());
+        execution.UpdateLocomotionAndContacts(
+            new[] { carrier, presser }, ball, new SeededRandom(481), Dt, tick: 481);
+
+        Assert.DoesNotContain(execution.ContactAttempts,
+            a => a.PlayerId == presser.Id && a.Reason == ContactRejectionReason.LostArbitration);
+        BallContactEvent contact = Assert.Single(execution.ContactEvents);
+        Assert.Equal(presser.Id, contact.PlayerId);
+        Assert.Equal(BallContactKind.Tackle, contact.Kind);
+    }
+
+    /// <summary>
+    /// ai67 (Task 3): exact <c>t=978</c> angled flank shot geometry — an angled shot from the <c>-Z</c>
+    /// flank must be parried out away from the own goal line and wide toward the far <c>+Z</c> flank,
+    /// not reversed straight back toward the <c>-Z</c> shooter.
+    /// </summary>
+    [Fact]
+    public void ReflexParry_OnAngledFlankShot_DeflectsAwayFromShooterSideInsteadOfBackToShooter()
+    {
+        var pitch = new PitchDimensions();
+        var keeper = Player(12, TeamId.Away, TacticalRole.Goalkeeper, new Vector3(50.5f, 0f, -2.8f));
+        keeper.FacingXZ = new Vector2(-1f, 0f);
+        keeper.LastCommand = FootballerCommand.Idle;
+
+        var ball = new BallState
+        {
+            Position = new Vector3(49.9f, 0.45f, -3.1f),
+            Velocity = new Vector3(8.93f, 0f, 24.69f),
+            LastTouchedByTeam = TeamId.Home,
+            LastTouchedByPlayerId = 11
+        };
+
+        var execution = new FootballerExecutionSystem(pitch);
+        execution.UpdateLocomotionAndContacts(new[] { keeper }, ball, new SeededRandom(978), Dt, tick: 978);
+
+        Assert.Equal("GK:ReflexParry", keeper.LastExecutionDiagnostic);
+        Assert.True(ball.Velocity.X < 0f,
+            $"Away keeper parry must clear away from own goal (velX={ball.Velocity.X:F2})");
+        Assert.True(ball.Velocity.Z > 0f,
+            $"Angled -Z flank shot must deflect toward +Z away from shooter (velZ={ball.Velocity.Z:F2})");
     }
 }
 
