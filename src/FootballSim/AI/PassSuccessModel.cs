@@ -1228,9 +1228,10 @@ public sealed class PassSuccessModel
         }
 
         // Bounded, allocation-free lane-point buffer for the step-in test, shared by every opponent in the
-        // query: the perpendicular foot, the down-lane midpoint, the arrival point and up to
+        // query: the perpendicular foot, the down-lane midpoint, the arrival point, an optional closed-form
+        // head-on crossing point for past-target up-lane sprinters, and up to
         // <see cref="LaneLookaheadSamples"/> points along the defender's own run.
-        Span<float> lanePoints = stackalloc float[3 + LaneLookaheadSamples];
+        Span<float> lanePoints = stackalloc float[4 + LaneLookaheadSamples];
 
         for (int i = 0; i < visiblePlayers.Count; i++)
         {
@@ -1357,6 +1358,17 @@ public sealed class PassSuccessModel
                 lanePoints[lanePointCount++] = length;
                 if (alongRun < 0f)
                 {
+                    // ai64 (Task 1.1): closed-form 1D head-on crossing estimate along the pass axis so a
+                    // defender sprinting up-lane from past targetXZ does not slip between lookahead samples.
+                    float avgBallSpeed = length / MathF.Max(flight, 0.05f);
+                    float closingRate = avgBallSpeed - alongRun; // alongRun < 0 => positive sum
+                    if (closingRate > 0.5f)
+                    {
+                        float tCross = projectionRaw / closingRate;
+                        float crossProj = Math.Clamp(projectionRaw + alongRun * tCross, 0f, length);
+                        TryAddLanePoint(lanePoints, ref lanePointCount, crossProj);
+                    }
+
                     // ai63 (Task 3): a defender running back up-lane toward the passer can intercept mid-lane
                     // short of targetXZ, so sample up-lane lookahead points along his closing run too.
                     AddRunLookaheadPoints(
@@ -1451,23 +1463,32 @@ public sealed class PassSuccessModel
         float flight,
         float length)
     {
+        // ai64 (Task 1.1): when a past-target up-lane sprinter has not entered the segment yet, start
+        // lookahead sampling after segment entry rather than wasting sample 1 at/outside targetXZ.
+        float tStart = projectionRaw > length && alongRun < -1e-4f
+            ? Math.Clamp((length - projectionRaw) / alongRun, 0f, flight)
+            : 0f;
+        float tSpan = MathF.Max(0f, flight - tStart);
+
         for (int look = 1; look <= LaneLookaheadSamples; look++)
         {
-            float lookaheadSeconds = flight * look / (LaneLookaheadSamples + 1f);
+            float lookaheadSeconds = tStart + tSpan * look / (LaneLookaheadSamples + 1f);
             float candidate = Math.Clamp(
                 projectionRaw + alongRun * lookaheadSeconds, 0f, length);
-            bool duplicate = false;
-            for (int existing = 0; existing < lanePointCount; existing++)
-            {
-                if (MathF.Abs(lanePoints[existing] - candidate) >= LaneTestPointDedupMeters)
-                    continue;
-                duplicate = true;
-                break;
-            }
-
-            if (!duplicate && lanePointCount < lanePoints.Length)
-                lanePoints[lanePointCount++] = candidate;
+            TryAddLanePoint(lanePoints, ref lanePointCount, candidate);
         }
+    }
+
+    private static void TryAddLanePoint(Span<float> lanePoints, ref int lanePointCount, float candidate)
+    {
+        for (int existing = 0; existing < lanePointCount; existing++)
+        {
+            if (MathF.Abs(lanePoints[existing] - candidate) < LaneTestPointDedupMeters)
+                return;
+        }
+
+        if (lanePointCount < lanePoints.Length)
+            lanePoints[lanePointCount++] = candidate;
     }
 
     /// <summary>

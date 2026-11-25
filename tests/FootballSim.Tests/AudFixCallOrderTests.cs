@@ -347,14 +347,23 @@ public sealed class AudFixCallOrderTests
     /// fixes move this match (1062/408 possession ticks, 678/157 controlled ticks, 7/4 attempted, 6/2
     /// completed passes, 1/0 shots/goals), so the constant is re-captured at <c>ai63-rs1</c>. The AUD-13c
     /// property is still pinned by the zero-delay tests above.</para>
+    ///
+    /// <para><b>2026-11-25 passing &amp; reception re-capture (<c>ai64-rs1</c>):</b> up-lane sprinter
+    /// crossing sample and <c>EvaluateLaneClearance</c> past-target sprinter scoring, velocity-matched
+    /// arrival braking in <c>AddReceptionCandidates</c>, Reception Assist throttle preservation, unstoppable
+    /// fly-by rejection in <see cref="AI.BallTrajectoryEstimate.TryMeet"/>, and
+    /// <see cref="AI.ReceptionPlanner"/> pre-kick dribble guard, pressure-gated escape bonus, and delayed
+    /// <c>ShieldBall</c> slowdown move this match (784/684 possession ticks, 315/356 controlled ticks,
+    /// 5/7 attempted, 4/6 completed passes, 0/0 shots/goals), so the constant is re-captured at
+    /// <c>ai64-rs1</c>. The AUD-13c property is still pinned by the zero-delay tests above.</para>
     /// </summary>
     private const string ExpectedDefaultScenarioFingerprint =
-        "tick=1500|ball=1.1767579,7.466493|players=1:-48.33269,0.5247074;2:-17.190868,17.617447;" +
-        "3:-18.896147,-22.051704;4:-17.245481,7.7456274;5:-17.716873,-7.917333;6:-14.760573,2.8962784;" +
-        "7:-1.8418686,11.772882;8:-5.7770395,7.3850117;9:3.1432638,0.4255827;10:-7.442069,-5.9277806;" +
-        "11:0.061654218,-15.803591;12:39.397926,2.4202883;13:19.56288,21.061003;14:23.039347,-21.385536;" +
-        "15:19.545475,7.3450727;16:22.195406,-7.155316;17:16.929895,0.49664968;18:1.0403203,17.420986;" +
-        "19:2.3889,8.796581;20:-1.828904,2.2146654;21:13.342132,-4.455827;22:5.661997,-19.262606;" +
-        "|analytics=1062,408,678,119,7,5,6,3,1,0,1,0|calls=197,4894,181,0|" +
-        "combinations=6,1,0,0,1,0,2";
+        "tick=1500|ball=11.155429,-12.664506|players=1:-42.640522,-1.9829129;2:-11.350866,20.575994;" +
+        "3:3.5829942,-30.38057;4:-9.577749,2.5579104;5:-2.4793286,-18.674519;6:13.113016,-23.259922;" +
+        "7:12.387011,27.077692;8:2.2289724,-9.435977;9:21.798048,-4.3050036;10:-3.6434615,-10.930125;" +
+        "11:21.832474,-21.700878;12:43.841827,-2.828359;13:26.143385,18.502;14:7.4630547,-25.33702;" +
+        "15:26.581322,5.41973;16:23.690683,-18.9485;17:22.831991,-16.47581;18:-1.3747958,12.629588;" +
+        "19:8.963623,4.1282754;20:-6.337225,-4.453559;21:11.088808,-11.946928;22:-3.0042698,-19.794743;" +
+        "|analytics=784,684,315,356,5,7,4,6,0,0,0,0|calls=187,4287,170,0|" +
+        "combinations=6,2,0,0,3,0,1";
 }

@@ -464,15 +464,43 @@ public sealed class FootballerExecutionSystem
 
                 if (assistBlend > 0f)
                 {
-                    moveInput = moveInput.LengthSquared() > 1e-4f
-                        ? Vector2.Normalize(Vector2.Lerp(moveInput, assistDir, assistBlend))
+                    // ai64 (Task 2.2): preserve deliberate braking throttle magnitude instead of
+                    // re-normalizing moveInput back to 1.0, and cap assist speed once approaching
+                    // interceptSpotXZ at/above safe stopping speed.
+                    float inputMag = moveInput.Length();
+                    Vector2 blendedDir = inputMag > 1e-4f
+                        ? SimMath.SafeNormalize(Vector2.Lerp(moveInput / inputMag, assistDir, assistBlend), assistDir)
                         : assistDir;
+
+                    float currentSpeed = new Vector2(p.Velocity.X, p.Velocity.Z).Length();
+                    float brakeDecel = MathF.Max(1f, p.Attributes.Acceleration * 1.45f * p.Balance01);
+                    float safeStopSpeed = MathF.Sqrt(2f * brakeDecel * MathF.Max(0f, interceptDist - 0.15f));
+                    float maxAssistMag = currentSpeed >= safeStopSpeed * 0.75f && baseMaxSpeed > 1e-3f
+                        ? Math.Clamp(safeStopSpeed / baseMaxSpeed, 0.15f, 1f)
+                        : 1f;
+                    float finalMag = inputMag > 1e-4f
+                        ? MathF.Min(inputMag, maxAssistMag)
+                        : maxAssistMag;
+                    moveInput = blendedDir * finalMag;
                 }
             }
-            else if (distToBallXZ < 2.2f)
+            else if (interceptDist <= 0.20f)
             {
-                // Already on the pass line: slow down to cushion the ball cleanly
-                baseMaxSpeed *= 0.50f;
+                if (distToBallXZ < 2.2f)
+                {
+                    // Already on the pass line: slow down to cushion the ball cleanly
+                    baseMaxSpeed *= 0.50f;
+                }
+                else if (ballSpeedXZ > 1e-3f)
+                {
+                    // On the pass line while the ball is still arriving (2.2-6.5 m): damp perpendicular
+                    // speed so lateral momentum does not carry the receiver off the line before contact.
+                    Vector2 ballDir = ballVelXZ / ballSpeedXZ;
+                    Vector2 ballPerp = new(-ballDir.Y, ballDir.X);
+                    float perpSpeed = MathF.Abs(Vector2.Dot(new Vector2(p.Velocity.X, p.Velocity.Z), ballPerp));
+                    if (perpSpeed > 1.5f)
+                        baseMaxSpeed *= 0.50f;
+                }
             }
         }
 

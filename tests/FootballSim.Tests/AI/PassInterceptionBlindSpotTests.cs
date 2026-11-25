@@ -1263,4 +1263,41 @@ public sealed class PassInterceptionBlindSpotTests
             if (visible[i].ObservedAgeTicks > age) age = visible[i].ObservedAgeTicks;
         return age;
     }
+
+    // =============================================================================================
+    // ai64 — live Opening Pass 2 (t=127) past-target up-lane sprinter blind spot & A6.B8 guard
+    // =============================================================================================
+
+    [Fact]
+    public void LiveReplay_OpeningPass2_t127_PastTargetUpLanePresser_IsBlockedAndChargedInLaneClearance()
+    {
+        Vector2 ball = new(-3.79f, -2.22f);
+        Vector2 target = new(10.73f, -8.28f);
+        PerceivedEntity presser = Opponent(21, new Vector2(14.15f, -6.07f), new Vector2(-7.50f, 2.14f));
+
+        Assert.True(
+            Model.IsLaneBlocked(ball, target, power01: 0.70f, flightTimeSeconds: 1.32f,
+                new[] { presser }, TeamId.Home),
+            "Away #21 sprinting up-lane from past targetXZ at t=127 must block the pass lane");
+
+        float clearance = CandidateGenerator.EvaluateLaneClearance(
+            ball, target, new[] { presser }, TeamId.Home, chargeUncertainty: true);
+        Assert.True(clearance < 1.0f,
+            $"EvaluateLaneClearance must charge past-target up-lane sprinter (got {clearance:F3})");
+    }
+
+    [Fact]
+    public void EvaluateLaneClearance_StandingOrRecedingDefenderPastTarget_RemainsUncharged()
+    {
+        Vector2 ball = Vector2.Zero;
+        Vector2 target = new(15f, 0f);
+
+        PerceivedEntity standing = Opponent(14, new Vector2(17f, 0f), Vector2.Zero);
+        PerceivedEntity receding = Opponent(15, new Vector2(17f, 0f), new Vector2(5f, 0f));
+
+        Assert.Equal(1.0f, CandidateGenerator.EvaluateLaneClearance(
+            ball, target, new[] { standing }, TeamId.Home, chargeUncertainty: true));
+        Assert.Equal(1.0f, CandidateGenerator.EvaluateLaneClearance(
+            ball, target, new[] { receding }, TeamId.Home, chargeUncertainty: true));
+    }
 }

@@ -408,6 +408,48 @@ public sealed class ReceptionPlanner
         if (obs.PossessingTeam != obs.SelfTeam) return false;
         if (obs.IntendedReceiverId != obs.SelfId) return false;
 
+        // ai64 (Task 3.1): during the reaction-delay ticks immediately after a pass kick,
+        // PerceivedBallVelocity is still the passer's pre-kick dribble velocity. Hold/brake at
+        // selfXZ facing the ball instead of projecting a 2.0 s phantom trajectory.
+        if (obs.BallLastTouchedByPlayerId is int passerId &&
+            passerId != obs.SelfId &&
+            TryFindPlayer(obs.VisiblePlayers, passerId, out PerceivedEntity passer))
+        {
+            Vector2 perceivedBallXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+            Vector2 passerXZ = new(passer.EstimatedPosition.X, passer.EstimatedPosition.Z);
+            float passerSpeed = new Vector2(passer.EstimatedVelocity.X, passer.EstimatedVelocity.Z).Length();
+            float perceivedBallSpeed = new Vector2(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z).Length();
+            if (Vector2.Distance(perceivedBallXZ, passerXZ) <= 1.25f &&
+                perceivedBallSpeed <= passerSpeed + 1.5f)
+            {
+                Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+                Vector2 faceBall = SafeNormalize(perceivedBallXZ - selfXZ, AttackVector(obs));
+                _arrivalSeconds = 0f;
+                _meetingSampleXZ = selfXZ;
+                _pressure = 0f;
+                _uncertainty = MemoryUncertainty(obs);
+                _pressureKnown = false;
+                _nextAction = ReceptionNextAction.None;
+
+                _drafts[0] = new Draft
+                {
+                    Kind = ReceptionTouchKind.Kill,
+                    Feasible = true,
+                    Score = 0.50f,
+                    MeetingPointXZ = selfXZ,
+                    FacingXZ = faceBall,
+                    Sprint = false,
+                    Shield = false,
+                    NextActionValue = 0f,
+                    Reason = string.Empty
+                };
+                _optionCount = 1;
+                BuildPlans(0f, _pressure, _uncertainty, _pressureKnown, obs.Tick);
+                plan = _plans[0];
+                return true;
+            }
+        }
+
         _trajectory.Invalidate();
         if (!_trajectory.TryBuild(obs.PerceivedBallPosition, obs.PerceivedBallVelocity, PlanHorizonSeconds))
             return false;
@@ -512,7 +554,23 @@ public sealed class ReceptionPlanner
 
         // 5. Escape pressure: touch it away from the presser, leaning up the pitch, into the larger space.
         Vector2 escapeDir = SafeNormalize(awayFromPressure + attackXZ * EscapeUpfieldBias, awayFromPressure);
-        Vector2 escapePoint = meetXZ + escapeDir * EscapeOffsetMeters;
+        // ai64 (Task 3.3): when under real pressure and the ball is still > 0.35 s away, do not let
+        // an escape offset pull the meeting point further down-lane away from the incoming ball and
+        // away from the receiver's own position.
+        Vector2 incomingBallDir = SafeNormalize(new Vector2(ballVelocityAtMeet.X, ballVelocityAtMeet.Z), Vector2.Zero);
+        Vector2 escapeOffsetDir = escapeDir;
+        if (meetSeconds > 0.35f && pressure >= 0.35f &&
+            incomingBallDir.LengthSquared() > 1e-4f &&
+            Vector2.Dot(escapeDir, incomingBallDir) > 0.5f)
+        {
+            Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
+            Vector2 perp = escapeDir - incomingBallDir * Vector2.Dot(escapeDir, incomingBallDir);
+            if (perp.LengthSquared() > 0.04f)
+                escapeOffsetDir = Vector2.Normalize(perp);
+            else if (Vector2.Dot(escapeDir, meetXZ - selfXZ) > 0f)
+                escapeOffsetDir = Vector2.Zero;
+        }
+        Vector2 escapePoint = meetXZ + escapeOffsetDir * EscapeOffsetMeters;
         float escapeClearance = NearestOpponentDistance(obs, escapePoint, out _);
         float escapeSpace01 = Clearance01(escapeClearance, SpaceReferenceMeters);
         if (escapeClearance < EscapeClearanceMeters)
@@ -573,11 +631,14 @@ public sealed class ReceptionPlanner
         // one reach solve against the same arrival clock the trajectory just gave us.
         // ai63 (Task 2.1): if jogging would leave less than 0.10 s margin before ball arrival, promote
         // Kill/OpenBody/Shield to Sprint == true so a receiver never jogs onto a tight pass.
+        // ai64 (Task 3.3): also sprint to meet the ball when under real pressure (> 0.50 m away).
         ReachEstimate arrival;
         if (!sprint)
         {
             arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds, sprint: false);
-            if (!arrival.Reachable || arrival.Seconds > ballArrivalSeconds - 0.10f)
+            float distanceToMeet = Vector2.Distance(reach.PositionXZ, meetingPointXZ);
+            bool attackUnderPressure = pressure >= 0.35f && distanceToMeet > 0.50f;
+            if (!arrival.Reachable || arrival.Seconds > ballArrivalSeconds - 0.10f || attackUnderPressure)
             {
                 sprint = true;
                 arrival = TimeToReachModel.ToPoint(reach, meetingPointXZ, PlanHorizonSeconds, sprint: true);
@@ -606,13 +667,21 @@ public sealed class ReceptionPlanner
 
         bool reliefKind = kind is ReceptionTouchKind.Shield or ReceptionTouchKind.EscapePressure;
         bool spaceKind = kind is ReceptionTouchKind.StrideTouch or ReceptionTouchKind.EscapePressure;
+        // ai64 (Task 3.2): EscapePressure only earns its space & relief terms when real pressure exists,
+        // so unpressed receptions (pressure <= 0.15) keep Kill/OpenBody instead of forcing Sprint + offset.
+        float spaceBonus = kind == ReceptionTouchKind.EscapePressure
+            ? SpaceWeight * space01 * Clamp01((pressure - 0.15f) / 0.15f)
+            : (spaceKind ? SpaceWeight * space01 : 0f);
+        float escapeReliefScale = kind == ReceptionTouchKind.EscapePressure
+            ? Clamp01((pressure - 0.10f) / 0.15f)
+            : 1f;
 
         float score = ValueWeight * normalizedValue
                       + OrientationWeight * orientation01
                       + KindBias(kind)
-                      + (spaceKind ? SpaceWeight * space01 : 0f)
+                      + spaceBonus
                       + (reliefKind && pressureKnown
-                          ? PressureReliefWeight * pressure * (1f - ReliefUncertaintyDiscount * uncertainty)
+                          ? PressureReliefWeight * pressure * escapeReliefScale * (1f - ReliefUncertaintyDiscount * uncertainty)
                           : 0f)
                       - UncertaintyWeight * uncertainty * UncertaintySensitivity(kind)
                       - (kind == ReceptionTouchKind.StrideTouch ? StridePacePenaltyWeight * pace01 : 0f);
@@ -929,6 +998,23 @@ public sealed class ReceptionPlanner
         if (!float.IsFinite(length) || length <= MaxTrajectoryOffsetMeters) return meetingPointXZ;
 
         return _meetingSampleXZ + offset * (MaxTrajectoryOffsetMeters / length);
+    }
+
+    private static bool TryFindPlayer(
+        IReadOnlyList<PerceivedEntity> visiblePlayers,
+        int playerId,
+        out PerceivedEntity player)
+    {
+        for (int i = 0; i < visiblePlayers.Count; i++)
+        {
+            PerceivedEntity candidate = visiblePlayers[i];
+            if (candidate.PlayerId != playerId) continue;
+            player = candidate;
+            return true;
+        }
+
+        player = default;
+        return false;
     }
 
     private static Vector2 AttackVector(in FootballerObservation obs) => new(obs.AttackingDirectionX, 0f);

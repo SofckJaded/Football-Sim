@@ -1,0 +1,15 @@
+﻿t=127 look=1: proj=13.094m timeToPoint=1.033s reaction=0.100s available=0.933s stepIn=(True, 0.660s)
+t=127 look=2: proj=10.454m timeToPoint=0.783s reaction=0.100s available=0.683s stepIn=(False, 0.683s)
+ai64 opening-pass diagnostic artifact (temporary probe class, removed from the tree before commit)
+version: ai64-rs1
+setup: Seed=20260818 PlayersPerTeam=11 HalfDurationSeconds=240f HumanPlayerId=null
+ticks: 600   open-play passes recorded: 3
+analytics: home passes 2/2 away 1/0
+
+t=127 crossProj check: blocked=True crossProj=10.934m timeToPoint=0.833s reaction=0.100s available=0.733s stepIn=(False, 0.733s)
+
+== PASS TABLE ==
+ #  tick  passer      receiver    intent        tag             ball(x,z)            target(x,z)          flight  p(trace)  lane   percBlock  outcome(tick/player/team/kind)
+ 1     1   8(H)   9(H) GroundPass    Unknown         ( -0.29,  0.00)  (   0.00,   0.00)   0.00    n/a  0.000  False      completed t=53 p9 Home Collection ball=(-12.45,0.21)
+ 2   152   9(H)  11(H) GroundPass    Pass:#11:ToFeet ( -2.79, -4.77)  (  -6.35, -29.59)   2.00  0.798  1.000  False      completed t=242 p11 Home Collection ball=(-5.83,-25.65)
+ 3   567  12(A)  14(A) GroundPass    -               ( 46.82, -0.23)  (   0.00,   0.00)   0.00    n/a  0.000  False      in-flight

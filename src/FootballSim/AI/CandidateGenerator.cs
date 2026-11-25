@@ -4979,6 +4979,18 @@ public sealed class CandidateGenerator : IAiStateResettable
     {
         if (!_receptionPlanner.TryPlan(obs, out _)) return false;
 
+        ReachKinematics reach = ReachKinematics.FromObservation(obs);
+        float jogSpeed = MathF.Max(0.5f, TimeToReachModel.SpeedCap(reach, sprint: false));
+        float sprintSpeed = MathF.Max(0.5f, TimeToReachModel.SpeedCap(reach, sprint: true));
+        float brakeDecel = MathF.Max(1f, obs.SelfAttributes.Acceleration * 1.45f * obs.SelfBalance01);
+        Vector2 selfVelXZ = new(obs.SelfVelocity.X, obs.SelfVelocity.Z);
+        float speed = selfVelXZ.Length();
+        Vector2 perceivedBallXZ = new(obs.PerceivedBallPosition.X, obs.PerceivedBallPosition.Z);
+        float distToBallNow = Vector2.Distance(selfXZ, perceivedBallXZ);
+        Vector2 ballVelXZ = new(obs.PerceivedBallVelocity.X, obs.PerceivedBallVelocity.Z);
+        float ballSpeedXZ = ballVelXZ.Length();
+        Vector2 ballDirXZ = ballSpeedXZ > 1e-3f ? ballVelXZ / ballSpeedXZ : dirToBall;
+
         bool added = false;
         for (int i = 0; i < _receptionPlanner.OptionCount; i++)
         {
@@ -4989,15 +5001,78 @@ public sealed class CandidateGenerator : IAiStateResettable
             Vector2 toMeeting = plan.MeetingPointXZ - selfXZ;
             float distance = toMeeting.Length();
 
-            // The same approach rule the legacy ray used: heading for the ball, with the near-field
-            // fallback when the player is already on top of it. AUD-P4 / Fix 3.3: the deadband is the
-            // residual approach tolerance (0.15 m), not the old 0.45 m that parked him short of a moving
-            // ball — see ReceptionArrivalDeadbandMeters for the reach arithmetic.
-            Vector2 moveDir = distance > ReceptionArrivalDeadbandMeters
-                ? toMeeting / distance
-                : dirToBall * 0.35f;
+            // ai64 (Task 3.3): engage ShieldBall stance slowdown only once actually at the reception zone,
+            // so a pressed receiver still sprints to meet the pass early.
+            bool shieldMove = plan.Shield &&
+                              ((distance <= 1.25f && plan.ArrivalSeconds <= 0.35f) || distToBallNow <= 2.5f);
+
+            // ai64 (Task 2.1): velocity-matched arrival braking so a fast receiver does not blast past
+            // MeetingPointXZ. StrideTouch keeps running unless inside 0.8 m and running across the pass line.
+            bool applyArrivalControl = plan.TouchKind != ReceptionTouchKind.StrideTouch;
+            if (!applyArrivalControl && distance < 0.8f && speed > 1.5f)
+            {
+                float alongBallAxis = MathF.Abs(Vector2.Dot(selfVelXZ / speed, ballDirXZ));
+                if (alongBallAxis < 0.5f)
+                    applyArrivalControl = true;
+            }
+
+            Vector2 moveDir;
+            bool sprint;
+            if (!applyArrivalControl)
+            {
+                moveDir = distance > ReceptionArrivalDeadbandMeters
+                    ? toMeeting / distance
+                    : dirToBall * 0.35f;
+                sprint = plan.Sprint && distance > ReceptionSprintDeadbandMeters;
+            }
+            else if (distance <= ReceptionArrivalDeadbandMeters)
+            {
+                // Already at the meeting point: hold position (zero target velocity triggers max braking
+                // if still carrying momentum).
+                moveDir = Vector2.Zero;
+                sprint = false;
+            }
+            else
+            {
+                Vector2 dirToMeeting = toMeeting / distance;
+                float vAlong = Vector2.Dot(selfVelXZ, dirToMeeting);
+                float maxStopSpeed = MathF.Sqrt(
+                    2f * brakeDecel * MathF.Max(0f, distance - ReceptionArrivalDeadbandMeters));
+                float pacedSpeed = plan.ArrivalSeconds > 0.08f
+                    ? (distance / plan.ArrivalSeconds) * 1.15f
+                    : sprintSpeed;
+                float targetSpeedLimit = plan.Pressure01 >= 0.35f || plan.Sprint
+                    ? maxStopSpeed
+                    : MathF.Min(maxStopSpeed, MathF.Max(pacedSpeed, 1.5f));
+
+                bool overshooting = vAlong > maxStopSpeed || (distance <= 1.2f && vAlong < -0.5f);
+                bool fastEnoughToThrottle = speed >= maxStopSpeed * 0.75f ||
+                                            (vAlong * plan.ArrivalSeconds > distance + 0.5f && speed > 3.5f);
+
+                if (overshooting)
+                {
+                    sprint = false;
+                    // Velocity-correcting low-magnitude command toward MeetingPointXZ: StepPlayerLocomotion
+                    // fires full 1.45 * Acceleration braking against both excess forward speed and lateral drift.
+                    float brakeCap = MathF.Min(targetSpeedLimit * 0.5f, jogSpeed * 0.5f);
+                    moveDir = dirToMeeting * (brakeCap / jogSpeed);
+                }
+                else if (fastEnoughToThrottle)
+                {
+                    sprint = plan.Sprint && distance > ReceptionSprintDeadbandMeters && targetSpeedLimit > jogSpeed;
+                    float speedCap = sprint ? sprintSpeed : jogSpeed;
+                    float throttle = Math.Clamp(targetSpeedLimit / speedCap, 0.15f, 1f);
+                    moveDir = dirToMeeting * throttle;
+                }
+                else
+                {
+                    sprint = plan.Sprint && distance > ReceptionSprintDeadbandMeters;
+                    moveDir = dirToMeeting;
+                }
+            }
+
             var command = new FootballerCommand(
-                moveDir, plan.FacingXZ, plan.Sprint && distance > ReceptionSprintDeadbandMeters, plan.Shield,
+                moveDir, plan.FacingXZ, sprint, shieldMove,
                 false, false, false, Vector3.Zero,
                 KickIntentType.None, Vector3.UnitX, 0f, 0f)
             {
@@ -5762,7 +5837,13 @@ public sealed class CandidateGenerator : IAiStateResettable
             // a body behind the passer that this metric deliberately ignores.
             Vector2 rel = oppXZ - fromXZ;
             float proj = Vector2.Dot(rel, segDir);
-            if (proj <= 0.4f || proj >= segLen - 0.3f) continue;
+            if (proj <= 0.4f) continue;
+
+            // ai64 (Task 1.2): keep standing/receding past-target defenders uncharged (A6.B8), but score
+            // a presser past targetXZ whose run is carrying him back up-lane into the corridor.
+            bool pastTargetUpLaneSprinter = proj >= segLen - 0.3f &&
+                                            Vector2.Dot(oppVelocityXZ, segDir) < -LaneProjectionMinSpeedMetersPerSecond;
+            if (proj >= segLen - 0.3f && !pastTargetUpLaneSprinter) continue;
 
             float speed = oppVelocityXZ.Length();
             if (speed > PassSuccessModel.OpponentSprintSpeed)
@@ -5772,6 +5853,7 @@ public sealed class CandidateGenerator : IAiStateResettable
             float ratio = 1f;
             for (int position = 0; position < positions; position++)
             {
+                if (position == 0 && pastTargetUpLaneSprinter) continue;
                 Vector2 pointXZ = position == 0
                     ? oppXZ
                     : oppXZ + oppVelocityXZ * LaneProjectionHorizonSeconds;

@@ -3,6 +3,7 @@ using System.Numerics;
 using FootballSim;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Locomotion;
 using FootballSim.Physics;
 using Xunit;
 
@@ -168,5 +169,31 @@ public sealed class BallTrajectoryTests
         estimate.Invalidate();
         Assert.False(estimate.IsBuilt);
         Assert.False(estimate.TryFirstPlaneCrossing(10f, out _, out _));
+    }
+
+    [Fact]
+    public void TryMeet_RejectsUnstoppableFlyBySample_WhenPlayerMomentumCarriesPastReach()
+    {
+        // Opening Pass 4 (t=288) geometry: Away #20 is flying away at 6.4 m/s while a 0.13 s sample
+        // sits 1.09 m away inside reach right now, yet maximum braking still carries him outside reach.
+        BallState ball = ShotFrom(-8.49f, -9.29f, new Vector3(-9.32f, 0f, 6.04f));
+        var estimate = new BallTrajectoryEstimate(pitch: Pitch);
+        Assert.True(estimate.TryBuild(ball, horizonSeconds: 2.0f));
+
+        ReachKinematics player = ReachKinematics.Neutral(
+            new Vector2(-10.79f, -8.61f),
+            new Vector2(-2.56f, -5.89f));
+        float maxHeight = BallContactRules.MaxContactHeight(keeperHandling: false, jumpingOrHeading: false);
+
+        if (estimate.TryMeet(player, 2.0f, maxHeight, out float meetSeconds, out Vector3 meetPoint))
+        {
+            float aBrake = MathF.Max(1f, player.Acceleration * 1.45f * player.Balance01);
+            Vector2 freeDriftPos = player.PositionXZ + player.VelocityXZ * meetSeconds;
+            float minDistAtMeet = Vector2.Distance(freeDriftPos, new Vector2(meetPoint.X, meetPoint.Z))
+                                  - 0.5f * aBrake * meetSeconds * meetSeconds;
+            Assert.True(minDistAtMeet <= player.ReachRadius + 1e-3f,
+                $"TryMeet returned unstoppable fly-by sample at t={meetSeconds:F3}s " +
+                $"(minDistAtMeet={minDistAtMeet:F3}m > reach={player.ReachRadius:F3}m)");
+        }
     }
 }

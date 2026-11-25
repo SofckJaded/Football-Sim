@@ -590,7 +590,14 @@ public sealed class TeamJobCoordinator : IAiStateResettable
                 counts.GetValueOrDefault(existing.Job) < JobCapacity(existing.Job) &&
                 Vector2.Distance(
                     new Vector2(player.Position.X, player.Position.Z),
-                    new Vector2(existing.Anchor.X, existing.Anchor.Z)) <= MaxAssignmentTravel(existing.Job) + 6f)
+                    new Vector2(existing.Anchor.X, existing.Anchor.Z)) <= MaxAssignmentTravel(existing.Job) + 6f &&
+                !(inPossession &&
+                  existing.Job == TacticalJob.NearOutlet &&
+                  Vector2.Distance(
+                      ClampToPitch(referenceXZ + SimMath.SafeNormalize(
+                          new Vector2(-attackDirX * _pitch.HalfLength, 0f) - referenceXZ,
+                          new Vector2(-attackDirX, 0f)) * 11f),
+                      new Vector2(existing.Anchor.X, existing.Anchor.Z)) < JobRegionScoring.MinRefinedSeparationMeters))
             {
                 counts[existing.Job] = counts.GetValueOrDefault(existing.Job) + 1;
                 taken.Add(player.Id);
@@ -1599,10 +1606,12 @@ public sealed class TeamJobCoordinator : IAiStateResettable
 
             // A probe may move the target, but it may not slide it onto a teammate's target: below this
             // floor the staggering term alone can lose to connection and lane openness, and the duty is
-            // then no longer a position of its own.
-            if (nominalSeparation >= JobRegionScoring.MinRefinedSeparationMeters &&
-                JobRegionScoring.NearestTeammateDistance(candidate, _assignedRegions, playerId) <
-                JobRegionScoring.MinRefinedSeparationMeters)
+            // then no longer a position of its own. When nominalSeparation is already below
+            // MinRefinedSeparationMeters, keep nominalSeparation as the floor so refinement can widen
+            // or hold separation rather than collapsing two adjacent duties further (e.g. 5.5 m -> 3.7 m).
+            float separationFloor = MathF.Min(nominalSeparation, JobRegionScoring.MinRefinedSeparationMeters);
+            if (JobRegionScoring.NearestTeammateDistance(candidate, _assignedRegions, playerId) <
+                separationFloor)
             {
                 continue;
             }

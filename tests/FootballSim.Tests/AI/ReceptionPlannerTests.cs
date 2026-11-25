@@ -4,6 +4,8 @@ using System.Numerics;
 using FootballSim;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Locomotion;
+using FootballSim.Physics;
 using Xunit;
 
 namespace FootballSim.Tests.AI;
@@ -351,14 +353,15 @@ public sealed class ReceptionPlannerTests
     [Fact]
     public void AddReceptionCandidates_KeepsSprintEnabled_InsideOneAndHalfMeters()
     {
-        // Receiver is moving at 7 m/s, meets ball near (0, 0), and StrideTouch places the meeting point
-        // StrideLeadMeters (0.8 m) ahead — inside the old 1.5 m sprint cutoff, outside 0.35 m.
+        // Receiver is jogging at 3 m/s (physically able to meet near (0, 0) without flying past reach),
+        // and StrideTouch places the meeting point StrideLeadMeters (0.8 m) ahead — inside the old
+        // 1.5 m sprint cutoff, outside 0.35 m.
         FootballerObservation obs = Receiving(
             new Vector2(0f, 2.5f),
             new Vector2(0f, -5.0f),
             visible: [Mate(ForwardMateId, 18f, 4f)],
             selfPosition: Vector2.Zero,
-            selfVelocity: new Vector3(7f, 0f, 0f),
+            selfVelocity: new Vector3(3f, 0f, 0f),
             selfFacingXZ: new Vector2(1f, 0f));
 
         var generator = new CandidateGenerator(new PitchDimensions());
@@ -525,5 +528,209 @@ public sealed class ReceptionPlannerTests
         }
 
         return text.ToString();
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // ai64 — unpressed escape hijack, pre-kick dribble velocity, arrival braking & pressed sprint
+    // ---------------------------------------------------------------------------------------------
+
+    [Fact]
+    public void ReceptionPlanner_UnpressedReceiver_DoesNotPickEscapePressureOverKill()
+    {
+        // Nearest opponent 5.9 m from meeting point => pressure ~0.017; EscapePressure must score
+        // below Kill rather than hijacking an unpressed reception via full SpaceWeight (0.10).
+        FootballerObservation obs = Receiving(
+            new Vector2(8f, 0f),
+            new Vector2(-12f, 0f),
+            visible: [Mate(ForwardMateId, 14f, 5f), Opponent(PresserId, -3.5f, 0f)],
+            selfPosition: Vector2.Zero,
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var planner = new ReceptionPlanner(new PitchDimensions());
+        Assert.True(planner.TryPlan(obs, out ReceptionPlan plan));
+        Assert.InRange(plan.Pressure01, 0.001f, 0.15f);
+        ReceptionOption escape = OptionOf(planner, ReceptionTouchKind.EscapePressure);
+        ReceptionOption kill = OptionOf(planner, ReceptionTouchKind.Kill);
+        Assert.True(escape.Feasible);
+        Assert.True(escape.Score < kill.Score,
+            $"Unpressed EscapePressure ({escape.Score:F3}) must not outscore Kill ({kill.Score:F3}) at pressure {plan.Pressure01:F3}");
+        Assert.NotEqual(ReceptionTouchKind.EscapePressure, plan.TouchKind);
+    }
+
+    [Fact]
+    public void ReceptionPlanner_PreKickStaleBallVelocity_DoesNotProjectBogusRun()
+    {
+        // Pass 4 (t=264) pre-kick reaction delay: ball is still 0.39 m from passer moving at passer dribble speed.
+        var passer = new PerceivedEntity(
+            102, TeamId.Home, TacticalRole.Winger,
+            new Vector3(-3.65f, 0f, -12.15f),
+            new Vector3(-5.05f, 0f, 1.25f),
+            1f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+
+        FootballerObservation obs = Receiving(
+            new Vector2(-4.04f, -12.17f),
+            new Vector2(-4.74f, 1.20f),
+            visible: [passer, Mate(ForwardMateId, 14f, 5f)],
+            selfPosition: new Vector2(-9.17f, -6.10f),
+            selfVelocity: new Vector3(-5.08f, 0f, -5.05f),
+            selfFacingXZ: new Vector2(-0.7f, -0.7f));
+
+        var generator = new CandidateGenerator(new PitchDimensions());
+        generator.GenerateOffBallCandidates(
+            obs,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(-10.4f, -11.3f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate candidate = Assert.Single(generator.Candidates, c => c.Key.Kind == CandidateKind.Intercept);
+        Assert.False(candidate.Command.Sprint,
+            "Receiver must not sprint toward a phantom pre-kick dribble projection");
+        Assert.True(candidate.Command.DesiredMoveDirectionXZ.Length() < 0.2f,
+            $"Receiver must hold/brake during pre-kick reaction delay (got {candidate.Command.DesiredMoveDirectionXZ})");
+    }
+
+    [Fact]
+    public void AddReceptionCandidates_FastApproachingReceiver_BrakesInsteadOfOvershootingMeetingPoint()
+    {
+        var pitch = new PitchDimensions();
+        var receiverPos = new Vector3(0f, 0f, 0f);
+        var receiverVel = new Vector3(7.5f, 0f, 0f);
+        var ballPos = new Vector3(1.3f, 0.11f, 4.0f);
+        var ballVel = new Vector3(0f, 0f, -15.0f);
+
+        FootballerObservation obs = Receiving(
+            new Vector2(ballPos.X, ballPos.Z),
+            new Vector2(ballVel.X, ballVel.Z),
+            visible: [Mate(ForwardMateId, 14f, 5f)],
+            selfPosition: new Vector2(receiverPos.X, receiverPos.Z),
+            selfVelocity: receiverVel,
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var generator = new CandidateGenerator(pitch);
+        generator.GenerateOffBallCandidates(
+            obs,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(1.3f, 0f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate best = generator.Candidates[0];
+        for (int i = 1; i < generator.Candidates.Count; i++)
+        {
+            if (generator.Candidates[i].UtilityScore > best.UtilityScore)
+                best = generator.Candidates[i];
+        }
+
+        Assert.False(best.Command.Sprint,
+            $"Fast approaching receiver must stop sprinting (selected {best.ActionName})");
+        Assert.True(best.Command.DesiredMoveDirectionXZ.Length() < 0.7f,
+            $"Fast approaching receiver must brake (move mag={best.Command.DesiredMoveDirectionXZ.Length():F2}, {best.ActionName})");
+
+        // Drive 35 ticks through real execution & ball physics to verify the receiver traps the pass.
+        var receiver = new FootballerState
+        {
+            Id = ReceiverId,
+            Team = TeamId.Home,
+            ShirtNumber = 6,
+            Role = TacticalRole.DefensiveMidfielder,
+            Position = receiverPos,
+            Velocity = receiverVel,
+            FacingXZ = new Vector2(1f, 0f),
+            Attributes = new PlayerAttributes(),
+            Tendencies = PlayerTendencyProfile.ForRole(TacticalRole.DefensiveMidfielder)
+        };
+        var ball = new BallState
+        {
+            Position = ballPos,
+            PreviousPosition = ballPos,
+            Velocity = ballVel,
+            LastTouchedByPlayerId = 102,
+            LastTouchedByTeam = TeamId.Home
+        };
+
+        var execution = new FootballerExecutionSystem(pitch);
+        var ballSolver = new BallPhysicsSolver(pitch: pitch);
+        var rng = new SeededRandom(1);
+        bool trapped = false;
+        for (int tick = 1; tick <= 35; tick++)
+        {
+            FootballerObservation stepObs = Receiving(
+                new Vector2(ball.Position.X, ball.Position.Z),
+                new Vector2(ball.Velocity.X, ball.Velocity.Z),
+                visible: [Mate(ForwardMateId, 14f, 5f)],
+                selfPosition: new Vector2(receiver.Position.X, receiver.Position.Z),
+                selfVelocity: receiver.Velocity,
+                selfFacingXZ: receiver.FacingXZ);
+
+            generator.Clear();
+            generator.GenerateOffBallCandidates(
+                stepObs,
+                new Vector3(52.5f, 0f, 0f),
+                new Vector3(-52.5f, 0f, 0f),
+                myInterceptXZ: new Vector2(ball.Position.X, 0f),
+                isPrimaryBallResponder: true,
+                offsideLineProjX: 40f);
+
+            UtilityCandidate stepBest = generator.Candidates[0];
+            for (int i = 1; i < generator.Candidates.Count; i++)
+            {
+                if (generator.Candidates[i].UtilityScore > stepBest.UtilityScore)
+                    stepBest = generator.Candidates[i];
+            }
+
+            receiver.LastCommand = stepBest.Command;
+            execution.UpdateLocomotionAndContacts(
+                new[] { receiver }, ball, rng, SimConstants.FixedDeltaTime,
+                receptionAssist: new ReceptionAssistContext(BallControlState.InFlightPass, ReceiverId, HumanPlayerId: null));
+            ballSolver.Step(ball, SimConstants.FixedDeltaTime);
+
+            for (int c = 0; c < execution.ContactEvents.Count; c++)
+            {
+                if (execution.ContactEvents[c].PlayerId == ReceiverId &&
+                    execution.ContactEvents[c].Kind == BallContactKind.Collection)
+                {
+                    trapped = true;
+                    break;
+                }
+            }
+
+            if (trapped) break;
+        }
+
+        Assert.True(trapped, "Fast approaching receiver must brake and trap the pass instead of running past it");
+    }
+
+    [Fact]
+    public void AddReceptionCandidates_PressedShieldReception_SprintsToMeetBallWithoutEarlyShieldSlowdown()
+    {
+        // Receiver 1.8 m from meeting point with 0.60 s flight under heavy pressure (0.88):
+        // Shield option must sprint without engaging ShieldBall slowdown while closing the gap.
+        FootballerObservation obs = Receiving(
+            new Vector2(1.8f, 7.8f),
+            new Vector2(0f, -13.0f),
+            visible: [Mate(ForwardMateId, 14f, 5f), Opponent(PresserId, 2.5f, 0f)],
+            selfPosition: Vector2.Zero,
+            selfVelocity: Vector3.Zero,
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var generator = new CandidateGenerator(new PitchDimensions());
+        generator.GenerateOffBallCandidates(
+            obs,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(1.8f, 0f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate shield = Assert.Single(generator.Candidates,
+            c => c.Key.Kind == CandidateKind.Intercept && c.Key.TargetTag == "shield");
+        Assert.True(shield.Command.Sprint, "Pressed Shield reception 1.8 m away must sprint to meet the ball");
+        Assert.False(shield.Command.ShieldBall, "ShieldBall slowdown must not engage while still > 1.25 m from meeting point");
     }
 }

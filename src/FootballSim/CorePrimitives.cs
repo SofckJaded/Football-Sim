@@ -790,12 +790,17 @@ public enum TeamId
 /// promotion on tight arrivals plus distance-scaled short-pass roll-out cap, past-target up-lane lookahead in
 /// <c>IsLaneBlocked</c> Check 3, boxed-in midfield touchline escape clearance, and <c>TimeToReachModel</c>
 /// steering lead-intercept / trig fast-path.</item>
+/// <item><b>64</b> (2026-11-25): Up-lane sprinter crossing sample and <c>EvaluateLaneClearance</c>
+/// past-target sprinter scoring, velocity-matched arrival braking in <c>AddReceptionCandidates</c>,
+/// Reception Assist throttle preservation, unstoppable fly-by rejection in <c>BallTrajectoryEstimate.TryMeet</c>,
+/// and <c>ReceptionPlanner</c> pre-kick dribble guard, pressure-gated escape bonus, and delayed
+/// <c>ShieldBall</c> slowdown.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 63;
+    public const int AiBehaviour = 64;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

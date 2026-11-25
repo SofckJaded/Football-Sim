@@ -2350,6 +2350,36 @@ public sealed class AuditRegressionTests
         Assert.Equal(10, command.IntendedReceiverId);
     }
 
+    [Fact]
+    public void ReceptionAssist_PreservesBrakingThrottleMagnitude_InsteadOfRenormalizingToFullSpeed()
+    {
+        var pitch = new PitchDimensions();
+        var intended = Player(9, TeamId.Home, TacticalRole.Striker, new Vector3(4f, 0f, 1.2f));
+        intended.Velocity = new Vector3(0f, 0f, -7.2f);
+        intended.FacingXZ = new Vector2(0f, -1f);
+        intended.LastCommand = new FootballerCommand(
+            new Vector2(0f, -0.25f), new Vector2(0f, -1f), true, false, false, false, false,
+            Vector3.Zero, KickIntentType.None, Vector3.UnitX, 0f, 0f);
+
+        var ball = new BallState
+        {
+            Position = new Vector3(0f, 0.11f, 0f),
+            Velocity = new Vector3(10f, 0f, 0f),
+            LastTouchedByTeam = TeamId.Home,
+            LastTouchedByPlayerId = 8
+        };
+
+        var execution = new FootballerExecutionSystem(pitch);
+        float initialSpeed = intended.Velocity.Length();
+        execution.UpdateLocomotionAndContacts(
+            new[] { intended }, ball, new SeededRandom(1), Dt,
+            receptionAssist: new ReceptionAssistContext(BallControlState.InFlightPass, 9, HumanPlayerId: null));
+
+        float afterSpeed = intended.Velocity.Length();
+        Assert.True(afterSpeed < initialSpeed,
+            $"Reception Assist must preserve braking throttle instead of re-normalizing to full sprint ({initialSpeed:F2} -> {afterSpeed:F2} m/s)");
+    }
+
     // ---------------------------------------------------------------------
     // Batch 10 — F03 (authoritative keeper hold and single release)
     // ---------------------------------------------------------------------

@@ -266,6 +266,10 @@ public sealed class BallTrajectoryEstimate
 
         float sprintCap = MathF.Max(0.5f, TimeToReachModel.SpeedCap(player, sprint: true));
         float reach = MathF.Max(0.05f, player.ReachRadius);
+        float speed = SimMath.IsFinite(player.VelocityXZ) ? player.VelocityXZ.Length() : 0f;
+        float accel = float.IsFinite(player.Acceleration) ? MathF.Max(0.5f, player.Acceleration) : 6.8f;
+        float balance = float.IsFinite(player.Balance01) ? Math.Clamp(player.Balance01, 0.1f, 1f) : 0.8f;
+        float aBrake = MathF.Max(1f, accel * 1.45f * balance);
 
         for (int i = 0; i < _count; i++)
         {
@@ -275,13 +279,21 @@ public sealed class BallTrajectoryEstimate
             Vector3 point = _positions[i];
             if (point.Y > maxHeight || point.Y < minHeight) continue;
 
-            float planar = MathF.Max(0f,
-                Vector2.Distance(player.PositionXZ, new Vector2(point.X, point.Z)) - reach);
+            Vector2 pointXZ = new(point.X, point.Z);
+            float planar = MathF.Max(0f, Vector2.Distance(player.PositionXZ, pointXZ) - reach);
             if (planar / sprintCap > time) continue;
 
-            ReachEstimate arrival = TimeToReachModel.ToPoint(
-                player, new Vector2(point.X, point.Z), horizonSeconds);
+            ReachEstimate arrival = TimeToReachModel.ToPoint(player, pointXZ, horizonSeconds);
             if (!arrival.Reachable || arrival.Seconds > time) continue;
+
+            // ai64 (Task 2.3): reject unstoppable fly-by samples where the player's current momentum
+            // carries them outside contact reach before `time` even under maximum braking.
+            if (speed > 1.5f)
+            {
+                Vector2 freeDriftPos = player.PositionXZ + player.VelocityXZ * time;
+                if (Vector2.Distance(freeDriftPos, pointXZ) - 0.5f * aBrake * time * time > reach)
+                    continue;
+            }
 
             meetSeconds = time;
             meetPoint = point;
