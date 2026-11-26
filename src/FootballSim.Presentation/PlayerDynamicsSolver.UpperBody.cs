@@ -26,7 +26,17 @@ public sealed partial class PlayerDynamicsSolver
 
     private MatchPhase _previousPhase = MatchPhase.PreKickoff;
     private float _stoppageReactionTimer;
-    private bool _goalReactionIsCelebration;
+
+    /// <summary>
+    /// Clears the phase-edge tracker and any running stoppage reaction. Called from the core's single
+    /// teleport/reset path: a celebration or whistle settle from the previous phase must not continue across a
+    /// kickoff/restart snap, and re-syncing the phase prevents a spurious "goal just scored" edge afterwards.
+    /// </summary>
+    private void ResetUpperBodyState(in PlayerDynamicsInput input)
+    {
+        _previousPhase = input.Phase;
+        _stoppageReactionTimer = 0f;
+    }
 
     /// <summary>
     /// A7.1: while the player's attention is on a scan, the head is driven by the sim's own head yaw so the
@@ -78,7 +88,9 @@ public sealed partial class PlayerDynamicsSolver
         if (horizontalDistance <= 25f)
         {
             float elevation = MathF.Atan2(toBall.Y, horizontalDistance);
-            targets.HeadPitch = SpringMath.Clamp(elevation * 0.75f, -SpringMath.DegToRad(18f), MaxTrackedPitch);
+            // ADD, never overwrite: the actions/keeper stages may already have asked for a head pitch in this
+            // frame (airborne look-up, header nod, keeper stance), and the gaze is meant to compose with them.
+            targets.HeadPitch += SpringMath.Clamp(elevation * 0.75f, -SpringMath.DegToRad(18f), MaxTrackedPitch);
         }
     }
 
@@ -98,9 +110,8 @@ public sealed partial class PlayerDynamicsSolver
         if (goalJustScored)
         {
             _stoppageReactionTimer = GoalReactionSeconds;
-            _goalReactionIsCelebration =
-                input.ScoringTeam.HasValue && input.ScoringTeam.Value == input.Player.Team;
-            if (_goalReactionIsCelebration)
+            bool celebrating = input.ScoringTeam.HasValue && input.ScoringTeam.Value == input.Player.Team;
+            if (celebrating)
             {
                 bool isScorer = input.ScorerPlayerId == PlayerId;
                 SnapBodyOffsetY(isScorer ? 0.06f : 0.045f);
@@ -113,7 +124,6 @@ public sealed partial class PlayerDynamicsSolver
         {
             // Whistle: a brief upright settle, nothing theatrical.
             _stoppageReactionTimer = 0.5f;
-            _goalReactionIsCelebration = false;
             SnapTorsoPitch(SpringMath.DegToRad(-8f));
         }
 

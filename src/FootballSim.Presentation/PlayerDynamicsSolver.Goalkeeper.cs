@@ -273,8 +273,9 @@ public sealed partial class PlayerDynamicsSolver
         _keeperLastDivePitch = targets.DivePitch;
         _keeperLastDiveBodyY = targets.BodyOffsetY;
 
-        // Neck stays level against the body's shallow forward fold (the gaze stage may refine it further).
-        targets.HeadPitch += SpringMath.DegToRad(6f) * _settings.MotionIntensity;
+        // Neck stays level against the body's shallow forward fold (gaze stage may refine it; MotionIntensity is
+        // applied once by ComposePose, so this stays a physical value).
+        targets.HeadPitch += SpringMath.DegToRad(6f);
     }
 
     /// <summary>
@@ -413,7 +414,7 @@ public sealed partial class PlayerDynamicsSolver
         float ballHeight = input.BallPosition.Y - input.Player.Position.Y;
         float elevation = SpringMath.Clamp((ballHeight - 1.30f) * 0.14f, -0.14f, 0.22f);
         targets.HandReach += new Vector3(0.30f * stanceScale, -0.05f + elevation, 0.34f * stanceScale);
-        targets.HeadPitch += SpringMath.Clamp(elevation * 0.9f, -0.22f, 0.30f) * _settings.MotionIntensity;
+        targets.HeadPitch += SpringMath.Clamp(elevation * 0.9f, -0.22f, 0.30f);
 
         float ballSpeed = SpringMath.HorizontalLength(input.BallVelocity);
         float lateralSpeed = MathF.Abs(_velocityRight);
@@ -585,14 +586,48 @@ public sealed partial class PlayerDynamicsSolver
 
     /// <summary>
     /// Eases the hand-over from locomotion lean to the dedicated dive roll/pitch so the launch has no
-    /// rotational pop, and fades it back on the get-up. Snaps to exactly zero once visually dead so a settled
-    /// keeper never carries a residual blend.
+    /// rotational pop, and keeps it engaged until the get-up has finished unwinding. Dropping the blend the
+    /// moment <c>IsDiving</c> falls would lerp the body back to the upright locomotion lean in ~0.15 s while the
+    /// get-up is still pushing the keeper up off the turf, which snapped him upright instead of rolling up.
     /// </summary>
     private void UpdateKeeperDiveBlend(bool diving, ref ChannelTargets targets)
     {
-        _diveBlend = SpringMath.ExpApproach(_diveBlend, diving ? 1f : 0f, KeeperDiveBlendHalfLife, _dt);
-        if (!diving && _diveBlend < 0.002f) _diveBlend = 0f;
+        bool diveRotationsActive = diving || _keeperGetUpTimer > 0f;
+        _diveBlend = SpringMath.ExpApproach(_diveBlend, diveRotationsActive ? 1f : 0f,
+            KeeperDiveBlendHalfLife, _dt);
+        if (!diveRotationsActive && _diveBlend < 0.002f) _diveBlend = 0f;
         targets.DiveBlend01 = SpringMath.Clamp01(_diveBlend);
+    }
+
+    /// <summary>
+    /// Clears every keeper timer, edge and arc value. Called from the core's single teleport/reset path: without
+    /// it, a reset while <c>IsDiving</c> is true would make the next frame look like the dive had just ended and
+    /// start a get-up roll on the goal line, and stale catch/claim envelopes would fire at the restart.
+    /// </summary>
+    private void ResetGoalkeeperState(in PlayerDynamicsInput input)
+    {
+        _wasDiving = false;
+        _diveElapsed = 0f;
+        _diveRight = 0f;
+        _diveForward = 0f;
+        _targetHeight = 1f;
+        _turfImpactDone = false;
+        _diveBlend = 0f;
+        _keeperGetUpTimer = 0f;
+        _keeperGetUpSeconds = 0.45f;
+        _keeperLastDiveRoll = 0f;
+        _keeperLastDivePitch = 0f;
+        _keeperLastDiveBodyY = 0f;
+        _keeperCatchTimer = 0f;
+        _keeperClaimTimer = 0f;
+        _keeperPunchTimer = 0f;
+        _keeperParryTimer = 0f;
+        _keeperClaimLandingDone = false;
+        _keeperDistributionTimer = 0f;
+        _keeperDistributionLong = false;
+        _keeperWasDistributing = false;
+        _keeperLastDistributionKick = KickIntentType.None;
+        _keeperHeldLastFrame = false;
     }
 
     // --- Small helpers ----------------------------------------------------------------------

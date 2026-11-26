@@ -231,10 +231,14 @@ public sealed partial class PlayerDynamicsSolver
             return;
         }
 
-        float teleportDistance = _initialized
-            ? Vector3.Distance(input.VisualPosition, _pose.RootPosition)
-            : 0f;
-        bool teleport = !_initialized || teleportDistance > _settings.TeleportSnapDistance;
+        // Teleport guard: a position jump between rendered frames is a kickoff/restart placement, a training
+        // reset or a scene reload - never real running. It is measured on the ground plane because the pose root
+        // is deliberately Y = 0 while the visual position carries the authoritative jump height.
+        float deltaX = input.VisualPosition.X - _pose.RootPosition.X;
+        float deltaZ = input.VisualPosition.Z - _pose.RootPosition.Z;
+        float snapDistance = _settings.TeleportSnapDistance;
+        bool teleport = !_initialized ||
+                        deltaX * deltaX + deltaZ * deltaZ > snapDistance * snapDistance;
 
         _dt = simDt;
         _simTime += simDt;
@@ -242,9 +246,19 @@ public sealed partial class PlayerDynamicsSolver
         UpdateDerivedState(in input, teleport);
 
         if (teleport)
+        {
+            // Render exactly one clean rest frame at the new spot and skip the stage pipeline: what a reset must
+            // never do is replay the action state the player carried into it (a keeper standing up from a dive at
+            // kickoff, a celebration still bouncing after a restart, a tackle lunge across half-time).
             ResetDynamics(in input);
-        else
-            _rootYaw.StepAngle(YawOf(input.Player.FacingXZ), RootYawTuning.Omega, RootYawTuning.Zeta, simDt);
+            var restTargets = new ChannelTargets { ShadowScaleXZ = 1f, ShadowAlpha = 1f };
+            ComposePose(in input, in restTargets);
+            ClearPendingInputs();
+            _initialized = true;
+            return;
+        }
+
+        _rootYaw.StepAngle(YawOf(input.Player.FacingXZ), RootYawTuning.Omega, RootYawTuning.Zeta, simDt);
 
         var targets = new ChannelTargets
         {
@@ -290,7 +304,8 @@ public sealed partial class PlayerDynamicsSolver
         _rootYaw.Reset(YawOf(input.Player.FacingXZ));
 
         _pose = PlayerPose.Neutral;
-        _pose.RootPosition = input.VisualPosition;
+        _pose.RootPosition = new Vector3(input.VisualPosition.X, 0f, input.VisualPosition.Z);
+        _pose.BodyOffset = new Vector3(0f, input.VisualPosition.Y, 0f);
         _pose.RootYaw = _rootYaw.Value;
         _velocity = input.Player.Velocity;
         _previousVelocity = input.Player.Velocity;
@@ -304,6 +319,13 @@ public sealed partial class PlayerDynamicsSolver
         _pendingSave = false;
         _pendingParry = false;
         _pendingKeeperEvent = KeeperVisualEvent.None;
+
+        // The stages own their one-shot timers and edge detectors, so a teleport must clear them too. Doing it
+        // here (one detection, one reset path) is why no stage re-implements its own teleport heuristic.
+        ResetLocomotionState(in input);
+        ResetActionState(in input);
+        ResetGoalkeeperState(in input);
+        ResetUpperBodyState(in input);
         _initialized = true;
     }
 
@@ -535,10 +557,13 @@ public sealed partial class PlayerDynamicsSolver
             SpringMath.Clamp(_torsoRoll.Value * intensity, -1.0f, 1.0f),
             SpringMath.Clamp(_torsoYaw.Value * intensity, -1.4f, 1.4f),
             SpringMath.Clamp(_torsoPitch.Value * intensity, -1.2f, 1.2f));
+        // Head: yaw is NOT scaled (it mirrors the simulation's own scan, so the rendered shoulder-check must
+        // match the decided one); pitch/roll are presentation-only and follow the global dial like every other
+        // body channel.
         _pose.HeadRotation = new Vector3(
             SpringMath.Clamp(_headRoll.Value * intensity, -0.8f, 0.8f),
             SpringMath.Clamp(_headYaw.Value, -1.3f, 1.3f),
-            SpringMath.Clamp(_headPitch.Value, -0.9f, 0.9f));
+            SpringMath.Clamp(_headPitch.Value * intensity, -0.9f, 0.9f));
 
         // Feet: analytic stride swing from the locomotion stage plus the sprung kick arc on the active foot.
         // MotionIntensity is applied here, once, to the whole foot output (see the scaling contract above).
@@ -557,10 +582,14 @@ public sealed partial class PlayerDynamicsSolver
             SpringMath.Clamp((t.RightFootLift + kickRightLift) * intensity, -0.08f, 0.80f),
             0f);
 
-        // Hands: symmetric reach offset (forward, up, spread) mirrored across the torso centre line.
+        // Hands: the symmetric reach (forward, up, spread) is mirrored across the torso centre line, while the
+        // analytic swing offsets let the two arms work in anti-phase during a run. A single mirrored reach alone
+        // would move both arms together (a ski-jumper gait) instead of the left/right running swing.
         Vector3 reach = _handReach.Value * intensity;
-        _pose.LeftHandLocal = RigDimensions.LeftHandRest + new Vector3(reach.X, reach.Y, -reach.Z);
-        _pose.RightHandLocal = RigDimensions.RightHandRest + new Vector3(reach.X, reach.Y, reach.Z);
+        _pose.LeftHandLocal = RigDimensions.LeftHandRest + new Vector3(
+            reach.X + t.LeftHandSwing * intensity, reach.Y, -reach.Z);
+        _pose.RightHandLocal = RigDimensions.RightHandRest + new Vector3(
+            reach.X + t.RightHandSwing * intensity, reach.Y, reach.Z);
 
         // Ground shadow: the only readable height cue from the broadcast camera. It shrinks and fades with
         // the body's height above the turf — jump height, crouch depth and dive arc all feed it.
@@ -618,6 +647,8 @@ public sealed partial class PlayerDynamicsSolver
         public float KickFootLift;   // metres along local +Y applied to the active foot
         public float KickFootSide;   // -1 = left foot, +1 = right foot, 0 = no kick
         public Vector3 HandReach;    // torso-local offset: X forward, Y up, Z spread (mirrored)
+        public float LeftHandSwing;  // metres along local +X, per-hand (anti-phase running swing)
+        public float RightHandSwing; // metres along local +X, per-hand
         public float LeftFootSwing;  // metres along local +X
         public float RightFootSwing;
         public float LeftFootLift;   // metres along local +Y

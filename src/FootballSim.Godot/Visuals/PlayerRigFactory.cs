@@ -192,8 +192,8 @@ public sealed class PlayerRigFactory
         Node3D bodyPivot = new() { Name = "BodyPivot" };
         Node3D lowerPivot = new() { Name = "LowerPivot" };
 
-        // Owner decision 2026-11-26: the tall leg/shorts cylinder reads as trousers and is removed from the
-        // default silhouette. It stays a style toggle so the old look is one flag away.
+        // The leg cylinder is part of the default silhouette (owner feedback: the original rigid look is kept);
+        // it only disappears when a style deliberately selects the no-legs look.
         if (style.ShowLegs)
         {
             MeshInstance3D shortsMesh = new()

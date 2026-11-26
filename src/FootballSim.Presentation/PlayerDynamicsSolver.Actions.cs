@@ -40,8 +40,6 @@ public sealed partial class PlayerDynamicsSolver
     private const float BumpAccelerationThreshold = 28f;
 
     // --- Action-stage private state (domain-prefixed: partial files share one class) ------------
-    private Vector3 _actionLastVisualPosition;
-    private bool _actionGuardReady;
     private bool _actionWasJumping;
     private bool _actionWasAirborne;
     private float _actionLastAirborneVelocityY;
@@ -75,10 +73,6 @@ public sealed partial class PlayerDynamicsSolver
     /// </summary>
     private void ApplyActions(in PlayerDynamicsInput input, ref ChannelTargets targets)
     {
-        // A teleport already snapped the whole spring bank. Replaying a jump/kick that was in progress
-        // across the snap would fire an impulse on top of the clean rest pose, so the frame is skipped.
-        if (ResetsOnTeleport(in input)) return;
-
         ApplyJumpHeaderAndLanding(in input, ref targets);
         ApplyKickStage(in input, ref targets);
         ApplyTackle(in input, ref targets);
@@ -438,18 +432,21 @@ public sealed partial class PlayerDynamicsSolver
 
         if (_actionTackleTimer <= 0f) return;
 
-        // Hold the lunge, then ease the last 150 ms out so the springs push the player back upright.
+        // Hold the lunge, then ease the last 150 ms out so the springs push the player back upright. The pose is
+        // deliberately shallow: from the broadcast camera a steep forward pitch reads as falling flat on the
+        // pitch (owner feedback 2026-11-26), so the tackle is sold by the hip drop, the plant and the twist
+        // rather than by a big body pitch.
         float hold = _actionTackleTimer > 0.15f ? 1f : _actionTackleTimer / 0.15f;
-        targets.LeanPitch -= SpringMath.DegToRad(30f) * hold;
-        targets.TorsoPitch -= SpringMath.DegToRad(14f) * hold;
-        targets.BodyOffsetY -= 0.24f * hold;
-        targets.BodyOffsetForward += 0.25f * hold;
-        targets.TorsoYaw += SpringMath.DegToRad(25f) * _actionTackleTwistSign * hold;
-        targets.LeanRoll += SpringMath.DegToRad(14f) * _actionTackleBankSign * hold;
+        targets.LeanPitch -= SpringMath.DegToRad(12f) * hold;
+        targets.TorsoPitch -= SpringMath.DegToRad(6f) * hold;
+        targets.BodyOffsetY -= 0.14f * hold;
+        targets.BodyOffsetForward += 0.12f * hold;
+        targets.TorsoYaw += SpringMath.DegToRad(12f) * _actionTackleTwistSign * hold;
+        targets.LeanRoll += SpringMath.DegToRad(7f) * _actionTackleBankSign * hold;
         targets.KickFootSide = _actionTackleTwistSign;
-        targets.KickFootSwing += 0.38f * hold;
-        targets.KickFootLift += 0.10f * hold;
-        targets.HandReach += new Vector3(0.04f, 0.02f, 0.10f) * hold;
+        targets.KickFootSwing += 0.22f * hold;
+        targets.KickFootLift += 0.06f * hold;
+        targets.HandReach += new Vector3(0.03f, 0.01f, 0.08f) * hold;
 
         _actionTackleTimer = MathF.Max(0f, _actionTackleTimer - _dt);
     }
@@ -467,17 +464,17 @@ public sealed partial class PlayerDynamicsSolver
         }
 
         _actionTackleTimer = TackleHoldSeconds;
-        // Peak amplitudes: the tackle already holds a sustained low, steep pose, so the contact only adds a
-        // snap on top of it instead of doubling the pose angles.
-        SnapLeanPitch(SpringMath.DegToRad(-8f));
-        SnapTorsoPitch(SpringMath.DegToRad(-5f));
-        SnapTorsoYaw(SpringMath.DegToRad(10f) * _actionTackleTwistSign);
-        SnapTorsoRoll(SpringMath.DegToRad(8f) * _actionTackleBankSign);
-        SnapSquash(-0.08f);
-        SnapBodyOffsetY(-0.05f);
-        SnapBodyOffsetXZ(0.08f, 0f);
-        SnapKickFoot(0.30f, 0.15f);
-        SnapHandReach(new Vector3(0.01f, 0.01f, 0.03f));
+        // Peak amplitudes: the tackle already holds a sustained low pose, so the contact only adds a snap on top
+        // of it instead of doubling the pose angles (and the pitch stays shallow for broadcast readability).
+        SnapLeanPitch(SpringMath.DegToRad(-4f));
+        SnapTorsoPitch(SpringMath.DegToRad(-3f));
+        SnapTorsoYaw(SpringMath.DegToRad(6f) * _actionTackleTwistSign);
+        SnapTorsoRoll(SpringMath.DegToRad(4f) * _actionTackleBankSign);
+        SnapSquash(-0.05f);
+        SnapBodyOffsetY(-0.03f);
+        SnapBodyOffsetXZ(0.05f, 0f);
+        SnapKickFoot(0.18f, 0.08f);
+        SnapHandReach(new Vector3(0.01f, 0.01f, 0.02f));
     }
 
     /// <summary>
@@ -503,11 +500,11 @@ public sealed partial class PlayerDynamicsSolver
         {
             float fade = SpringMath.Clamp01(_actionStumbleTimer / StumbleSeconds);
             float age = StumbleSeconds - _actionStumbleTimer;
-            targets.TorsoPitch -= SpringMath.DegToRad(5f) * _actionStumbleAwayForward * fade;
-            targets.TorsoRoll += SpringMath.DegToRad(6f) * _actionStumbleAwayRight * fade;
-            targets.TorsoRoll += SpringMath.DegToRad(3f) * MathF.Sin(age * 16f) * fade;
-            targets.BodyOffsetForward += 0.05f * _actionStumbleAwayForward * fade;
-            targets.BodyOffsetRight += 0.05f * _actionStumbleAwayRight * fade;
+            targets.TorsoPitch -= SpringMath.DegToRad(3f) * _actionStumbleAwayForward * fade;
+            targets.TorsoRoll += SpringMath.DegToRad(3f) * _actionStumbleAwayRight * fade;
+            targets.TorsoRoll += SpringMath.DegToRad(2f) * MathF.Sin(age * 16f) * fade;
+            targets.BodyOffsetForward += 0.03f * _actionStumbleAwayForward * fade;
+            targets.BodyOffsetRight += 0.03f * _actionStumbleAwayRight * fade;
             _actionStumbleTimer = MathF.Max(0f, _actionStumbleTimer - _dt);
         }
 
@@ -540,17 +537,22 @@ public sealed partial class PlayerDynamicsSolver
         _actionStumbleAwayForward = awayForward;
         _actionStumbleAwayRight = awayRight;
 
-        SnapTorsoPitch(SpringMath.DegToRad(26f) * -awayForward);
-        SnapLeanPitch(SpringMath.DegToRad(14f) * -awayForward);
-        SnapTorsoRoll(SpringMath.DegToRad(22f) * awayRight);
-        SnapBodyOffsetXZ(awayForward * 0.10f, awayRight * 0.10f);
-        SnapBodyOffsetY(-0.08f);
+        // Peak amplitudes are modest for the same reason as the tackle: from the broadcast camera a large
+        // forward/backward pitch reads as going to ground rather than losing balance.
+        SnapTorsoPitch(SpringMath.DegToRad(12f) * -awayForward);
+        SnapLeanPitch(SpringMath.DegToRad(6f) * -awayForward);
+        SnapTorsoRoll(SpringMath.DegToRad(10f) * awayRight);
+        SnapBodyOffsetXZ(awayForward * 0.06f, awayRight * 0.06f);
+        SnapBodyOffsetY(-0.05f);
     }
 
     /// <summary>
     /// Plan 5.6 shoulder bump: only a real capsule separation can produce this much lateral acceleration,
     /// so a spike while an opponent is inside the pair radius is a collision. The acceleration direction is
     /// the separation direction, so it doubles as the jolt direction; a short cooldown keeps it one-to-one.
+    ///
+    /// Both axes use one physical convention — the torso whips AGAINST the push (inertia lags the new velocity),
+    /// so a push to the player's right rolls him left and a push forward pitches him back.
     /// </summary>
     private void TryBodyBump(in PlayerDynamicsInput input)
     {
@@ -566,7 +568,7 @@ public sealed partial class PlayerDynamicsSolver
         float right = _accelerationRight * inverseMagnitude;
 
         _actionBumpCooldown = BumpCooldownSeconds;
-        SnapTorsoRoll(SpringMath.DegToRad(18f) * right);
+        SnapTorsoRoll(SpringMath.DegToRad(-18f) * right);
         SnapTorsoPitch(SpringMath.DegToRad(12f) * forward);
         SnapBodyOffsetXZ(0.06f * forward, 0.06f * right);
     }
@@ -579,31 +581,31 @@ public sealed partial class PlayerDynamicsSolver
         player.Attributes.PreferredFoot == Footedness.Left ? -1 : 1;
 
     /// <summary>
-    /// Clears the action state when the pose was snapped by a teleport. The core already zeroed the spring
-    /// bank; this prevents a stale in-flight jump/tackle/kick from firing an impulse on top of the reset.
+    /// Clears every action-stage timer and edge detector. Called from the core's single teleport/reset path so a
+    /// kick, jump or tackle in flight can never be replayed across a kickoff/restart snap.
     /// </summary>
-    private bool ResetsOnTeleport(in PlayerDynamicsInput input)
+    private void ResetActionState(in PlayerDynamicsInput input)
     {
-        bool firstFrame = !_actionGuardReady;
-        float snapDistance = _settings.TeleportSnapDistance;
-        bool teleported = Vector3.DistanceSquared(input.VisualPosition, _actionLastVisualPosition)
-                          > snapDistance * snapDistance;
-        _actionLastVisualPosition = input.VisualPosition;
-        _actionGuardReady = true;
-        if (!firstFrame && !teleported) return false;
-
         _actionWasJumping = false;
         _actionWasAirborne = false;
         _actionLastAirborneVelocityY = 0f;
         _actionHeaderTimer = 0f;
         _actionKickTimer = 0f;
+        _actionKickDuration = 1f;
         _actionKickSign = 1;
+        _actionKickPitch = 0f;
+        _actionKickYaw = 0f;
+        _actionKickBank = 0f;
+        _actionKickFootSwing = 0f;
+        _actionKickFootLift = 0f;
+        _actionKickRise = 0f;
         _actionWindUp = 0f;
         _actionWasTackling = false;
         _actionTackleTimer = 0f;
         _actionStumbleTimer = 0f;
         _actionStumbleCooldown = 0f;
+        _actionStumbleAwayForward = -1f;
+        _actionStumbleAwayRight = 0f;
         _actionBumpCooldown = 0f;
-        return true;
     }
 }

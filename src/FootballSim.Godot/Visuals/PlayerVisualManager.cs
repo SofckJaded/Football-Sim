@@ -4,6 +4,7 @@ using Godot;
 using FootballSim;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
 using FootballSim.Presentation;
@@ -102,6 +103,10 @@ public sealed class PlayerVisualManager
             GoalkeeperState keeperState = GoalkeeperState.Positioning;
             if (engine.GetController(player.Id) is GoalkeeperController keeper) keeperState = keeper.State;
 
+            GoalkeeperController? keeperController = engine.GetController(player.Id) as GoalkeeperController;
+            bool humanControlActive = engine.LockedHumanController is { IsSpectatorMode: false };
+            HumanInputController? human = humanControlActive ? engine.LockedHumanController : null;
+
             var input = new PlayerDynamicsInput
             {
                 Player = player,
@@ -109,10 +114,9 @@ public sealed class PlayerVisualManager
                 BallPosition = ball.Position,
                 BallVelocity = ball.Velocity,
                 Scan = scan,
-                GoalkeeperState = keeperState,
-                IsHumanControlled = player.Id == engine.LockedHumanController?.LockedPlayerId,
-                ChargedPower01 = engine.LockedHumanController is { IsSpectatorMode: false } human &&
-                                 human.LockedPlayerId == player.Id
+                GoalkeeperState = keeperController?.State ?? GoalkeeperState.Positioning,
+                IsHumanControlled = human is not null && human.LockedPlayerId == player.Id,
+                ChargedPower01 = human is not null && human.LockedPlayerId == player.Id
                     ? human.ChargedPower01
                     : 0f,
                 Phase = engine.Rules.Phase,
@@ -237,7 +241,7 @@ public sealed class PlayerVisualManager
             if (contact.Tick <= previouslyConsumed) break;
 
             if (_entries.TryGetValue(contact.PlayerId, out PlayerEntry? entry))
-                entry.Solver.NotifyContact(contact);
+                FeedContact(entry, in contact);
             if (contact.Tick > highestConsumed) highestConsumed = contact.Tick;
         }
 
@@ -260,8 +264,20 @@ public sealed class PlayerVisualManager
         {
             BallContactEvent contact = contacts[index];
             if (_entries.TryGetValue(contact.PlayerId, out PlayerEntry? entry))
-                entry.Solver.NotifyContact(contact);
+                FeedContact(entry, in contact);
         }
+    }
+
+    /// <summary>
+    /// Feeds one contact into its player's solver. A keeper touch additionally clears the last-seen execution
+    /// diagnostic: two consecutive identical touches (a second claim/punch, a catch right after another) produce
+    /// the same diagnostic string, and the rising-edge check in <see cref="NoteKeeperDiagnostic"/> would silently
+    /// swallow the second visual reaction. The contact itself is the evidence that a new touch happened.
+    /// </summary>
+    private static void FeedContact(PlayerEntry entry, in BallContactEvent contact)
+    {
+        entry.Solver.NotifyContact(contact);
+        if (contact.Kind == BallContactKind.Save) entry.LastDiagnostic = string.Empty;
     }
 
     /// <summary>

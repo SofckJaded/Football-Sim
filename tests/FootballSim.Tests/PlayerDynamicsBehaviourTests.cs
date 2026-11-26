@@ -72,12 +72,12 @@ public sealed class PlayerDynamicsBehaviourTests
         var fast = new Rig();
         fast.Player.FacingXZ = new Vector2(1f, 0f);
         fast.Player.Velocity = new Vector3(4f, 0f, 0f);
-        fast.Run(61, Tick * 2f); // 60 productive steps of 1/30 s
+        fast.Run(62, Tick * 2f); // 60 productive strides of 1/30 s (2 frames are reset/seed frames)
 
         var slow = new Rig();
         slow.Player.FacingXZ = new Vector2(1f, 0f);
         slow.Player.Velocity = new Vector3(4f, 0f, 0f);
-        slow.Run(121, Tick); // 120 productive steps of 1/60 s
+        slow.Run(122, Tick); // 120 productive strides of 1/60 s
 
         float fastFoot = fast.Solver.Pose.LeftFootLocal.X;
         float slowFoot = slow.Solver.Pose.LeftFootLocal.X;
@@ -223,18 +223,22 @@ public sealed class PlayerDynamicsBehaviourTests
     }
 
     [Fact]
-    public void TackleRequestDropsTheHipsAndLeansTheBodyForward()
+    public void TackleRequestDropsTheHipsAndLeansModestly()
     {
         var rig = new Rig();
         rig.Run(10);
         rig.Player.LastCommand = Command(tackle: true);
         rig.Run(15);
 
-        Assert.True(rig.Solver.BodyPitch < -0.20f,
-            $"a tackle should lean the body steeply forward (plan 5.6: -28..-38 deg), pitch was " +
-            $"{SpringMath.RadToDeg(rig.Solver.BodyPitch):F1} deg");
+        // Owner feedback 2026-11-26: the steep tackle pitch read as falling flat from the broadcast camera, so
+        // the lunge is now sold by hips/plant/twist. Both bounds are gates: it must read as a tackle, and it must
+        // never approach horizontal again.
+        Assert.True(rig.Solver.BodyPitch < -0.08f,
+            $"a tackle should still lean forward, pitch was {SpringMath.RadToDeg(rig.Solver.BodyPitch):F1} deg");
+        Assert.True(rig.Solver.BodyPitch > -0.35f,
+            $"the tackle pitch must stay shallow, pitch was {SpringMath.RadToDeg(rig.Solver.BodyPitch):F1} deg");
         Assert.True(rig.Solver.BodyOffsetY < -0.08f,
-            $"a tackle should drop the hips (plan 5.6: -0.22..-0.30 m), offset was {rig.Solver.BodyOffsetY:F3} m");
+            $"a tackle should drop the hips, offset was {rig.Solver.BodyOffsetY:F3} m");
     }
 
     [Fact]
@@ -371,6 +375,53 @@ public sealed class PlayerDynamicsBehaviourTests
             $"the keeper must get up after the dive, roll was {rig.Solver.DiveRoll:F2} rad");
     }
 
+    [Fact]
+    public void KeeperGetUpKeepsTheDiveRotationEngaged()
+    {
+        var rig = new Rig(goalkeeper: true);
+        rig.Run(10);
+        StartDive(rig, 1f, 1.0f);
+        rig.Run(40);
+        float rollAtDiveEnd = MathF.Abs(rig.Solver.Pose.BodyRotation.X);
+        Assert.True(rollAtDiveEnd > 0.6f);
+
+        // The get-up is a 0.45-0.55 s roll back to the feet. 0.1 s in, the body must still be mostly rolled:
+        // dropping the dive blend the instant IsDiving falls would lerp the keeper upright in ~0.15 s while
+        // the height/torso get-up curve is still running.
+        rig.Player.IsDiving = false;
+        rig.Player.DribbleTouchTimer = 0f;
+        rig.Run(6);
+        float rollDuringGetUp = MathF.Abs(rig.Solver.Pose.BodyRotation.X);
+        Assert.True(rollDuringGetUp > rollAtDiveEnd * 0.6f,
+            $"get-up must keep the dive rotation engaged, roll went {rollAtDiveEnd:F2} -> {rollDuringGetUp:F2} rad");
+    }
+
+    [Fact]
+    public void TeleportWhileDivingDoesNotReplayTheGetUp()
+    {
+        var rig = new Rig(goalkeeper: true);
+        rig.Run(10);
+        StartDive(rig, 1f, 1.0f);
+        rig.Run(25);
+        Assert.True(MathF.Abs(rig.Solver.Pose.BodyRotation.X) > 0.3f);
+
+        // Kickoff/restart placement while the authoritative dive flag is still set: a > 2.5 m snap.
+        var restartSpot = new Vector3(20f, 0f, 5f);
+        rig.VisualPosition = restartSpot;
+        rig.Player.Position = restartSpot;
+        rig.Player.PreviousPosition = restartSpot;
+        rig.Player.IsDiving = false;
+        rig.Player.Velocity = Vector3.Zero;
+        rig.Player.DribbleTouchTimer = 0f;
+        rig.Run(1); // the teleport frame renders one clean rest pose
+        rig.Run(8);
+
+        Assert.True(MathF.Abs(rig.Solver.Pose.BodyRotation.X) < 0.10f,
+            "a reset while diving must not replay the get-up roll");
+        Assert.True(rig.Solver.BodyOffsetY > -0.20f,
+            $"the keeper must stand in a normal stance, not mid get-up ({rig.Solver.BodyOffsetY:F3} m)");
+    }
+
     // =========================================================================================
     // P5 head scanning
     // =========================================================================================
@@ -386,6 +437,88 @@ public sealed class PlayerDynamicsBehaviourTests
 
         float expected = -SpringMath.DegToRad(35f);
         Assert.InRange(rig.Solver.Pose.HeadRotation.Y, expected - 0.05f, expected + 0.05f);
+    }
+
+    // =========================================================================================
+    // Review-regression gates (code review 2026-11-26)
+    // =========================================================================================
+
+    [Fact]
+    public void ArmsSwingInAntiPhaseWhileRunning()
+    {
+        var rig = new Rig();
+        rig.Player.Velocity = new Vector3(4f, 0f, 0f);
+        rig.Player.FacingXZ = new Vector2(1f, 0f);
+        rig.Run(60);
+
+        float leftRest = RigDimensions.LeftHandRest.X;
+        float rightRest = RigDimensions.RightHandRest.X;
+        float correlation = 0f;
+        float peakSwing = 0f;
+        for (int i = 0; i < 60; i++)
+        {
+            rig.Run(1);
+            float left = rig.Solver.Pose.LeftHandLocal.X - leftRest;
+            float right = rig.Solver.Pose.RightHandLocal.X - rightRest;
+            correlation += left * right;
+            peakSwing = MathF.Max(peakSwing, MathF.Abs(left));
+        }
+
+        Assert.True(peakSwing > 0.01f, $"the arms must actually swing, peak swing was {peakSwing:F3} m");
+        Assert.True(correlation < 0f,
+            "left and right arms must swing in anti-phase (a mirrored HandReach moves both together)");
+    }
+
+    [Fact]
+    public void AirborneLookUpComposesWithTheBallGaze()
+    {
+        var rig = new Rig();
+        rig.Run(10);
+        rig.Player.IsJumping = true;
+        rig.Player.Position = new Vector3(0f, 0.5f, 0f);
+        rig.VisualPosition = rig.Player.Position;
+        // A high ball in front: the airborne look-up (+8 deg) and the tracked elevation must ADD, not replace.
+        rig.BallPosition = new Vector3(2f, 3.0f, 0f);
+        rig.Run(20);
+
+        Assert.True(rig.Solver.Pose.HeadRotation.Z > 0.36f,
+            $"airborne look-up and ball gaze must compose, head pitch was " +
+            $"{SpringMath.RadToDeg(rig.Solver.Pose.HeadRotation.Z):F1} deg");
+    }
+
+    [Fact]
+    public void HeaderNodScalesWithMotionIntensity()
+    {
+        float NodMagnitude(float intensity)
+        {
+            var rig = new Rig(intensity: intensity, enableGaze: false);
+            rig.Run(10);
+            rig.Player.LastCommand = Command(kick: KickIntentType.Header, aim: new Vector3(1f, 0f, 0f));
+            rig.Solver.NotifyContact(new BallContactEvent(1, BallContactKind.Kick, rig.Player.Id,
+                rig.Player.Team, new Vector3(1f, 1.8f, 0f)) { Intent = KickIntentType.Header });
+            rig.Run(3);
+            return MathF.Abs(rig.Solver.Pose.HeadRotation.Z);
+        }
+
+        float normal = NodMagnitude(1f);
+        float exaggerated = NodMagnitude(2f);
+        Assert.True(exaggerated > normal * 1.5f,
+            $"MotionIntensity must scale the header nod: 1.0 gave {normal:F3} rad, 2.0 gave {exaggerated:F3} rad");
+    }
+
+    [Fact]
+    public void ShoulderBumpRollsAgainstThePush()
+    {
+        var rig = new Rig();
+        rig.Run(10);
+        rig.NearestOpponentDistance = 0.5f;
+        rig.NearestOpponentDirectionXZ = new Vector2(0f, 1f); // opponent to the player's right
+        rig.Player.Velocity = new Vector3(0f, 0f, 4f); // shoved to the right in one tick
+        rig.Run(2);
+
+        Assert.True(rig.Solver.Pose.TorsoRotation.X < -0.02f,
+            $"a shove to the right must roll the torso left (whiplash against the push), roll was " +
+            $"{SpringMath.RadToDeg(rig.Solver.Pose.TorsoRotation.X):F1} deg");
     }
 
     // =========================================================================================
@@ -481,11 +614,14 @@ public sealed class PlayerDynamicsBehaviourTests
         public readonly FootballerState Player;
         public readonly PlayerDynamicsSolver Solver;
 
-        public Rig(bool goalkeeper = false, float intensity = 1f)
+        public Rig(bool goalkeeper = false, float intensity = 1f, bool enableGaze = true)
         {
             Player = CreatePlayer(goalkeeper);
-            Solver = new PlayerDynamicsSolver(Player.Id, goalkeeper,
-                new PlayerDynamicsSettings { MotionIntensity = intensity });
+            Solver = new PlayerDynamicsSolver(Player.Id, goalkeeper, new PlayerDynamicsSettings
+            {
+                MotionIntensity = intensity,
+                EnableGaze = enableGaze
+            });
         }
 
         public Vector3 VisualPosition;

@@ -223,12 +223,6 @@ public sealed partial class PlayerDynamicsSolver
     private bool _locomotionPhasesInitialized;
 
     /// <summary>
-    /// Last rendered position this stage saw. The core's teleport guard runs before the stage pipeline and
-    /// does not hand the fact down, so the stage recognises the same frame by the same distance rule.
-    /// </summary>
-    private Vector3 _lastLocomotionPosition;
-
-    /// <summary>
     /// Locomotion stage entry point: derives the shared gait scalars once per frame, then lets each
     /// behaviour add its own contribution to the same <see cref="ChannelTargets"/>.
     ///
@@ -237,24 +231,13 @@ public sealed partial class PlayerDynamicsSolver
     /// </summary>
     private void AccumulateLocomotion(in PlayerDynamicsInput input, ref ChannelTargets targets)
     {
-        // The core snaps the pose to rest and zeroes every spring on the first solved frame and on a
-        // teleport (kickoff/restart placement, training reset). Stay neutral for that one frame: deriving a
-        // breathing bob or a braking crouch from the position/velocity discontinuity would animate the
-        // snap itself, and the free-running phases must be re-seeded because no distance was really run.
+        // The first frame after a (re)start or a teleport uses the moment to re-seed the free-running phases
+        // from this player's deterministic offset: no distance was really covered, so animating a breath or a
+        // footfall from the old state would animate the snap itself.
         if (!_locomotionPhasesInitialized)
         {
             SeedLocomotionPhases();
             _locomotionPhasesInitialized = true;
-            _lastLocomotionPosition = input.VisualPosition;
-            return;
-        }
-
-        bool teleported = Vector3.Distance(input.VisualPosition, _lastLocomotionPosition) >
-                          _settings.TeleportSnapDistance;
-        _lastLocomotionPosition = input.VisualPosition;
-        if (teleported)
-        {
-            SeedLocomotionPhases();
             return;
         }
 
@@ -278,6 +261,19 @@ public sealed partial class PlayerDynamicsSolver
         AddJockey(_jockeyBlend, ref targets);
         AddDribbleRhythm(in input, ref targets);
         AddShieldStance(shielding, ref targets);
+    }
+
+    /// <summary>
+    /// Clears this stage's free-running state on a teleport/reset. Called by the core's single
+    /// <c>ResetDynamics</c> path; the stage must not run its own position heuristic.
+    /// </summary>
+    private void ResetLocomotionState(in PlayerDynamicsInput input)
+    {
+        _locomotionPhasesInitialized = false;
+        _stridePhase = 0f;
+        _breathPhase = 0f;
+        _jockeyBlend = 0f;
+        _strideContactBlend = 1f;
     }
 
     /// <summary>
@@ -383,8 +379,8 @@ public sealed partial class PlayerDynamicsSolver
     /// length grows from a walk to a sprint, the bounce is |sin| (one dip per footfall), and the waist
     /// counter-twists against the arms while the hips sway.
     ///
-    /// The foot channels are the one pose channel the core does not scale by MotionIntensity (it clamps
-    /// them instead), so the global dial is applied to them here explicitly.
+    /// Everything here is authored in physical units: the core scales every pose channel, feet and hands
+    /// included, by <c>MotionIntensity</c> exactly once at compose time.
     /// </summary>
     private void AddStrideCycle(in PlayerDynamicsInput input, float fatigue01, float jockeyBlend,
         bool shielding, ref ChannelTargets targets)
@@ -444,12 +440,13 @@ public sealed partial class PlayerDynamicsSolver
         targets.LeftFootLift += MathF.Max(0f, sinPhase) * footLift;
         targets.RightFootLift += MathF.Max(0f, -sinPhase) * footLift;
 
-        // Hands: the HandReach channel is mirrored across the centre line, so it can only swing both arms
-        // together. The left boot's phase is inverted so the upper body counter-swings the leading foot
-        // instead of marching with it.
+        // Hands: the arms swing in anti-phase with each other and opposite the same-side boot, which is why they
+        // use the per-hand swing channels instead of the mirrored HandReach (that would move both arms together,
+        // like a ski jumper).
         float handSwing = SpringMath.Lerp(
             WalkHandSwingMeters, SprintHandSwingMeters, sprint01) * amplitude;
-        targets.HandReach += new Vector3(-sinPhase * handSwing, 0f, 0f);
+        targets.LeftHandSwing -= sinPhase * handSwing;
+        targets.RightHandSwing += sinPhase * handSwing;
     }
 
     /// <summary>
