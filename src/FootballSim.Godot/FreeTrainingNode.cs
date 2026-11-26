@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using Godot;
 using FootballSim.Core;
+using FootballSim.GodotClient.Visuals;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
+using FootballSim.Presentation;
 using FootballSim.Training;
 
 namespace FootballSim.GodotClient;
@@ -17,8 +19,15 @@ public partial class FreeTrainingNode : Node3D
 {
     [Export(PropertyHint.Range, "18,65,0.5")] public float CameraZoomHeight { get; set; } = BroadcastCamera.DefaultZoomHeight;
 
+    /// <summary>
+    /// Presentation-only dial for the articulated model dynamics (1.0 = tuned default). Training exposes the same
+    /// dial as the match so a drill can be reviewed at a different motion weight without touching the match scene.
+    /// </summary>
+    [Export(PropertyHint.Range, "0,2.5,0.05")] public float MotionIntensity { get; set; } = 1.0f;
+
     private TrainingSession _session = null!;
-    private readonly Dictionary<int, Node3D> _playerNodes = new();
+    /// <summary>Owns every articulated player rig and its presentation-only pose solver (shared with the match).</summary>
+    private PlayerVisualManager _visuals = null!;
     private Node3D _ballNode = null!;
     private MeshInstance3D _ballShadow = null!;
     private Camera3D _camera = null!;
@@ -42,7 +51,7 @@ public partial class FreeTrainingNode : Node3D
         BuildPlayerAndBallVisuals();
         BuildCamera();
 
-        SyncVisuals(1f, 0f);
+        SyncVisuals(1f, 0f, 0f);
         // Start framed on the trainee instead of gliding in from the centre circle.
         BroadcastCamera.SnapTo(
             _camera,
@@ -78,7 +87,10 @@ public partial class FreeTrainingNode : Node3D
         for (int i = 0; i < steps; i++)
             _session.Step(SimConstants.FixedDeltaTime);
 
-        SyncVisuals(_clock.Alpha, frameDelta);
+        // Simulated time, not wall clock: this freezes cleanly if no tick ran and advances exactly with
+        // the ticks that did (same contract as the match's debug pause / fast-forward).
+        float simulatedDelta = steps * SimConstants.FixedDeltaTime;
+        SyncVisuals(_clock.Alpha, frameDelta, simulatedDelta);
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -103,78 +115,26 @@ public partial class FreeTrainingNode : Node3D
 
     private void BuildPlayerAndBallVisuals()
     {
-        var homeJerseyMat = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.38f, 0.90f) };
-        var homeGkMat = new StandardMaterial3D { AlbedoColor = new Color(0.15f, 0.72f, 0.35f) };
-        var awayJerseyMat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.16f, 0.16f) };
-        var awayGkMat = new StandardMaterial3D { AlbedoColor = new Color(0.92f, 0.55f, 0.12f) };
-        var shortsWhiteMat = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.95f, 0.95f) };
-        var shortsDarkMat = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.15f, 0.18f) };
-        var skinMat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.72f, 0.58f) };
-        var humanRingMat = new StandardMaterial3D
+        // Phase P0: the same articulated rig factory as the match, so training and match visuals can never
+        // drift apart. Rig construction is presentation-only; the solver owns all motion.
+        _visuals = new PlayerVisualManager(new PlayerDynamicsSettings { MotionIntensity = MotionIntensity });
+        foreach (FootballerState player in _session.Players)
+            _visuals.Register(this, player, player.Id == TrainingSession.HumanPlayerId);
+
+        // Aim pointer shows the resolved aim direction (movement, or cursor without a gamepad), not
+        // the body facing (audit F16).
+        var aimPivot = new Node3D();
+        var aimRingMat = new StandardMaterial3D
         {
             AlbedoColor = new Color(0.0f, 0.95f, 1.0f),
             EmissionEnabled = true,
             Emission = new Color(0.0f, 0.85f, 1.0f),
             EmissionEnergyMultiplier = 1.5f
         };
-
-        foreach (FootballerState player in _session.Players)
-        {
-            var root = new Node3D();
-
-            Material jerseyMat = player.Team == TeamId.Home
-                ? (player.Role == TacticalRole.Goalkeeper ? homeGkMat : homeJerseyMat)
-                : (player.Role == TacticalRole.Goalkeeper ? awayGkMat : awayJerseyMat);
-
-            root.AddChild(new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 0.28f, BottomRadius = 0.22f, Height = 0.72f },
-                Position = new Vector3(0f, 0.36f, 0f),
-                MaterialOverride = player.Team == TeamId.Home ? shortsWhiteMat : shortsDarkMat
-            });
-
-            root.AddChild(new MeshInstance3D
-            {
-                Mesh = new CapsuleMesh { Radius = 0.32f, Height = 0.92f },
-                Position = new Vector3(0f, 1.05f, 0f),
-                MaterialOverride = jerseyMat
-            });
-
-            root.AddChild(new MeshInstance3D
-            {
-                Mesh = new SphereMesh { Radius = 0.20f, Height = 0.40f },
-                Position = new Vector3(0f, 1.68f, 0f),
-                MaterialOverride = skinMat
-            });
-
-            root.AddChild(new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(0.45f, 0.04f, 0.14f) },
-                Position = new Vector3(0.42f, 0.04f, 0f),
-                MaterialOverride = shortsWhiteMat
-            });
-
-            if (player.Id == TrainingSession.HumanPlayerId)
-            {
-                root.AddChild(new MeshInstance3D
-                {
-                    Mesh = new CylinderMesh { TopRadius = 0.68f, BottomRadius = 0.68f, Height = 0.03f },
-                    Position = new Vector3(0f, 0.02f, 0f),
-                    MaterialOverride = humanRingMat
-                });
-            }
-
-            AddChild(root);
-            _playerNodes[player.Id] = root;
-        }
-
-        // Aim pointer shows the resolved aim direction (movement, or cursor without a gamepad), not
-        // the body facing (audit F16).
-        var aimPivot = new Node3D();
         var aimBar = new MeshInstance3D
         {
             Mesh = new BoxMesh { Size = new Vector3(1.35f, 0.05f, 0.18f) },
-            MaterialOverride = humanRingMat
+            MaterialOverride = aimRingMat
         };
         aimPivot.AddChild(aimBar);
         aimBar.Position = new Vector3(0.85f, 0.02f, 0f);
@@ -216,7 +176,7 @@ public partial class FreeTrainingNode : Node3D
         _camera.MakeCurrent();
     }
 
-    private void SyncVisuals(float alpha, float deltaSeconds)
+    private void SyncVisuals(float alpha, float deltaSeconds, float simulatedDelta)
     {
         System.Numerics.Vector3 ballPos = System.Numerics.Vector3.Lerp(
             _session.Ball.PreviousPosition, _session.Ball.Position, alpha);
@@ -225,18 +185,10 @@ public partial class FreeTrainingNode : Node3D
         float shadowScale = Mathf.Clamp(1.0f - ballPos.Y * 0.08f, 0.35f, 1.0f);
         _ballShadow.Scale = new Vector3(shadowScale, 1.0f, shadowScale);
 
-        foreach (FootballerState player in _session.Players)
-        {
-            if (!_playerNodes.TryGetValue(player.Id, out Node3D? node)) continue;
-
-            node.Visible = player.IsActiveOnPitch;
-            System.Numerics.Vector3 position = System.Numerics.Vector3.Lerp(
-                player.PreviousPosition, player.Position, alpha);
-            node.Position = new Vector3(position.X, position.Y, position.Z);
-
-            float yaw = MathF.Atan2(-player.FacingXZ.Y, player.FacingXZ.X);
-            node.Rotation = new Vector3(0f, yaw, 0f);
-        }
+        // Players: the shared manager steps every presentation spring on simulated time and applies the
+        // articulated pose. It is a consumer of the session, never a participant.
+        _visuals.Settings.MotionIntensity = MotionIntensity;
+        _visuals.UpdateTraining(_session, alpha, simulatedDelta);
 
         // Practice centres the trainee; only the goal in front of them leaves the frame as they run.
         System.Numerics.Vector3 human = System.Numerics.Vector3.Lerp(

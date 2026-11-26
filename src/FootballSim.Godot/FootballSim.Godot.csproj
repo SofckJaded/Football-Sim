@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\FootballSim\FootballSim.csproj" />
+    <ProjectReference Include="..\FootballSim.Presentation\FootballSim.Presentation.csproj" />
   </ItemGroup>
 </Project>

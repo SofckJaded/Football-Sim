@@ -102,6 +102,21 @@ public sealed class TrainingSession
     public bool IsResetting => _resetTimer > 0f;
     public bool HumanTouchedBall => Ball.LastTouchedByPlayerId == HumanPlayerId;
 
+    /// <summary>
+    /// Presentation-only accessor: the ball contacts the execution layer produced on the most recent
+    /// <see cref="Step"/>. Practice needs no accumulated log — the renderer consumes the newest tick at
+    /// most once — so this exposes the existing buffer instead of adding a second one. Reading it has
+    /// zero effect on the simulation (no state change, no RNG, no ordering).
+    /// </summary>
+    public IReadOnlyList<BallContactEvent> LastTickContacts => _executionSystem.ContactEvents;
+
+    /// <summary>Presentation-only: the simulation tick the last contacts belong to.</summary>
+    public int CurrentTick => _tick;
+
+    /// <summary>Presentation-only: the controller driving a participant, or null for an unknown id.</summary>
+    public IFootballerController? GetController(int id) =>
+        _controllers.TryGetValue(id, out IFootballerController? controller) ? controller : null;
+
     public FootballerState? GetPlayer(int id)
     {
         foreach (FootballerState player in _players)

@@ -5,9 +5,11 @@ using Godot;
 using FootballSim;
 using FootballSim.AI;
 using FootballSim.Core;
+using FootballSim.GodotClient.Visuals;
 using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
+using FootballSim.Presentation;
 
 namespace FootballSim.GodotClient;
 
@@ -30,10 +32,18 @@ public partial class MatchClientNode : Node3D
     /// <summary>Camera height; the inspector range matches <see cref="BroadcastCamera"/>'s clamp.</summary>
     [Export(PropertyHint.Range, "18,65,0.5")] public float CameraZoomHeight { get; set; } = 34.0f;
 
+    /// <summary>
+    /// Presentation-only dial for the articulated model dynamics. 1.0 is the tuned grounded-athletic default;
+    /// higher exaggerates squash/stretch for readability from the broadcast camera, lower makes it subtler.
+    /// It changes nothing in the simulation.
+    /// </summary>
+    [Export(PropertyHint.Range, "0,2.5,0.05")] public float MotionIntensity { get; set; } = 1.0f;
+
     private MatchSimulationEngine _engine = null!;
     private Node3D _ballNode = null!;
     private MeshInstance3D _ballShadowNode = null!;
-    private readonly Dictionary<int, Node3D> _playerNodes = new();
+    /// <summary>Owns every articulated player rig and its presentation-only pose solver.</summary>
+    private PlayerVisualManager _visuals = null!;
     private Camera3D _camera = null!;
     private Label _legacyHudLabel = null!;
     private MatchHud _hud = null!;
@@ -126,7 +136,11 @@ public partial class MatchClientNode : Node3D
         for (int i = 0; i < steps; i++)
             _engine.StepTick();
 
-        SyncVisualTransforms(_clock.Alpha, frameDelta);
+        // The pose solver advances on simulated time, not wall clock: paused frames pass zero, slow-mo a
+        // fraction and 4x spectator fast-forward several fixed ticks, so the pose is always a function of
+        // the ticks that actually ran.
+        float simulatedDelta = steps * SimConstants.FixedDeltaTime;
+        SyncVisualTransforms(_clock.Alpha, frameDelta, simulatedDelta);
         UpdatePresentation();
     }
 
@@ -231,7 +245,7 @@ public partial class MatchClientNode : Node3D
         _debugView.SetStatus(status);
     }
 
-    private void SyncVisualTransforms(float alpha, float deltaSeconds)
+    private void SyncVisualTransforms(float alpha, float deltaSeconds, float simulatedDelta)
     {
         var bPos = System.Numerics.Vector3.Lerp(_engine.Ball.PreviousPosition, _engine.Ball.Position, alpha);
         _ballNode.Position = new Vector3(bPos.X, bPos.Y, bPos.Z);
@@ -239,15 +253,10 @@ public partial class MatchClientNode : Node3D
         float shadowScale = Mathf.Clamp(1.0f - bPos.Y * 0.08f, 0.35f, 1.0f);
         _ballShadowNode.Scale = new Vector3(shadowScale, 1.0f, shadowScale);
 
-        foreach (var p in _engine.Players)
-        {
-            if (!_playerNodes.TryGetValue(p.Id, out var node)) continue;
-            node.Visible = p.IsActiveOnPitch;
-            var interp = System.Numerics.Vector3.Lerp(p.PreviousPosition, p.Position, alpha);
-            node.Position = new Vector3(interp.X, interp.Y, interp.Z);
-            float yaw = MathF.Atan2(-p.FacingXZ.Y, p.FacingXZ.X);
-            node.Rotation = new Vector3(0f, yaw, 0f);
-        }
+        // Players: the manager reads the authoritative state, steps every presentation spring on the
+        // simulated clock and applies the articulated pose. It never writes simulation state.
+        _visuals.Settings.MotionIntensity = MotionIntensity;
+        _visuals.UpdateMatch(_engine, alpha, simulatedDelta);
 
         // Aim arrow follows the resolved aim direction from the human controller.
         HumanInputController? humanController = _engine.LockedHumanController;
@@ -552,75 +561,11 @@ public partial class MatchClientNode : Node3D
 
     private void BuildPlayerAndBallVisuals()
     {
-        var homeJerseyMat = new StandardMaterial3D { AlbedoColor = new Color(0.12f, 0.38f, 0.90f) };
-        var homeGkMat = new StandardMaterial3D { AlbedoColor = new Color(0.15f, 0.72f, 0.35f) };
-        var awayJerseyMat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.16f, 0.16f) };
-        var awayGkMat = new StandardMaterial3D { AlbedoColor = new Color(0.92f, 0.55f, 0.12f) };
-        var shortsWhiteMat = new StandardMaterial3D { AlbedoColor = new Color(0.95f, 0.95f, 0.95f) };
-        var shortsDarkMat = new StandardMaterial3D { AlbedoColor = new Color(0.14f, 0.15f, 0.18f) };
-        var skinMat = new StandardMaterial3D { AlbedoColor = new Color(0.88f, 0.72f, 0.58f) };
-        var humanRingMat = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.0f, 0.95f, 1.0f),
-            EmissionEnabled = true,
-            Emission = new Color(0.0f, 0.85f, 1.0f),
-            EmissionEnergyMultiplier = 1.5f
-        };
-
+        // Phase P0: every player is one articulated rig from the shared factory, so the match and free
+        // training cannot drift apart. The rig only renders a pose; the solver owns all motion.
+        _visuals = new PlayerVisualManager(new PlayerDynamicsSettings { MotionIntensity = MotionIntensity });
         foreach (var p in _engine.Players)
-        {
-            var root = new Node3D();
-
-            Material jerseyMat = p.Team == TeamId.Home
-                ? (p.Role == TacticalRole.Goalkeeper ? homeGkMat : homeJerseyMat)
-                : (p.Role == TacticalRole.Goalkeeper ? awayGkMat : awayJerseyMat);
-
-            var shorts = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 0.28f, BottomRadius = 0.22f, Height = 0.72f },
-                Position = new Vector3(0f, 0.36f, 0f),
-                MaterialOverride = p.Team == TeamId.Home ? shortsWhiteMat : shortsDarkMat
-            };
-            root.AddChild(shorts);
-
-            var torso = new MeshInstance3D
-            {
-                Mesh = new CapsuleMesh { Radius = 0.32f, Height = 0.92f },
-                Position = new Vector3(0f, 1.05f, 0f),
-                MaterialOverride = jerseyMat
-            };
-            root.AddChild(torso);
-
-            var head = new MeshInstance3D
-            {
-                Mesh = new SphereMesh { Radius = 0.20f, Height = 0.40f },
-                Position = new Vector3(0f, 1.68f, 0f),
-                MaterialOverride = skinMat
-            };
-            root.AddChild(head);
-
-            var dirPointer = new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(0.45f, 0.04f, 0.14f) },
-                Position = new Vector3(0.42f, 0.04f, 0f),
-                MaterialOverride = shortsWhiteMat
-            };
-            root.AddChild(dirPointer);
-
-            if (_humanPlayerId.HasValue && p.Id == _humanPlayerId.Value)
-            {
-                var ring = new MeshInstance3D
-                {
-                    Mesh = new CylinderMesh { TopRadius = 0.68f, BottomRadius = 0.68f, Height = 0.03f },
-                    Position = new Vector3(0f, 0.02f, 0f),
-                    MaterialOverride = humanRingMat
-                };
-                root.AddChild(ring);
-            }
-
-            AddChild(root);
-            _playerNodes[p.Id] = root;
-        }
+            _visuals.Register(this, p, _humanPlayerId.HasValue && p.Id == _humanPlayerId.Value);
 
         // Audit F22: one dimension source. The rendered ball is exactly the physical ball, so its
         // apparent size, contact and reach match what the simulation resolves.

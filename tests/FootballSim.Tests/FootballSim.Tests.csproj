@@ -12,5 +12,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\FootballSim\FootballSim.csproj" />
+    <ProjectReference Include="..\..\src\FootballSim.Presentation\FootballSim.Presentation.csproj" />
   </ItemGroup>
 </Project>
