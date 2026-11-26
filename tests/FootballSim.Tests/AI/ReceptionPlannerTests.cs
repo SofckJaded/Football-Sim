@@ -819,4 +819,101 @@ public sealed class ReceptionPlannerTests
         Assert.True(cmd.DesiredMoveDirectionXZ.Y < 0.75f,
             $"receiver must converge along ball ray rather than chasing ballXZ (+Z), got move=({cmd.DesiredMoveDirectionXZ.X:F2},{cmd.DesiredMoveDirectionXZ.Y:F2})");
     }
+
+    [Fact]
+    public void InterceptPassRay_LaterallyDisplacedForwardRunner_ConvergesForwardInsteadOfRunningTowardPasser_LiveReplay_t9265()
+    {
+        // Exact t=9265 (Image 19) geometry: #20 at (-15.33, -0.76), ball at (-13.96, -9.01),
+        // bvel = (-15.23, +8.55). Decelerating-ray scan must find the forward convergence point
+        // rather than aiming 4.2 m toward the passer (-Z) with along + 3.0 m.
+        var pitch = new PitchDimensions();
+        var controller = new TacticalUtilityAiController(pitch);
+        FootballerObservation obs = Receiving(
+            new Vector2(-13.96f, -9.01f),
+            new Vector2(-15.23f, 8.55f),
+            visible: [Mate(ForwardMateId, -30f, -1f)],
+            selfPosition: new Vector2(-15.33f, -0.76f),
+            selfVelocity: new Vector3(-5.30f, 0f, 0.50f),
+            selfFacingXZ: new Vector2(-1f, 0f));
+        var interceptObs = new FootballerObservation
+        {
+            SelfId = obs.SelfId,
+            SelfTeam = obs.SelfTeam,
+            SelfRole = obs.SelfRole,
+            SelfPosition = obs.SelfPosition,
+            SelfVelocity = obs.SelfVelocity,
+            SelfFacingXZ = obs.SelfFacingXZ,
+            Scan = obs.Scan,
+            Calls = obs.Calls,
+            Stamina01 = obs.Stamina01,
+            AvailableToKick = obs.AvailableToKick,
+            ControlQuality01 = obs.ControlQuality01,
+            PerceivedBallPosition = obs.PerceivedBallPosition,
+            PerceivedBallVelocity = obs.PerceivedBallVelocity,
+            PossessingTeam = obs.PossessingTeam,
+            BallLastTouchedByPlayerId = obs.BallLastTouchedByPlayerId,
+            BallLastTouchedByTeam = obs.BallLastTouchedByTeam,
+            BallControlState = obs.BallControlState,
+            BallControllingPlayerId = obs.BallControllingPlayerId,
+            IntendedReceiverId = obs.IntendedReceiverId,
+            TacticalAnchorPosition = obs.TacticalAnchorPosition,
+            AttackingDirectionX = -1f,
+            MatchTimeSeconds = obs.MatchTimeSeconds,
+            CurrentMatchPhase = obs.CurrentMatchPhase,
+            IsSetPieceTaker = obs.IsSetPieceTaker,
+            Tick = obs.Tick,
+            KnowledgeAgeTicks = obs.KnowledgeAgeTicks,
+            VisiblePlayers = obs.VisiblePlayers,
+            TeamProfile = obs.TeamProfile,
+            SelfTendencies = obs.SelfTendencies,
+            SelfAttributes = obs.SelfAttributes,
+            IsDesignatedBallResponder = true,
+            BallResponderPlayerId = obs.SelfId
+        };
+
+        FootballerCommand cmd = controller.Decide(interceptObs, SimConstants.FixedDeltaTime);
+
+        Assert.True(cmd.DesiredMoveDirectionXZ.X < -0.80f,
+            $"t=9265 forward runner must converge downfield (-X), got move=({cmd.DesiredMoveDirectionXZ.X:F2},{cmd.DesiredMoveDirectionXZ.Y:F2})");
+        Assert.True(cmd.DesiredMoveDirectionXZ.Y >= -0.10f,
+            $"t=9265 forward runner must not run back toward the passer (-Z), got move=({cmd.DesiredMoveDirectionXZ.X:F2},{cmd.DesiredMoveDirectionXZ.Y:F2})");
+    }
+
+    [Fact]
+    public void ReceptionPlanner_PreKickGuard_PreservesForwardRunMomentumWithoutSprinting()
+    {
+        // Forward runner (vel=(5.3, 0.4), attackXZ=(+1, 0)) during the 5-tick pre-kick reaction window:
+        // guard must glide forward without sprinting instead of slamming emergency brakes to (0, 0).
+        var passer = new PerceivedEntity(
+            102, TeamId.Home, TacticalRole.CentralMidfielder,
+            new Vector3(0.0f, 0f, -8.0f),
+            new Vector3(4.0f, 0f, 0.5f),
+            1f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+
+        FootballerObservation obs = Receiving(
+            new Vector2(0.4f, -7.8f),
+            new Vector2(4.0f, 0.5f),
+            visible: [passer, Mate(ForwardMateId, 20f, 5f)],
+            selfPosition: new Vector2(4.0f, 0.0f),
+            selfVelocity: new Vector3(5.3f, 0f, 0.4f),
+            selfFacingXZ: new Vector2(1f, 0f));
+
+        var generator = new CandidateGenerator(new PitchDimensions());
+        generator.GenerateOffBallCandidates(
+            obs,
+            new Vector3(52.5f, 0f, 0f),
+            new Vector3(-52.5f, 0f, 0f),
+            myInterceptXZ: new Vector2(4.0f, 0.0f),
+            isPrimaryBallResponder: true,
+            offsideLineProjX: 40f);
+
+        UtilityCandidate candidate = Assert.Single(generator.Candidates, c => c.Key.Kind == CandidateKind.Intercept);
+        Assert.False(candidate.Command.Sprint,
+            "Pre-kick reaction guard must still suppress sprint");
+        Assert.True(candidate.Command.DesiredMoveDirectionXZ.X > 0.5f,
+            $"Forward runner must preserve forward momentum during pre-kick guard (got {candidate.Command.DesiredMoveDirectionXZ})");
+    }
 }

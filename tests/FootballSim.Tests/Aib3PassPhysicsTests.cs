@@ -1331,4 +1331,184 @@ public sealed class Aib3PassPhysicsTests
         Assert.True(space.Value.Command.KickPower01 <= 0.75f,
             $"crossing ToSpace pass must fall back to paced ball (<= 0.75), got power={space.Value.Command.KickPower01:F2}");
     }
+
+    [Fact]
+    public void SpaceProbe_MovingRunnerWithEarlyCrispBall_WeightsPassToPacedArrival_LiveReplay_t9259()
+    {
+        // Exact t=9259 (Image 19) geometry: ball=(-12.1, -10.0), mate=(-14.9, -0.8), vel=(-5.3, 0.5), attacking -X.
+        // Crisp 0.90 power arrives in 1.40 s before mate reaches (-28.9, -0.8) in ~1.61 s, rolling past to the GK.
+        // Moving-runner pacing must switch to the 6.0 m/s paced plan (~0.70-0.75 power) matched to runner arrival.
+        Vector2 ballXZ = new(-12.1f, -10.0f);
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.Winger,
+            new Vector3(-14.9f, 0f, -0.8f), new Vector3(-5.3f, 0f, 0.5f), 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(-11.8f, 0f, -10.0f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(-1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(ballXZ.X, 0f, ballXZ.Y),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(-11.8f, 0f, -10.0f),
+            AttackingDirectionX = -1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = ObservationTick,
+            VisiblePlayers = new[] { mate },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(-Pitch.HalfLength, 0f, 0f), offsideLineProjX: 25f);
+
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+        Vector2 targetXZ = new(space.TargetXZ!.Value.X, space.TargetXZ.Value.Z);
+        float distance = Vector2.Distance(ballXZ, targetXZ);
+        float crispFloor = Planner.MinCrispPower01(distance);
+        ReachEstimate receiverReach = TimeToReachModel.ToPoint(
+            ReachKinematics.FromEntity(mate), targetXZ, CandidateGenerator.SpaceRaceHorizonSeconds);
+        Assert.True(receiverReach.Reachable);
+        Assert.True(Planner.TryGetFlightTime(space.Command.KickPower01, distance, out float flight));
+
+        Assert.True(space.Command.KickPower01 < crispFloor,
+            $"t=9259 moving-runner ToSpace must pace below crispFloor ({crispFloor:F2}), got power={space.Command.KickPower01:F2}");
+        Assert.True(flight >= receiverReach.Seconds - 0.10f,
+            $"t=9259 paced ToSpace flight ({flight:F2} s) must match receiver arrival ({receiverReach.Seconds:F2} s)");
+    }
+
+    [Fact]
+    public void SpaceProbe_NearTouchlineWithReactionDelay_RefusesRollsOut_LiveReplay_t5478()
+    {
+        // Near-touchline moving-runner geometry modeled on t=5478: ball=(11.8, -22.5), mate=(4.1, -31.0),
+        // vel=(7.3, -0.8), attacking +X. Without the 0.12 s moving-receiver reaction allowance, the ball stays
+        // just inside Z=-34.0 at raw receiverReach.Seconds (~-33.6) and is offered only to roll out of play
+        // for a Throw-In 0.12 s later (~-34.1).
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.FullBack,
+            new Vector3(4.1f, 0f, -31.0f), new Vector3(7.3f, 0f, -0.8f), 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(11.5f, 0f, -22.5f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(11.8f, 0f, -22.5f),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(11.5f, 0f, -22.5f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = ObservationTick,
+            VisiblePlayers = new[] { mate },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 40f);
+
+        bool hasSpaceRollsOut = false;
+        for (int i = 0; i < generator.RejectionCount; i++)
+        {
+            CandidateRejection rejection = generator.GetRejection(i);
+            if (rejection.TargetPlayerId == MateId &&
+                rejection.Reason == CandidateGenerator.RejectionSpaceRollsOut)
+            {
+                hasSpaceRollsOut = true;
+                break;
+            }
+        }
+
+        Assert.True(hasSpaceRollsOut,
+            "touchline ToSpace probe crossing Z=-34.0 within the 0.12 s reaction window must be rejected as space-rolls-out");
+    }
+
+    [Fact]
+    public void SpaceProbe_CloseFastRunner_DoesNotOverFirmAboveCrispFloor_LiveReplay_t19606()
+    {
+        // t=19606 geometry: d ~= 17.6 m, receiverReach ~= 0.99 s < crispFlight (~1.32 s).
+        // PlanGroundPassToRegion must not bisect power upward from crispFloor (0.85) to 1.00 trying to
+        // shave flight time down to 0.99 s.
+        Vector2 ballXZ = new(35.0f, -10.0f);
+        var mate = new PerceivedEntity(
+            MateId, TeamId.Home, TacticalRole.Winger,
+            new Vector3(42.0f, 0f, 0.0f), new Vector3(7.5f, 0f, 0.0f), 0.95f)
+        {
+            Capability = CapabilityEstimate.Generic
+        };
+        var obs = new FootballerObservation
+        {
+            SelfId = CarrierId,
+            SelfTeam = TeamId.Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = new Vector3(34.7f, 0f, -10.0f),
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = new Vector2(1f, 0f),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = new Vector3(ballXZ.X, 0f, ballXZ.Y),
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = TeamId.Home,
+            BallLastTouchedByPlayerId = CarrierId,
+            BallLastTouchedByTeam = TeamId.Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = CarrierId,
+            TacticalAnchorPosition = new Vector3(34.7f, 0f, -10.0f),
+            AttackingDirectionX = 1f,
+            MatchTimeSeconds = 10f,
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = ObservationTick,
+            VisiblePlayers = new[] { mate },
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes()
+        };
+
+        var generator = new CandidateGenerator(Pitch, communication: null, PlainPicture()) { TimeOnBall = 0.80f };
+        generator.GenerateOnBallCandidates(obs, new Vector3(Pitch.HalfLength, 0f, 0f), offsideLineProjX: 48f);
+
+        UtilityCandidate space = Single(generator, CandidateGenerator.SpacePassTag, MateId);
+        Assert.True(space.TargetXZ.HasValue);
+        Vector2 targetXZ = new(space.TargetXZ!.Value.X, space.TargetXZ.Value.Z);
+        float distance = Vector2.Distance(ballXZ, targetXZ);
+        float crispFloor = Planner.MinCrispPower01(distance);
+
+        Assert.True(space.Command.KickPower01 <= crispFloor + 1e-3f,
+            $"t=19606 ToSpace must not over-firm above crispFloor ({crispFloor:F2}), got power={space.Command.KickPower01:F2}");
+    }
 }

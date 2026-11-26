@@ -809,12 +809,16 @@ public enum TeamId
 /// inside-reach <c>tackleTriggerMultiplier</c> (&lt;= 1.58x), angled <c>GK:ReflexParry</c> flank deflection,
 /// and <c>OneTwo</c> <c>ToRun</c> protection (scoped <c>CombinationContinuationBonus</c>, <c>ToSpace</c>
 /// suppression, and live-arrival timing when ahead of schedule).</item>
+/// <item><b>68</b> (2026-11-26): moving-runner <c>ToSpace</c> reaction delay and paced pass weight plus
+/// <c>crispFlight</c> clamp in <c>CandidateGenerator</c>, 16-step decelerating-ray intercept scan in
+/// <c>IndividualAI.ComputeBallInterceptTarget</c>, live-reach paced <c>OneTwo</c> return weight in
+/// <c>CandidateGenerator</c>, and forward-run momentum preservation in <c>ReceptionPlanner</c> pre-kick guard.</item>
 /// </list>
 /// </summary>
 public static class SimulationVersion
 {
     /// <summary>Incremented when an AI/physics change makes trajectories differ from the previous version.</summary>
-    public const int AiBehaviour = 67;
+    public const int AiBehaviour = 68;
 
     /// <summary>Version of the <see cref="RandomStreams"/> derivation.</summary>
     public const int RandomStreamsDerivation = 1;

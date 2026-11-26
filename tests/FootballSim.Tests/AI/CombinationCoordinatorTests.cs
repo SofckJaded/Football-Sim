@@ -1030,6 +1030,77 @@ public sealed class CombinationCoordinatorTests
             $"ToRun ({toRun.UtilityScore:F3}) must outscore ToFeet ({treatedFeet.UtilityScore:F3})");
     }
 
+    [Fact]
+    public void OneTwoReturn_WhenCrispBallArrivesBeforeRunnerReach_WeightsPassToPacedArrival_LiveReplay_t523()
+    {
+        // Exact t=00523 geometry: ball=(9.1, -18.9), retXZ=(5.8, -26.2), d=8.01 m,
+        // initiator at (12.6, -27.6) moving (-4.6, 1.5), liveReach ~= 0.79 s > crispFlight (0.70 s) + 0.05 s.
+        // OneTwo ToRun must pace down (<= 0.40 power) rather than forcing crispFloor (0.50 / 9.6 m/s arrival).
+        var comms = new MatchCommunicationContext();
+        var retXZ = new Vector2(5.8f, -26.2f);
+        const int publishTick = 480;
+        const int evalTick = 523;
+        Assert.True(comms.Combinations.Publish(
+            CombinationKind.OneTwo,
+            Home,
+            InitiatorId,
+            ReceiverId,
+            thirdPlayerId: 0,
+            retXZ,
+            returnRadiusMeters: 3f,
+            expectedArrivalTick: evalTick + 48, // 0.80 s remaining
+            confidence01: 0.9f,
+            tick: publishTick));
+
+        var receiverPos = new Vector3(9.3f, 0f, -18.8f);
+        var ballPos = new Vector3(9.1f, 0f, -18.9f);
+        var initiatorPos = new Vector3(12.6f, 0f, -27.6f);
+        var visible = new List<PerceivedEntity>
+        {
+            new(InitiatorId, Home, TacticalRole.FullBack, initiatorPos, new Vector3(-4.6f, 0f, 1.5f), 0.95f),
+            Opponent(PresserId, new Vector3(18f, 0f, -5f)),
+            Opponent(SecondDefenderId, new Vector3(-15f, 0f, -10f))
+        };
+
+        var obs = new FootballerObservation
+        {
+            SelfId = ReceiverId,
+            SelfTeam = Home,
+            SelfRole = TacticalRole.CentralMidfielder,
+            SelfPosition = receiverPos,
+            SelfVelocity = Vector3.Zero,
+            SelfFacingXZ = SimMath.SafeNormalize(new Vector2(retXZ.X - ballPos.X, retXZ.Y - ballPos.Z), new Vector2(-1f, 0f)),
+            Stamina01 = 1f,
+            AvailableToKick = true,
+            ControlQuality01 = 1f,
+            PerceivedBallPosition = ballPos,
+            PerceivedBallVelocity = Vector3.Zero,
+            PossessingTeam = Home,
+            BallLastTouchedByPlayerId = ReceiverId,
+            BallLastTouchedByTeam = Home,
+            BallControlState = BallControlState.Controlled,
+            BallControllingPlayerId = ReceiverId,
+            TacticalAnchorPosition = receiverPos,
+            AttackingDirectionX = -1f,
+            MatchTimeSeconds = TimeOf(evalTick),
+            CurrentMatchPhase = MatchPhase.FirstHalf,
+            IsSetPieceTaker = false,
+            Tick = evalTick,
+            VisiblePlayers = visible,
+            TeamProfile = TeamTacticalProfile.PossessionControl,
+            SelfTendencies = new PlayerTendencies(),
+            SelfAttributes = new PlayerAttributes(),
+            Combination = ContextOf(comms, ReceiverId, evalTick)
+        };
+
+        var generator = new CandidateGenerator(Pitch, comms, new AiRuntimeConfig()) { TimeOnBall = 0.8f };
+        generator.GenerateOnBallCandidates(obs, OwnGoal(), offsideLineProjX: 25f);
+
+        UtilityCandidate toRun = Candidate(generator, InitiatorId, CandidateGenerator.RunPassTag);
+        Assert.True(toRun.Command.KickPower01 <= 0.40f,
+            $"t=00523 OneTwo return must weight pass to paced arrival (<= 0.40), got power={toRun.Command.KickPower01:F2}");
+    }
+
     private static bool HasCandidate(CandidateGenerator generator, int targetId, string tag)
     {
         foreach (UtilityCandidate candidate in generator.Candidates)

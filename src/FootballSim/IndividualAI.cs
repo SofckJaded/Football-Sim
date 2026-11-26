@@ -602,15 +602,41 @@ public sealed class TacticalUtilityAiController : IFootballerController, IAiStat
         }
 
         // Constant-velocity interception returned unreachable (often because grass deceleration is not
-        // modelled in TrySolveInterception). Never chase the ball's tail behind its path: converge onto
-        // the ball's forward ray at/ahead of the player's own projection so the receiver sprints into the
-        // decelerating ball's lane instead of running backward toward the passer.
+        // modelled in TrySolveInterception). Scan forward along the decelerating ground-ball ray across
+        // 0.25..4.00 s to find the earliest reachable convergence point (or minimum-deficit point),
+        // avoiding early local-minimum traps that steer laterally back toward the passer.
         float ballSpeed = ballVelXZ.Length();
         Vector2 ballDir = ballVelXZ / ballSpeed;
-        float along = Vector2.Dot(kinematics.PositionXZ - ballXZ, ballDir);
-        float maxLead = Math.Clamp(ballSpeed * 1.25f, 3.0f, 18.0f);
-        float leadAhead = Math.Clamp(MathF.Max(along, 0f) + 3.0f, 3.0f, maxLead);
-        return ClampToPitch(ballXZ + ballDir * leadAhead, pitch);
+        float sprintCap = MathF.Max(0.5f, TimeToReachModel.SpeedCap(kinematics, sprint: true));
+        float reach = MathF.Max(0.05f, kinematics.ReachRadius);
+        // Effective rolling deceleration on grass across 10-19 m/s ground passes (~4.6 m/s^2).
+        const float approxGroundDecel = 4.6f;
+        float stopTime = ballSpeed / approxGroundDecel;
+
+        Vector2 bestPoint = ballXZ + ballDir * MathF.Min(ballSpeed * 0.5f, 18.0f);
+        float bestDeficit = float.PositiveInfinity;
+        for (int step = 1; step <= 16; step++)
+        {
+            float t = step * 0.25f;
+            float tClamped = MathF.Min(t, stopTime);
+            float distAlong = ballSpeed * tClamped - 0.5f * approxGroundDecel * tClamped * tClamped;
+            Vector2 sampleXZ = ballXZ + ballDir * distAlong;
+            float required = MathF.Max(0f, Vector2.Distance(kinematics.PositionXZ, sampleXZ) - reach);
+            float deficit = required - sprintCap * t;
+            if (deficit <= 0f)
+            {
+                bestPoint = sampleXZ;
+                break;
+            }
+
+            if (deficit < bestDeficit)
+            {
+                bestDeficit = deficit;
+                bestPoint = sampleXZ;
+            }
+        }
+
+        return ClampToPitch(bestPoint, pitch);
     }
 
     private static Vector2 ClampToPitch(Vector2 point, PitchDimensions pitch) => new(

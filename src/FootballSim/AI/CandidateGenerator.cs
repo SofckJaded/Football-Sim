@@ -820,6 +820,12 @@ public sealed class CandidateGenerator : IAiStateResettable
     public const float SpacePromiseRadiusMeters = 4f;
 
     /// <summary>
+    /// ai68 (Task 1): reaction allowance, in seconds, added to a moving runner's reach arrival when
+    /// checking whether a <c>ToSpace</c> ball stays in bounds and catchable.
+    /// </summary>
+    internal const float SpaceReceiverReactionSeconds = 0.12f;
+
+    /// <summary>
     /// AIB-10 (audit 2026-11-23, finding 4) / AIB-11 (finding 6) / 2026-11-24 owner-review correction: the
     /// <b>one shared roll-out bound</b>, in metres, that every promised ground pass must respect — how far
     /// past the promised region the rolling ball may be at the moment the receiver is there before the promise
@@ -1847,20 +1853,33 @@ public sealed class CandidateGenerator : IAiStateResettable
             float minReasonableFlight = _passPlanner.TryGetFlightTime(crispFloor, returnDistance, out float crispFlight)
                 ? crispFlight
                 : arriveInSeconds;
-            // If the initiator is behind schedule (held onside, liveReach > arriveInSeconds), pace to liveReach.
-            // If the initiator is already near ReturnXZ ahead of schedule (liveReach < arriveInSeconds), do not
-            // force a 1.75 s slow-motion clock that destroys timingTerm — time to max(liveReach, crispFlight)
-            // capped by arriveInSeconds so the return arrives crisply as he enters ReturnXZ.
-            float effectiveArriveSeconds = liveReach.Seconds >= arriveInSeconds
-                ? liveReach.Seconds
-                : MathF.Max(liveReach.Seconds, MathF.Min(arriveInSeconds, minReasonableFlight));
-            ChoosePromisedRunPower(
-                ballXZ,
-                obs.Combination.ReturnXZ,
-                effectiveArriveSeconds,
-                obs.Combination.ReturnRadiusMeters,
-                out float oneTwoMinPower01,
-                out float oneTwoMinArrivalSpeed);
+            float effectiveArriveSeconds;
+            float oneTwoMinPower01;
+            float oneTwoMinArrivalSpeed;
+            if (liveReach.Seconds > minReasonableFlight + 0.02f)
+            {
+                // ai68 (Task 3): when the crisp ball would arrive before the initiator physically reaches
+                // ReturnXZ, weight the return cleanly to liveReach + 0.08 s using the 6.0 m/s paced floor
+                // instead of letting ChoosePromisedRunPower force crispFloor within the promise tolerance.
+                float weightedArrive = liveReach.Seconds + 0.08f;
+                effectiveArriveSeconds = liveReach.Seconds >= arriveInSeconds
+                    ? MathF.Max(arriveInSeconds, weightedArrive)
+                    : weightedArrive;
+                oneTwoMinPower01 = 0f;
+                oneTwoMinArrivalSpeed = RunPassMinArrivalSpeedMetersPerSecond;
+            }
+            else
+            {
+                // Initiator is already at/next to ReturnXZ when the crisp ball arrives: preserve ai67 crisp timing.
+                effectiveArriveSeconds = MathF.Max(liveReach.Seconds, MathF.Min(arriveInSeconds, minReasonableFlight));
+                ChoosePromisedRunPower(
+                    ballXZ,
+                    obs.Combination.ReturnXZ,
+                    effectiveArriveSeconds,
+                    obs.Combination.ReturnRadiusMeters,
+                    out oneTwoMinPower01,
+                    out oneTwoMinArrivalSpeed);
+            }
             option = new PassOption(
                 LeadDirection: Vector2.Zero,
                 LeadMeters: 0f,
@@ -2155,14 +2174,18 @@ public sealed class CandidateGenerator : IAiStateResettable
                 continue;
             }
 
-            // ai63 follow-up: try the crisp floor first so firm through balls keep their pace; if the crisp
-            // ball would leave the pitch or roll past EffectivePromiseCatchRadiusMeters before the runner
-            // arrives, fall back to the 6.0 m/s paced mode (matching ChoosePromisedRunPower) instead of
-            // self-rejecting behind-the-line probes.
-            float minPower01 = _passPlanner.MinCrispPower01(probeDistanceMeters);
+            // ai63/ai68: try the crisp floor first (clamped to crispFlight so PlanGroundPassToRegion does not
+            // bisect upward above crispFloor when receiverReach < crispFlight); if uncatchable, fall back to
+            // 6.0 m/s paced mode; for an already-moving runner whose crisp ball arrives early, prefer the
+            // time-matched 6.0 m/s paced pass so the ball does not outrun the runner.
+            float crispFloor = _passPlanner.MinCrispPower01(probeDistanceMeters);
+            float crispWantedSeconds = _passPlanner.TryGetFlightTime(crispFloor, probeDistanceMeters, out float crispFlight)
+                ? MathF.Max(receiverReach.Seconds, crispFlight)
+                : receiverReach.Seconds;
+            float minPower01 = crispFloor;
             float minArrivalSpeed = 0f;
             PassPlan probePlan = _passPlanner.PlanGroundPassToRegion(
-                ballXZ, spaceXZ, receiverReach.Seconds, minPower01);
+                ballXZ, spaceXZ, crispWantedSeconds, minPower01);
             bool crispRollsOut = false;
             bool crispRolledPast = false;
             bool crispChecked = probePlan.Feasible && CheckSpaceBallCatchable(
@@ -2200,6 +2223,23 @@ public sealed class CandidateGenerator : IAiStateResettable
                         Reject(mate.PlayerId, anyRollsOut ? RejectionSpaceRollsOut : RejectionSpaceRolledPast);
                     }
                     continue;
+                }
+            }
+            else if (mateVelocityXZ.LengthSquared() > 1.5f * 1.5f &&
+                     probePlan.FlightTimeSeconds < receiverReach.Seconds - 0.10f)
+            {
+                PassPlan pacedPlan = _passPlanner.PlanGroundPassToRegion(
+                    ballXZ, spaceXZ, receiverReach.Seconds + SpaceReceiverReactionSeconds,
+                    minPower01: 0f, minArrivalSpeedMetersPerSecond: RunPassMinArrivalSpeedMetersPerSecond);
+                if (pacedPlan.Feasible &&
+                    pacedPlan.Power01 < probePlan.Power01 &&
+                    CheckSpaceBallCatchable(
+                        ballXZ, mateXZ, mateVelocityXZ, spaceXZ, pacedPlan, receiverReach.Seconds, probeDistanceMeters,
+                        out _, out _))
+                {
+                    probePlan = pacedPlan;
+                    minPower01 = 0f;
+                    minArrivalSpeed = RunPassMinArrivalSpeedMetersPerSecond;
                 }
             }
 
@@ -2241,15 +2281,19 @@ public sealed class CandidateGenerator : IAiStateResettable
         out bool rollsOut,
         out bool rolledPast)
     {
+        bool receiverMoving = mateVelocityXZ.LengthSquared() > 1.5f * 1.5f;
+        float effectiveArrivalSeconds = receiverMoving
+            ? receiverArrivalSeconds + SpaceReceiverReactionSeconds
+            : receiverArrivalSeconds;
         float ballDistanceAtReceiverArrival = _passPlanner.BallDistanceAtTime(
-            plan.Power01, receiverArrivalSeconds);
+            plan.Power01, effectiveArrivalSeconds);
         Vector2 ballAtReceiverArrival = ballXZ + plan.AimDirectionXZ * ballDistanceAtReceiverArrival;
         rollsOut = MathF.Abs(ballAtReceiverArrival.X) > _pitch.HalfLength ||
                    MathF.Abs(ballAtReceiverArrival.Y) > _pitch.HalfWidth;
         float rolledPastMeters = ballDistanceAtReceiverArrival - probeDistanceMeters;
         float alignedCatchRadius = EffectivePromiseCatchRadiusMeters(probeDistanceMeters);
         float catchRadius = alignedCatchRadius;
-        if (mateVelocityXZ.LengthSquared() > 1.5f * 1.5f)
+        if (receiverMoving)
         {
             // A moving runner crossing the ball's flight at a steep angle cannot pivot sideways to chase
             // 5 m past spaceXZ; stationary receivers keep the full aligned catch radius (AIB10).

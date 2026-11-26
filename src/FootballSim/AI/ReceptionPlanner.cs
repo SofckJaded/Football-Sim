@@ -423,9 +423,19 @@ public sealed class ReceptionPlanner
                 perceivedBallSpeed <= MathF.Min(passerSpeed + 1.5f, 9.0f))
             {
                 Vector2 selfXZ = new(obs.SelfPosition.X, obs.SelfPosition.Z);
-                Vector2 faceBall = SafeNormalize(perceivedBallXZ - selfXZ, AttackVector(obs));
+                Vector2 selfVelXZ = new(obs.SelfVelocity.X, obs.SelfVelocity.Z);
+                Vector2 preKickAttackXZ = AttackVector(obs);
+                float forwardSpeed = Vector2.Dot(selfVelXZ, preKickAttackXZ);
+                bool forwardRun = forwardSpeed > 2.0f;
+                // If already making a forward attacking run (> 2.0 m/s), glide forward as StrideTouch at 0.85 m
+                // to preserve momentum during the 5-tick reaction delay (avoiding AddReceptionCandidates' Kill
+                // arrival braking); otherwise hold/brake at selfXZ.
+                Vector2 holdPointXZ = forwardRun
+                    ? ClampToPitch(selfXZ + SafeNormalize(selfVelXZ, preKickAttackXZ) * 0.85f)
+                    : selfXZ;
+                Vector2 faceBall = SafeNormalize(perceivedBallXZ - selfXZ, preKickAttackXZ);
                 _arrivalSeconds = 0f;
-                _meetingSampleXZ = selfXZ;
+                _meetingSampleXZ = holdPointXZ;
                 _pressure = 0f;
                 _uncertainty = MemoryUncertainty(obs);
                 _pressureKnown = false;
@@ -433,10 +443,10 @@ public sealed class ReceptionPlanner
 
                 _drafts[0] = new Draft
                 {
-                    Kind = ReceptionTouchKind.Kill,
+                    Kind = forwardRun ? ReceptionTouchKind.StrideTouch : ReceptionTouchKind.Kill,
                     Feasible = true,
                     Score = 0.50f,
-                    MeetingPointXZ = selfXZ,
+                    MeetingPointXZ = holdPointXZ,
                     FacingXZ = faceBall,
                     Sprint = false,
                     Shield = false,
