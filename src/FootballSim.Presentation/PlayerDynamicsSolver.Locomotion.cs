@@ -89,6 +89,13 @@ public sealed partial class PlayerDynamicsSolver
     /// <summary>Speed at which cornering bank is in full effect, in m/s.</summary>
     private const float CornerBankFullSpeed = 2.5f;
 
+    /// <summary>
+    /// Owner feedback 2026-11-26: "they lean too much". Every locomotion body lean and bank is multiplied by
+    /// this one dial, so the motion structure (speed ramp, braking cancel, cut direction) is unchanged while the
+    /// silhouette stays closer to upright. The plan's 10-16 deg sprint lean reads as ~5.5-8.8 deg.
+    /// </summary>
+    private const float BodyLeanScale = 0.55f;
+
     // --- Stride cycle tuning ------------------------------------------------------------------
     /// <summary>Stride length at a walk, in metres (plan 5.2.4: ~0.9 m).</summary>
     private const float WalkStrideLengthMeters = 0.9f;
@@ -339,20 +346,20 @@ public sealed partial class PlayerDynamicsSolver
         float sprintRamp = SpringMath.SmoothStep01(
             (speedRatio - RunLeanJogRatio) / (1f - RunLeanJogRatio));
         float runLean = SpringMath.DegToRad(
-            SpringMath.Lerp(JogRunLeanDegrees, SprintRunLeanDegrees, sprintRamp) * jogGate);
+            SpringMath.Lerp(JogRunLeanDegrees, SprintRunLeanDegrees, sprintRamp) * jogGate) * BodyLeanScale;
 
         // Explosive first step: normalise the measured acceleration by what this player can actually
         // produce, so a slow centre-back and a quick winger both read as "driving off the back foot".
         float accelCapability = MathF.Max(2f, input.Player.Attributes.Acceleration);
         float accelRatio = SpringMath.SmoothStep01(SpringMath.Clamp01(_accelerationForward / accelCapability));
-        float accelLean = SpringMath.DegToRad(AccelRunLeanDegrees) * accelRatio;
+        float accelLean = SpringMath.DegToRad(AccelRunLeanDegrees) * accelRatio * BodyLeanScale;
 
         // Hard braking (digging in): the run lean is cancelled as the body pitches back over the planted
         // feet, so the net silhouette leans backwards while the player hauls himself to a stop.
         float brake01 = SpringMath.SmoothStep01(
             (BrakingAccelThreshold - _accelerationForward) / BrakingAccelSpan);
         float brakeLean = SpringMath.DegToRad(
-            SpringMath.Lerp(MinBrakingLeanDegrees, MaxBrakingLeanDegrees, brake01)) * brake01;
+            SpringMath.Lerp(MinBrakingLeanDegrees, MaxBrakingLeanDegrees, brake01)) * brake01 * BodyLeanScale;
 
         float forwardLean = (runLean + accelLean) * (1f - 0.6f * brake01) * (1f - 0.55f * jockeyBlend);
         targets.LeanPitch += brakeLean - forwardLean;
@@ -365,7 +372,7 @@ public sealed partial class PlayerDynamicsSolver
         float bankSpeed = SpringMath.SmoothStep01(_speedXZ / CornerBankFullSpeed);
         float bank = SpringMath.Clamp(
             SpringMath.DegToRad(CornerBankDegreesPerAccel) * _accelerationRight,
-            -MaxCornerBankRadians, MaxCornerBankRadians) * bankSpeed;
+            -MaxCornerBankRadians, MaxCornerBankRadians) * bankSpeed * BodyLeanScale;
         targets.LeanRoll += bank;
     }
 

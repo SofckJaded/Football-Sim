@@ -26,16 +26,20 @@ public sealed class PlayerDynamicsBehaviourTests
     // =========================================================================================
 
     [Fact]
-    public void SprintLeansTheBodyForward()
+    public void SprintLeansTheBodyForwardButNeverExcessively()
     {
         var rig = new Rig();
         rig.Player.Velocity = new Vector3(8f, 0f, 0f);
         rig.Player.FacingXZ = new Vector2(1f, 0f);
         rig.Run(90);
 
-        Assert.True(rig.Solver.BodyPitch < -0.18f,
-            $"a full sprint should pitch the body forward (plan 5.2.1: -16 deg), pitch was " +
+        // The forward lean has to read, but owner feedback (2026-11-26: "they lean too much") calibrated it
+        // down to ~9 deg at full sprint. The upper bound is the regression gate against over-leaning.
+        Assert.True(rig.Solver.BodyPitch < -0.06f,
+            $"a sprint should still pitch the body forward, pitch was " +
             $"{SpringMath.RadToDeg(rig.Solver.BodyPitch):F1} deg");
+        Assert.True(rig.Solver.BodyPitch > -0.22f,
+            $"the sprint lean must stay subtle, pitch was {SpringMath.RadToDeg(rig.Solver.BodyPitch):F1} deg");
     }
 
     [Fact]

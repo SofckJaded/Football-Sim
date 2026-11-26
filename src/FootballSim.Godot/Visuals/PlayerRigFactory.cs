@@ -192,14 +192,19 @@ public sealed class PlayerRigFactory
         Node3D bodyPivot = new() { Name = "BodyPivot" };
         Node3D lowerPivot = new() { Name = "LowerPivot" };
 
-        MeshInstance3D shortsMesh = new()
+        // Owner decision 2026-11-26: the tall leg/shorts cylinder reads as trousers and is removed from the
+        // default silhouette. It stays a style toggle so the old look is one flag away.
+        if (style.ShowLegs)
         {
-            Name = "ShortsMesh",
-            Mesh = _shortsMesh,
-            Position = new Vector3(0f, RigDimensions.ShortsCenterY, 0f),
-            MaterialOverride = shortsMaterial
-        };
-        lowerPivot.AddChild(shortsMesh);
+            MeshInstance3D shortsMesh = new()
+            {
+                Name = "ShortsMesh",
+                Mesh = _shortsMesh,
+                Position = new Vector3(0f, RigDimensions.ShortsCenterY, 0f),
+                MaterialOverride = shortsMaterial
+            };
+            lowerPivot.AddChild(shortsMesh);
+        }
 
         MeshInstance3D? leftBoot = null;
         MeshInstance3D? rightBoot = null;

@@ -327,6 +327,20 @@ public sealed class PlayerDynamicsTests
             $"1.0 gave {baseline:F3} rad");
     }
 
+    [Fact]
+    public void DefaultStyleKeepsLegsAndDropsAnimatedBoots()
+    {
+        // Owner feedback 2026-11-26: the floating feet swinging against the rigid leg cylinder look out of
+        // place, so the animated boots are off by default while the original leg cylinder stays. Both the
+        // boots-on and no-legs looks remain available as presets.
+        Assert.True(PlayerVisualStyle.Recommended.ShowLegs);
+        Assert.False(PlayerVisualStyle.Recommended.ShowBoots);
+        Assert.True(PlayerVisualStyle.WithBoots.ShowBoots);
+        Assert.False(PlayerVisualStyle.NoLegs.ShowLegs);
+        Assert.True(PlayerVisualStyle.Recommended.ShowShadow);
+        Assert.True(PlayerVisualStyle.Recommended.ShowHands);
+    }
+
     // =========================================================================================
     // Fixtures
     // =========================================================================================
