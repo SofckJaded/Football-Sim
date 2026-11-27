@@ -254,6 +254,11 @@ public sealed class MatchSimulationEngine
         // read of an opponent's attributes. A7.1: the same validated configuration owns the scan model,
         // so a fixture's `Ai` block decides whether its players turn their heads.
         _perceptionSystem = new PerceptionSystem(ScoutingReport.FromSquad(_players), _config.Ai);
+
+        // W5: the per-player observer is built from the finished squads (both construction paths above have
+        // populated them) and consumes the start-of-match rules events without attributing anything.
+        PlayerStats = new MatchPlayerPerformanceTracker(_players);
+        PlayerStats.ApplyRuleEvents(_rulesEngine.Events, 0);
     }
 
     public int CurrentTick { get; private set; }
@@ -268,6 +273,15 @@ public sealed class MatchSimulationEngine
     public PreMatchConfig Config => _config;
     public BallState Ball { get; }
     public IReadOnlyList<FootballerState> Players => _players;
+
+    /// <summary>
+    /// W5 additive observer: per-player goals/assists/shots/passes/tackles/saves/cards/stamina and match
+    /// minutes, derived from the authoritative contacts and rules events the engine already produces. It is
+    /// pure observation — no decision path reads it and it consumes no randomness — so a match whose caller
+    /// ignores it is bit-for-bit the same match.
+    /// </summary>
+    public MatchPlayerPerformanceTracker PlayerStats { get; private set; } = null!;
+
     public MatchRulesEngine Rules => _rulesEngine;
     public TeamTacticalCoordinator Tactics => _tacticalCoordinator;
 
@@ -362,17 +376,34 @@ public sealed class MatchSimulationEngine
         int idCounter = 1;
         foreach (TeamId team in new[] { TeamId.Home, TeamId.Away })
         {
+            // W5 additive hook: a stated lineup replaces the generated identities shirt by shirt. When it is
+            // null the loop below is the pre-W5 code path unchanged (same roles, archetypes, tendencies and
+            // feet), so an ordinary match is bit-for-bit the same match it always was.
+            IReadOnlyList<MatchPlayerSpec>? lineup =
+                team == TeamId.Home ? _config.HomeLineup : _config.AwayLineup;
+
             for (int shirt = 1; shirt <= _config.PlayersPerTeam; shirt++)
             {
                 int playerId = idCounter++;
-                var (role, _, _) = TeamTacticalCoordinator.GetFormationRoleAndSlot(shirt, _config.PlayersPerTeam);
+                var (formationRole, _, _) = TeamTacticalCoordinator.GetFormationRoleAndSlot(shirt, _config.PlayersPerTeam);
+                MatchPlayerSpec? spec = lineup is null ? null : lineup[shirt - 1];
 
-                // A7.6: the default squad fields an archetype per shirt (all seven once in 11v11), which is
-                // the behaviour change; with `EnableArchetypes` off every player is the pre-A7.6 player and
-                // the squad is the uniform one the A/B compares against.
-                PlayerArchetype archetype = _config.Ai.EnableArchetypes
-                    ? PlayerArchetypeProfile.ForShirt(role, shirt, _config.PlayersPerTeam)
-                    : PlayerArchetype.None;
+                TacticalRole role = spec?.Role ?? formationRole;
+                PlayerArchetype archetype = spec is null
+                    ? (_config.Ai.EnableArchetypes
+                        ? PlayerArchetypeProfile.ForShirt(role, shirt, _config.PlayersPerTeam)
+                        : PlayerArchetype.None)
+                    : spec.Archetype;
+
+                PlayerAttributes attributes = spec?.Attributes ?? new PlayerAttributes
+                {
+                    // Deterministic footedness per shirt so the same seed/replay is identical.
+                    PreferredFoot = shirt is 3 or 7 or 11 ? Footedness.Left : Footedness.Right
+                };
+                if (spec?.PreferredFoot is { } foot && attributes.PreferredFoot != foot)
+                {
+                    attributes = WithPreferredFoot(attributes, foot);
+                }
 
                 var player = new FootballerState
                 {
@@ -381,12 +412,9 @@ public sealed class MatchSimulationEngine
                     ShirtNumber = shirt,
                     Role = role,
                     Archetype = archetype,
-                    Attributes = new PlayerAttributes
-                    {
-                        // Deterministic footedness per shirt so the same seed/replay is identical.
-                        PreferredFoot = shirt is 3 or 7 or 11 ? Footedness.Left : Footedness.Right
-                    },
-                    Tendencies = PlayerTendencyProfile.For(role, archetype)
+                    Attributes = attributes,
+                    Tendencies = spec?.Tendencies ?? PlayerTendencyProfile.For(role, archetype),
+                    Stamina01 = spec?.InitialStamina01 ?? 1.0f
                 };
 
                 // Audit F22: the squad is public state, so its attributes are validated once here
@@ -412,6 +440,25 @@ public sealed class MatchSimulationEngine
             }
         }
     }
+
+    /// <summary>Copies an attribute set with a different strong foot (the spec's foot override).</summary>
+    private static PlayerAttributes WithPreferredFoot(PlayerAttributes source, Footedness foot) => new()
+    {
+        PreferredFoot = foot,
+        MaxSprintSpeed = source.MaxSprintSpeed,
+        Acceleration = source.Acceleration,
+        AgilityTurnRate = source.AgilityTurnRate,
+        StaminaCapacity = source.StaminaCapacity,
+        FootAccuracy01 = source.FootAccuracy01,
+        ShotPowerMax = source.ShotPowerMax,
+        FirstTouch01 = source.FirstTouch01,
+        Balance01 = source.Balance01,
+        Strength01 = source.Strength01,
+        ReachRadius = source.ReachRadius,
+        ReactionDelaySeconds = source.ReactionDelaySeconds,
+        Composure01 = source.Composure01,
+        GoalkeepingReflex01 = source.GoalkeepingReflex01
+    };
 
     /// <summary>
     /// Builds the squads from the scenario's explicit player specs.
@@ -824,6 +871,10 @@ public sealed class MatchSimulationEngine
             // commands above. A kick that lost the tick's arbitration is not a pass attempt.
             _statistics.ApplyContacts(_executionSystem.ContactEvents, CurrentTick);
 
+            // W5 additive observer: the same authoritative contacts feed the per-player lines. Observation
+            // only — it consumes no randomness and mutates nothing but its own counters.
+            PlayerStats.ApplyContacts(_executionSystem.ContactEvents, CurrentTick);
+
             // A8.1: a contract's continuation is the kick it actually became. Applied from the same
             // contact events the rules engine and the statistics consume, so a combination is attributed
             // to a play — never to two players happening to stand near each other.
@@ -846,6 +897,7 @@ public sealed class MatchSimulationEngine
             // A restart/pause is not play: ownership cannot survive it.
             _possessionTracker.Reset();
             _statistics.ResetPassPhase();
+            PlayerStats.ResetPassPhase(CurrentTick);
         }
 
         // Audit F08: hand this tick's plays to the rules engine, then drain them so a restart
@@ -854,6 +906,13 @@ public sealed class MatchSimulationEngine
             _players, Ball, _config.HalfDurationSeconds, dt,
             livePlay ? _executionSystem.ContactEvents : null,
             livePlay ? _contactGeometry : null);
+
+        // W5: goals, cards and the final whistle feed the per-player lines; full time freezes them.
+        PlayerStats.ApplyRuleEvents(_rulesEngine.Events, CurrentTick);
+        if (_rulesEngine.Phase == MatchPhase.FullTime && !PlayerStats.HasCapturedEnd)
+        {
+            PlayerStats.CaptureEnd(_players, _rulesEngine.MatchClockSeconds);
+        }
 
         ApplyResetHooks();
 

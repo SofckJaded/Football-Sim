@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using FootballSim;
 using FootballSim.Core;
 using FootballSim.World.Core;
 using FootballSim.World.Data;
@@ -84,6 +85,9 @@ public sealed class CareerSession
 
     /// <summary>The prepared live match, waiting for the bridge to play it.</summary>
     private CareerMatchContext? _liveContext;
+
+    /// <summary>The engine-ready bridge setup for the prepared live match (W5).</summary>
+    private Bridge.WorldMatchSetup? _liveSetup;
 
     /// <summary>Creates the session around an existing (already generated) world.</summary>
     private CareerSession(
@@ -311,7 +315,7 @@ public sealed class CareerSession
     /// True when the career can be captured by the save layer right now. A prepared-but-uncommitted live match
     /// is frontend state, so it must be committed (or discarded) before saving.
     /// </summary>
-    public bool CanSave => _liveContext is null && _runner.ExternalResultCount == 0;
+    public bool CanSave => _liveContext is null && _liveSetup is null && _runner.ExternalResultCount == 0;
 
     // ---------------------------------------------------------------------------------------------
     // Weekly training.
@@ -597,7 +601,84 @@ public sealed class CareerSession
     }
 
     /// <summary>Drops a prepared live match without recording a result (the frontend closed it).</summary>
-    public void DiscardLiveMatch() => _liveContext = null;
+    public void DiscardLiveMatch()
+    {
+        _liveContext = null;
+        _liveSetup = null;
+    }
+
+    /// <summary>
+    /// Prepares the human's live match as an engine-ready bridge setup (W5): the real
+    /// <c>FootballSim.MatchSimulationEngine</c> configuration built from both world lineups, the engine-shirt to
+    /// world-player mapping and the human lock. Call it instead of <see cref="PrepareHumanLiveMatch"/> when the
+    /// frontend is going to run the real match engine; the W4 context DTO stays available for lightweight
+    /// frontends and tests.
+    /// </summary>
+    /// <param name="halfDurationSeconds">Simulated seconds per half (2700 = a real 45-minute half).</param>
+    /// <returns>The prepared engine match.</returns>
+    /// <exception cref="InvalidOperationException">There is no human fixture this week, or one is already prepared.</exception>
+    public Bridge.WorldMatchSetup PrepareHumanLiveMatchSetup(float halfDurationSeconds = 2700f)
+    {
+        Bridge.WorldMatchSetup? existing = _liveSetup;
+        if (existing is not null) return existing;
+
+        CareerMatchContext context = PrepareHumanLiveMatch();
+        WorldFixture fixture = FindFixture(context.FixtureId)
+            ?? throw new InvalidOperationException($"Prepared fixture {context.FixtureId} vanished from the world.");
+        _liveSetup = Bridge.WorldMatchBridge.PrepareMatch(
+            _world,
+            fixture,
+            context.HomeLineup,
+            context.AwayLineup,
+            _humanPlayerId,
+            halfDurationSeconds);
+        return _liveSetup;
+    }
+
+    /// <summary>
+    /// Commits a live match played in the real engine: the bridge converts the finished engine output into the
+    /// living world's report, which is then applied through <see cref="CommitHumanLiveMatchResult"/> exactly like
+    /// a quick-simulated match (stats, condition, growth minutes, career ledger).
+    /// </summary>
+    /// <param name="engine">The finished match engine.</param>
+    /// <param name="setup">The setup the engine was created from.</param>
+    /// <returns>The career-level result.</returns>
+    /// <exception cref="ArgumentNullException">Any argument is null.</exception>
+    /// <exception cref="InvalidOperationException">No live match is prepared, or the setup is for another fixture.</exception>
+    public CareerMatchResult CommitHumanLiveMatchEngine(
+        MatchSimulationEngine engine, Bridge.WorldMatchSetup setup)
+    {
+        ArgumentNullException.ThrowIfNull(engine);
+        ArgumentNullException.ThrowIfNull(setup);
+
+        if (_liveContext is not { } context || context.FixtureId != setup.FixtureId)
+        {
+            throw new InvalidOperationException(
+                $"No live match is prepared for fixture {setup.FixtureId}; call PrepareHumanLiveMatchSetup first.");
+        }
+
+        if (engine.Rules.Phase != MatchPhase.FullTime)
+        {
+            throw new InvalidOperationException("The live match has not reached full time.");
+        }
+
+        LiveMatchReport report = Bridge.WorldMatchBridge.BuildLiveMatchReport(_world, setup, engine);
+        return CommitHumanLiveMatchResult(report);
+    }
+
+    /// <summary>
+    /// Runs the human's live match headlessly in the real engine and commits it (the CLI/test path for a "played"
+    /// live match). The same code path the Godot matchday uses, without the three-dimensional frontend.
+    /// </summary>
+    /// <param name="halfDurationSeconds">Simulated seconds per half (2700 = a real 45-minute half).</param>
+    /// <returns>The career-level result.</returns>
+    public CareerMatchResult SimulateHumanLiveMatch(float halfDurationSeconds = 2700f)
+    {
+        Bridge.WorldMatchSetup setup = PrepareHumanLiveMatchSetup(halfDurationSeconds);
+        MatchSimulationEngine engine = Bridge.WorldMatchBridge.CreateEngine(setup);
+        Bridge.WorldMatchBridge.RunToFullTime(engine);
+        return CommitHumanLiveMatchEngine(engine, setup);
+    }
 
     /// <summary>
     /// Commits a played live match: converts the bridge's report into the quick-sim result shape and queues it
@@ -663,6 +744,7 @@ public sealed class CareerSession
         _runner.QueueExternalResult(
             new ExternalMatchResult(context.FixtureId, result, context.HomeLineup, context.AwayLineup));
         _liveContext = null;
+        _liveSetup = null;
 
         return BuildMatchResult(fixture, result, context.HomeLineup, context.AwayLineup);
     }

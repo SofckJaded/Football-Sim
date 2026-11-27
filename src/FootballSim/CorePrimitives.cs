@@ -1924,10 +1924,53 @@ public sealed class PreMatchConfig
     public TeamTacticalProfile AwayProfile { get; init; } = TeamTacticalProfile.DirectCounterattack;
 
     /// <summary>
+    /// W5 additive hook: an explicit home lineup supplied by an external world (the living-world career
+    /// bridge). When <c>null</c> the engine generates its squad exactly as it always has. When set it must
+    /// hold exactly <see cref="PlayersPerTeam"/> specs, one per shirt 1..PlayersPerTeam; the engine still
+    /// derives the formation slot from the shirt number, so positions and duties are unchanged and only the
+    /// player identities (attributes, tendencies, archetype, starting stamina) differ.
+    /// </summary>
+    public IReadOnlyList<MatchPlayerSpec>? HomeLineup { get; init; } = null;
+
+    /// <summary>W5 additive hook: the explicit away lineup; see <see cref="HomeLineup"/>.</summary>
+    public IReadOnlyList<MatchPlayerSpec>? AwayLineup { get; init; } = null;
+
+    /// <summary>
     /// AI runtime settings for this match. The default reproduces the behaviour that preceded the
     /// settings object, so an existing caller that does not mention it keeps its exact behaviour.
     /// </summary>
     public AiRuntimeConfig Ai { get; init; } = AiRuntimeConfig.Default;
 }
+
+/// <summary>
+/// W5 additive hook: one externally supplied player identity for a match squad (the living-world career
+/// bridge). Every member is optional and neutral by default, so a spec that only states attributes keeps the
+/// engine's own role, archetype, tendency and stamina behaviour for that shirt.
+///
+/// <para><b>Why a separate type instead of extending FootballerState.</b> <c>FootballerState</c> is mutable
+/// authoritative match state; a spec is a request. The engine validates every spec with
+/// <see cref="SimulationConfigValidation"/> before building the squad, and a run whose config has no lineups
+/// never constructs a spec at all — the pre-W5 code path is bit-for-bit unchanged.</para>
+/// </summary>
+/// <param name="Name">Display name for the bridge/HUD (the engine itself has no name field; may be empty).</param>
+/// <param name="ShirtNumber">Optional shirt number 1..PlayersPerTeam; must match the spec's list position when stated.</param>
+/// <param name="Role">Optional role; when null the engine keeps the formation role for the shirt.</param>
+/// <param name="Archetype">Optional archetype preference (None = neutral).</param>
+/// <param name="Attributes">Optional attributes; when null the engine's generated attributes are kept.</param>
+/// <param name="Tendencies">
+/// Optional tendencies. When null the engine derives them from the role and archetype exactly as it does for
+/// a generated squad (so a bridge only has to supply tendencies when it has a better statement than the role).
+/// </param>
+/// <param name="InitialStamina01">Starting stamina/freshness, 0..1 (default fully fresh).</param>
+/// <param name="PreferredFoot">Optional strong foot; when null the generated foot is kept.</param>
+public sealed record MatchPlayerSpec(
+    string Name = "",
+    int? ShirtNumber = null,
+    TacticalRole? Role = null,
+    PlayerArchetype Archetype = PlayerArchetype.None,
+    PlayerAttributes? Attributes = null,
+    PlayerTendencies? Tendencies = null,
+    float InitialStamina01 = 1.0f,
+    Footedness? PreferredFoot = null);
 
 public readonly record struct RecordedTickCommands(int Tick, Dictionary<int, FootballerCommand> CommandsByPlayer);

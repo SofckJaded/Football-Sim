@@ -75,7 +75,84 @@ public static class SimulationConfigValidation
 
         ValidateTacticalProfile(config.HomeProfile, nameof(config.HomeProfile));
         ValidateTacticalProfile(config.AwayProfile, nameof(config.AwayProfile));
+        ValidateLineups(config);
         AiRuntimeConfigValidation.Validate(config.Ai, nameof(config.Ai));
+    }
+
+    /// <summary>
+    /// Validates the W5 additive external lineups, when they are present. A null lineup means "generate this
+    /// side exactly as before", which is the pre-W5 behaviour; a stated lineup must be a complete, valid
+    /// shirt-ordered squad so the bridge cannot half-replace a team.
+    /// </summary>
+    /// <param name="config">The match configuration to validate.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="config"/> is null.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">A lineup length, shirt, role, stamina or attribute value is invalid.</exception>
+    public static void ValidateLineups(PreMatchConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+
+        ValidateLineup(config.HomeLineup, config.PlayersPerTeam, nameof(config.HomeLineup));
+        ValidateLineup(config.AwayLineup, config.PlayersPerTeam, nameof(config.AwayLineup));
+    }
+
+    private static void ValidateLineup(IReadOnlyList<MatchPlayerSpec>? lineup, int playersPerTeam, string name)
+    {
+        if (lineup is null) return;
+
+        if (lineup.Count != playersPerTeam)
+        {
+            throw new ArgumentOutOfRangeException(
+                name, lineup.Count,
+                $"{name} must state exactly {playersPerTeam} players for a {playersPerTeam}-a-side match.");
+        }
+
+        for (int index = 0; index < lineup.Count; index++)
+        {
+            MatchPlayerSpec spec = lineup[index]
+                ?? throw new ArgumentOutOfRangeException(name, index, $"{name}[{index}] is null.");
+
+            if (spec.ShirtNumber is int shirt && shirt != index + 1)
+            {
+                throw new ArgumentOutOfRangeException(
+                    name, shirt,
+                    $"{name}[{index}] states shirt {shirt}; a lineup is ordered by shirt 1..{playersPerTeam}.");
+            }
+
+            if (spec.Role is { } role && !Enum.IsDefined(role))
+            {
+                throw new ArgumentOutOfRangeException(
+                    name, role, $"{name}[{index}].Role is not a defined tactical role.");
+            }
+
+            if (!Enum.IsDefined(spec.Archetype))
+            {
+                throw new ArgumentOutOfRangeException(
+                    name, spec.Archetype, $"{name}[{index}].Archetype is not a defined archetype.");
+            }
+
+            if (!float.IsFinite(spec.InitialStamina01) || spec.InitialStamina01 < 0f || spec.InitialStamina01 > 1f)
+            {
+                throw new ArgumentOutOfRangeException(
+                    name, spec.InitialStamina01,
+                    $"{name}[{index}].InitialStamina01 must be a finite value inside 0..1.");
+            }
+
+            if (spec.Attributes is { } attributes)
+            {
+                ValidatePlayerAttributes(attributes, $"{name}[{index}].Attributes");
+            }
+
+            if (spec.Tendencies is { } tendencies)
+            {
+                ValidateTendencies(tendencies, $"{name}[{index}].Tendencies");
+            }
+
+            if (spec.PreferredFoot is { } foot && !Enum.IsDefined(foot))
+            {
+                throw new ArgumentOutOfRangeException(
+                    name, foot, $"{name}[{index}].PreferredFoot is not a valid foot.");
+            }
+        }
     }
 
     /// <summary>
