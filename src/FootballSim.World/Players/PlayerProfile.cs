@@ -1,5 +1,6 @@
 using FootballSim.Core;
 using FootballSim.World.Core;
+using FootballSim.World.World;
 
 namespace FootballSim.World.Players;
 
@@ -623,6 +624,7 @@ public sealed class WorldPlayer
         Personality = personality.Clamped();
         Backstory = backstory;
         Injury = new InjuryState();
+        Contract = new PlayerContract();
         Form = new RecentForm();
         Trends = new PlayerTrendHistory();
         CurrentSeason = new PlayerSeasonStats();
@@ -671,6 +673,13 @@ public sealed class WorldPlayer
 
     /// <summary>Current injury state.</summary>
     public InjuryState Injury { get; }
+
+    /// <summary>
+    /// Contract terms at the current club: wage, expiry and the loan link (W3 finance/transfer systems).
+    /// The employer itself is <see cref="ClubId"/>; a newly generated player starts on a default contract
+    /// that the contract system fills in.
+    /// </summary>
+    public PlayerContract Contract { get; }
 
     /// <summary>Current club, or <see cref="ClubId.None"/> for a free agent.</summary>
     public ClubId ClubId { get; set; }
