@@ -4,112 +4,115 @@ using FootballSim.Core;
 namespace FootballSim.GodotClient;
 
 /// <summary>
-/// Builds the shared 3D stadium dressing (environment, grass, markings, goals) for the match
-/// and training scenes. Pass the goal signs to build only the goals a scene needs.
+/// Builds the shared 3D stadium dressing (environment, pitch surface, goals) for the match and
+/// training scenes. Pass the goal signs to build only the goals a scene needs, and hand the returned
+/// <see cref="PitchSurfaceHandle"/> to the scene so it can push the per-frame ball contact shadow.
+///
+/// The ground itself is built by <see cref="PitchSurfaceBuilder"/> as two flush <c>y = 0.0</c> meshes
+///; the old ~105 separate stripe/marking/apron boxes are gone (docs/football-grass.md §5.8, G1).
 /// </summary>
 public static class PitchVisualBuilder
 {
-    public static void Build(Node3D root, PitchDimensions p, params float[] goalSigns)
+    /// <summary>Sun pitch in degrees; lower than the old -52 for stripe separation and grounded shadows.</summary>
+    public const float SunElevationDegrees = -36f;
+
+    /// <summary>Sun yaw in degrees.</summary>
+    public const float SunYawDegrees = 28f;
+
+    /// <summary>
+    /// Builds the whole pitch dressing under <paramref name="root"/> at the High quality tier and
+    /// returns the handle to the ground surface so callers can drive the per-frame shader state.
+    /// </summary>
+    public static PitchSurfaceHandle Build(Node3D root, PitchDimensions p, params float[] goalSigns) =>
+        Build(root, p, PitchQualitySettings.For(PitchQuality.High), goalSigns);
+
+    /// <summary>
+    /// Builds the whole pitch dressing under <paramref name="root"/> at an explicit quality tier
+    /// (the Settings page's "Pitch detail" row resolves it before the scene builds the pitch).
+    /// </summary>
+    public static PitchSurfaceHandle Build(Node3D root, PitchDimensions p, PitchQualitySettings quality,
+        params float[] goalSigns)
     {
-        BuildEnvironment(root);
+        DirectionalLight3D sun = BuildEnvironment(root);
+        Vector3 sunForward = sun.GlobalTransform.Basis.Z.Normalized() * -1f;
 
-        var apron = new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(p.Length + 16f, 0.08f, p.Width + 16f) },
-            Position = new Vector3(0f, -0.05f, 0f),
-            MaterialOverride = new StandardMaterial3D { AlbedoColor = new Color(0.11f, 0.30f, 0.14f) }
-        };
-        root.AddChild(apron);
+        PitchSurfaceHandle surface = PitchSurfaceBuilder.Build(root, p, quality, sunForward);
 
-        int stripeCount = 18;
-        float stripeWidth = p.Length / stripeCount;
-        var lightGrass = new StandardMaterial3D { AlbedoColor = new Color(0.18f, 0.50f, 0.22f) };
-        var darkGrass = new StandardMaterial3D { AlbedoColor = new Color(0.15f, 0.44f, 0.19f) };
-
-        for (int i = 0; i < stripeCount; i++)
-        {
-            float centerX = -p.HalfLength + (i + 0.5f) * stripeWidth;
-            var stripe = new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(stripeWidth, 0.02f, p.Width) },
-                Position = new Vector3(centerX, -0.01f, 0f),
-                MaterialOverride = (i % 2 == 0) ? lightGrass : darkGrass
-            };
-            root.AddChild(stripe);
-        }
-
-        var lineMat = new StandardMaterial3D
-        {
-            AlbedoColor = new Color(0.96f, 0.96f, 0.96f),
-            Roughness = 0.9f
-        };
-        const float lw = 0.14f;
-
-        AddPitchLine(root, new Vector3(0f, 0.01f, -p.HalfWidth), new Vector3(p.Length + lw, 0.01f, lw), lineMat);
-        AddPitchLine(root, new Vector3(0f, 0.01f, p.HalfWidth), new Vector3(p.Length + lw, 0.01f, lw), lineMat);
-        AddPitchLine(root, new Vector3(-p.HalfLength, 0.01f, 0f), new Vector3(lw, 0.01f, p.Width + lw), lineMat);
-        AddPitchLine(root, new Vector3(p.HalfLength, 0.01f, 0f), new Vector3(lw, 0.01f, p.Width + lw), lineMat);
-        AddPitchLine(root, new Vector3(0f, 0.01f, 0f), new Vector3(lw, 0.01f, p.Width), lineMat);
-
-        AddHollowCircle(root, Vector3.Zero, p.CenterCircleRadius, lw, 48, lineMat);
-        AddSpotDisc(root, Vector3.Zero, 0.28f, lineMat);
-
-        foreach (float sign in goalSigns)
-        {
-            float goalLineX = sign * p.HalfLength;
-            float penEdgeX = goalLineX - sign * p.PenaltyAreaLength;
-            float halfPenW = p.PenaltyAreaWidth * 0.5f;
-
-            AddPitchLine(root, new Vector3(penEdgeX, 0.01f, 0f), new Vector3(lw, 0.01f, p.PenaltyAreaWidth + lw), lineMat);
-            AddPitchLine(root, new Vector3(goalLineX - sign * (p.PenaltyAreaLength * 0.5f), 0.01f, -halfPenW), new Vector3(p.PenaltyAreaLength, 0.01f, lw), lineMat);
-            AddPitchLine(root, new Vector3(goalLineX - sign * (p.PenaltyAreaLength * 0.5f), 0.01f, halfPenW), new Vector3(p.PenaltyAreaLength, 0.01f, lw), lineMat);
-
-            float gaEdgeX = goalLineX - sign * p.GoalAreaLength;
-            float halfGaW = p.GoalAreaWidth * 0.5f;
-            AddPitchLine(root, new Vector3(gaEdgeX, 0.01f, 0f), new Vector3(lw, 0.01f, p.GoalAreaWidth + lw), lineMat);
-            AddPitchLine(root, new Vector3(goalLineX - sign * (p.GoalAreaLength * 0.5f), 0.01f, -halfGaW), new Vector3(p.GoalAreaLength, 0.01f, lw), lineMat);
-            AddPitchLine(root, new Vector3(goalLineX - sign * (p.GoalAreaLength * 0.5f), 0.01f, halfGaW), new Vector3(p.GoalAreaLength, 0.01f, lw), lineMat);
-
-            AddSpotDisc(root, new Vector3(goalLineX - sign * p.PenaltySpotDistance, 0.01f, 0f), 0.24f, lineMat);
-            Build3DGoal(root, p, sign);
-        }
+        if (goalSigns.Length > 0)
+            BuildGoals(root, p, goalSigns);
+        return surface;
     }
 
-    private static void BuildEnvironment(Node3D root)
+    private static DirectionalLight3D BuildEnvironment(Node3D root)
     {
+        // Lightweight procedural sky used only for ambient + reflected IBL (the visible background
+        // stays the dark solid colour until the stadium-dressing milestone). Mown bands need real
+        // sky grazing reflection to read as turf instead of paint.
+        var skyMaterial = new ProceduralSkyMaterial
+        {
+            SkyTopColor = new Color(0.28f, 0.42f, 0.62f),
+            SkyHorizonColor = new Color(0.62f, 0.68f, 0.74f),
+            SkyCurve = 0.12f,
+            SkyEnergyMultiplier = 0.85f,
+            GroundBottomColor = new Color(0.14f, 0.15f, 0.14f),
+            GroundHorizonColor = new Color(0.36f, 0.39f, 0.36f),
+            GroundCurve = 0.08f,
+            GroundEnergyMultiplier = 0.45f,
+            SunAngleMax = 16f,
+            SunCurve = 0.08f
+        };
+        var sky = new Sky
+        {
+            SkyMaterial = skyMaterial,
+            RadianceSize = Sky.RadianceSizeEnum.Size128
+        };
+
         var env = new Godot.Environment
         {
             BackgroundMode = Godot.Environment.BGMode.Color,
             BackgroundColor = new Color(0.10f, 0.12f, 0.16f),
-            AmbientLightSource = Godot.Environment.AmbientSource.Color,
-            AmbientLightColor = new Color(0.75f, 0.78f, 0.82f),
-            AmbientLightEnergy = 0.65f
+            Sky = sky,
+            AmbientLightSource = Godot.Environment.AmbientSource.Sky,
+            AmbientLightSkyContribution = 0.8f,
+            AmbientLightEnergy = 0.85f,
+            ReflectedLightSource = Godot.Environment.ReflectionSource.Sky
         };
         root.AddChild(new WorldEnvironment { Environment = env });
 
         var sun = new DirectionalLight3D
         {
-            RotationDegrees = new Vector3(-52f, 28f, 0f),
-            LightEnergy = 1.15f,
-            ShadowEnabled = true
+            Name = "Sun",
+            RotationDegrees = new Vector3(SunElevationDegrees, SunYawDegrees, 0f),
+            LightEnergy = 1.25f,
+            ShadowEnabled = true,
+            // 65 m zoom puts the far touchline 95-125 m from the camera: the old 100 m default cut
+            // far-side player shadows off. 150 m with two splits fixes that and halves the shadow
+            // pass cost versus the default four splits.
+            DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel2Splits,
+            DirectionalShadowMaxDistance = 150f,
+            DirectionalShadowSplit1 = 0.22f,
+            DirectionalShadowBlendSplits = true,
+            ShadowBias = 0.05f,
+            ShadowNormalBias = 1.2f
         };
+        sun.AddToGroup("pitch_sun");
         root.AddChild(sun);
+        return sun;
     }
 
-    private static void Build3DGoal(Node3D root, PitchDimensions p, float sideSign)
+    /// <summary>
+    /// Builds both goals as two <see cref="MultiMeshInstance3D"/> nodes (all opaque posts and
+    /// crossbars; all net panels) so the whole dressing stays well under the 8 draw-call gate
+    /// instead of the old 18 separate meshes.
+    /// </summary>
+    private static void BuildGoals(Node3D root, PitchDimensions p, float[] goalSigns)
     {
-        float gx = sideSign * p.HalfLength;
-        float backX = sideSign * (p.HalfLength + p.GoalDepth);
-        float halfGW = p.HalfGoalWidth;
-        float gh = p.GoalHeight;
-
         var postMat = new StandardMaterial3D
         {
             AlbedoColor = Colors.White,
             Metallic = 0.3f,
             Roughness = 0.3f
         };
-
         var netMat = new StandardMaterial3D
         {
             AlbedoColor = new Color(0.92f, 0.94f, 0.98f, 0.35f),
@@ -117,95 +120,62 @@ public static class PitchVisualBuilder
             CullMode = BaseMaterial3D.CullModeEnum.Disabled
         };
 
-        foreach (float zSign in new[] { -1f, 1f })
+        var unitCylinder = new CylinderMesh { TopRadius = 1f, BottomRadius = 1f, Height = 1f, RadialSegments = 10 };
+        var unitBox = new BoxMesh { Size = Vector3.One };
+
+        int framesPerGoal = 5;
+        int netPanelsPerGoal = 4;
+        var posts = new MultiMesh
         {
-            var post = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = p.GoalPostRadius, BottomRadius = p.GoalPostRadius, Height = gh },
-                Position = new Vector3(gx, gh * 0.5f, zSign * halfGW),
-                MaterialOverride = postMat
-            };
-            root.AddChild(post);
+            Mesh = unitCylinder,
+            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
+            InstanceCount = framesPerGoal * goalSigns.Length
+        };
+        var nets = new MultiMesh
+        {
+            Mesh = unitBox,
+            TransformFormat = MultiMesh.TransformFormatEnum.Transform3D,
+            InstanceCount = netPanelsPerGoal * goalSigns.Length
+        };
 
-            var backPost = new MeshInstance3D
-            {
-                Mesh = new CylinderMesh { TopRadius = 0.04f, BottomRadius = 0.04f, Height = gh },
-                Position = new Vector3(backX, gh * 0.5f, zSign * halfGW),
-                MaterialOverride = postMat
-            };
-            root.AddChild(backPost);
+        int postIndex = 0;
+        int netIndex = 0;
+        foreach (float sideSign in goalSigns)
+        {
+            float gx = sideSign * p.HalfLength;
+            float backX = sideSign * (p.HalfLength + p.GoalDepth);
+            float halfGW = p.HalfGoalWidth;
+            float gh = p.GoalHeight;
+            float midX = (gx + backX) * 0.5f;
 
-            var sideNet = new MeshInstance3D
+            Basis postScale = ScaleBasis(p.GoalPostRadius, gh, p.GoalPostRadius);
+            Basis backPostScale = ScaleBasis(0.04f, gh, 0.04f);
+            Basis crossbarScale = ScaleBasis(p.GoalPostRadius, p.GoalWidth + p.GoalPostRadius * 2f, p.GoalPostRadius);
+
+            foreach (float zSign in new[] { -1f, 1f })
             {
-                Mesh = new BoxMesh { Size = new Vector3(p.GoalDepth, gh, 0.02f) },
-                Position = new Vector3((gx + backX) * 0.5f, gh * 0.5f, zSign * halfGW),
-                MaterialOverride = netMat
-            };
-            root.AddChild(sideNet);
+                posts.SetInstanceTransform(postIndex++, new Transform3D(postScale, new Vector3(gx, gh * 0.5f, zSign * halfGW)));
+                posts.SetInstanceTransform(postIndex++, new Transform3D(backPostScale, new Vector3(backX, gh * 0.5f, zSign * halfGW)));
+            }
+            // Crossbar: the unit cylinder runs along local +Y, so rotate it onto +Z.
+            Basis crossbarBasis = new Basis(Vector3.Right, Mathf.Pi * 0.5f) * crossbarScale;
+            posts.SetInstanceTransform(postIndex++, new Transform3D(crossbarBasis, new Vector3(gx, gh, 0f)));
+
+            foreach (float zSign in new[] { -1f, 1f })
+            {
+                nets.SetInstanceTransform(netIndex++, new Transform3D(
+                    ScaleBasis(p.GoalDepth, gh, 0.02f), new Vector3(midX, gh * 0.5f, zSign * halfGW)));
+            }
+            nets.SetInstanceTransform(netIndex++, new Transform3D(
+                ScaleBasis(0.02f, gh, p.GoalWidth), new Vector3(backX, gh * 0.5f, 0f)));
+            nets.SetInstanceTransform(netIndex++, new Transform3D(
+                ScaleBasis(p.GoalDepth, 0.02f, p.GoalWidth), new Vector3(midX, gh, 0f)));
         }
 
-        var crossbar = new MeshInstance3D
-        {
-            Mesh = new CylinderMesh { TopRadius = p.GoalPostRadius, BottomRadius = p.GoalPostRadius, Height = p.GoalWidth + p.GoalPostRadius * 2f },
-            Position = new Vector3(gx, gh, 0f),
-            RotationDegrees = new Vector3(90f, 0f, 0f),
-            MaterialOverride = postMat
-        };
-        root.AddChild(crossbar);
-
-        var backNet = new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(0.02f, gh, p.GoalWidth) },
-            Position = new Vector3(backX, gh * 0.5f, 0f),
-            MaterialOverride = netMat
-        };
-        root.AddChild(backNet);
-
-        var topNet = new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = new Vector3(p.GoalDepth, 0.02f, p.GoalWidth) },
-            Position = new Vector3((gx + backX) * 0.5f, gh, 0f),
-            MaterialOverride = netMat
-        };
-        root.AddChild(topNet);
+        root.AddChild(new MultiMeshInstance3D { Name = "GoalFrames", Multimesh = posts, MaterialOverride = postMat });
+        root.AddChild(new MultiMeshInstance3D { Name = "GoalNets", Multimesh = nets, MaterialOverride = netMat });
     }
 
-    private static void AddPitchLine(Node3D root, Vector3 pos, Vector3 size, Material mat)
-    {
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new BoxMesh { Size = size },
-            Position = pos,
-            MaterialOverride = mat
-        });
-    }
-
-    private static void AddSpotDisc(Node3D root, Vector3 pos, float radius, Material mat)
-    {
-        root.AddChild(new MeshInstance3D
-        {
-            Mesh = new CylinderMesh { TopRadius = radius, BottomRadius = radius, Height = 0.015f },
-            Position = pos,
-            MaterialOverride = mat
-        });
-    }
-
-    private static void AddHollowCircle(Node3D root, Vector3 center, float radius, float lineWidth, int segments, Material mat)
-    {
-        float segLen = (2f * Mathf.Pi * radius) / segments * 1.05f;
-        for (int i = 0; i < segments; i++)
-        {
-            float angle = (i / (float)segments) * Mathf.Pi * 2f;
-            float x = center.X + Mathf.Cos(angle) * radius;
-            float z = center.Z + Mathf.Sin(angle) * radius;
-            var seg = new MeshInstance3D
-            {
-                Mesh = new BoxMesh { Size = new Vector3(lineWidth, 0.01f, segLen) },
-                Position = new Vector3(x, 0.01f, z),
-                Rotation = new Vector3(0f, -angle, 0f),
-                MaterialOverride = mat
-            };
-            root.AddChild(seg);
-        }
-    }
+    private static Basis ScaleBasis(float x, float y, float z) =>
+        Basis.Identity.Scaled(new Vector3(x, y, z));
 }

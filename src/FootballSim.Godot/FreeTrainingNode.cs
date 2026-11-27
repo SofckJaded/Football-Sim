@@ -29,7 +29,8 @@ public partial class FreeTrainingNode : Node3D
     /// <summary>Owns every articulated player rig and its presentation-only pose solver (shared with the match).</summary>
     private PlayerVisualManager _visuals = null!;
     private Node3D _ballNode = null!;
-    private MeshInstance3D _ballShadow = null!;
+    /// <summary>Handle to the procedural pitch surface; drives the analytic ball contact shadow.</summary>
+    private PitchSurfaceHandle _pitchSurface = null!;
     private Camera3D _camera = null!;
     private Node3D? _humanAimArrow;
     private readonly HumanControlReader _controls = new();
@@ -47,7 +48,7 @@ public partial class FreeTrainingNode : Node3D
         _ballRadius = _session.BallRadius;
 
         // Practice uses exactly the same pitch map as a match (both goals and all markings).
-        PitchVisualBuilder.Build(this, _session.Pitch, -1f, 1f);
+        _pitchSurface = PitchVisualBuilder.Build(this, _session.Pitch, -1f, 1f);
         BuildPlayerAndBallVisuals();
         BuildCamera();
 
@@ -153,21 +154,8 @@ public partial class FreeTrainingNode : Node3D
         };
         AddChild(_ballNode);
 
-        _ballShadow = new MeshInstance3D
-        {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = BallGeometry.ShadowRadius(_ballRadius),
-                BottomRadius = BallGeometry.ShadowRadius(_ballRadius),
-                Height = 0.01f
-            },
-            MaterialOverride = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(0f, 0f, 0f, 0.55f),
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha
-            }
-        };
-        AddChild(_ballShadow);
+        // The ball contact shadow is analytic and lives in the pitch shader (G2), so the old floating
+        // black disc is gone.
     }
 
     private void BuildCamera()
@@ -181,9 +169,7 @@ public partial class FreeTrainingNode : Node3D
         System.Numerics.Vector3 ballPos = System.Numerics.Vector3.Lerp(
             _session.Ball.PreviousPosition, _session.Ball.Position, alpha);
         _ballNode.Position = new Vector3(ballPos.X, ballPos.Y, ballPos.Z);
-        _ballShadow.Position = new Vector3(ballPos.X, 0.02f, ballPos.Z);
-        float shadowScale = Mathf.Clamp(1.0f - ballPos.Y * 0.08f, 0.35f, 1.0f);
-        _ballShadow.Scale = new Vector3(shadowScale, 1.0f, shadowScale);
+        _pitchSurface.SetBallShadow(new Vector3(ballPos.X, ballPos.Y, ballPos.Z), _ballRadius);
 
         // Players: the shared manager steps every presentation spring on simulated time and applies the
         // articulated pose. It is a consumer of the session, never a participant.

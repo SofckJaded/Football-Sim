@@ -27,3 +27,14 @@ project/assembly_name="FootballSim.Godot"
 [physics]
 
 common/enable_object_picking=false
+
+[rendering]
+
+; docs/football-grass.md §5.5 / G2.5: SMAA by default. The analytic markings SDF uses
+; coverage-preserving fwidth AA, stripes are feathered and the ground raises its roughness as the
+; detail normals fade, so SMAA stays shimmer-free without TAA's ~0.8 ms cost or capsule ghosting.
+; TAA remains an A/B contender in the bench harness only.
+anti_aliasing/quality/screen_space_aa=2
+anti_aliasing/quality/use_taa=false
+anti_aliasing/quality/msaa_3d=0
+anti_aliasing/screen_space_roughness_limiter/enabled=true

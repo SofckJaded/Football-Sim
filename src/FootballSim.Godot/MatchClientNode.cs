@@ -41,7 +41,8 @@ public partial class MatchClientNode : Node3D
 
     private MatchSimulationEngine _engine = null!;
     private Node3D _ballNode = null!;
-    private MeshInstance3D _ballShadowNode = null!;
+    /// <summary>Handle to the procedural pitch surface; drives the analytic ball contact shadow.</summary>
+    private PitchSurfaceHandle _pitchSurface = null!;
     /// <summary>Owns every articulated player rig and its presentation-only pose solver.</summary>
     private PlayerVisualManager _visuals = null!;
     private Camera3D _camera = null!;
@@ -249,9 +250,9 @@ public partial class MatchClientNode : Node3D
     {
         var bPos = System.Numerics.Vector3.Lerp(_engine.Ball.PreviousPosition, _engine.Ball.Position, alpha);
         _ballNode.Position = new Vector3(bPos.X, bPos.Y, bPos.Z);
-        _ballShadowNode.Position = new Vector3(bPos.X, 0.02f, bPos.Z);
-        float shadowScale = Mathf.Clamp(1.0f - bPos.Y * 0.08f, 0.35f, 1.0f);
-        _ballShadowNode.Scale = new Vector3(shadowScale, 1.0f, shadowScale);
+        // Ball contact shadow is analytic and lives in the pitch shader (one grounding pass, no extra
+        // draw call, no floating disc): the ball's height above y = 0 drives size and opacity.
+        _pitchSurface.SetBallShadow(new Vector3(bPos.X, bPos.Y, bPos.Z), _ballRadius);
 
         // Players: the manager reads the authoritative state, steps every presentation spring on the
         // simulated clock and applies the articulated pose. It never writes simulation state.
@@ -556,7 +557,7 @@ public partial class MatchClientNode : Node3D
 
     private void BuildLightingAndPitchVisuals()
     {
-        PitchVisualBuilder.Build(this, _engine.Pitch, -1f, 1f);
+        _pitchSurface = PitchVisualBuilder.Build(this, _engine.Pitch, -1f, 1f);
     }
 
     private void BuildPlayerAndBallVisuals()
@@ -579,22 +580,6 @@ public partial class MatchClientNode : Node3D
             MaterialOverride = new StandardMaterial3D { AlbedoColor = Colors.White, Roughness = 0.3f }
         };
         AddChild(_ballNode);
-
-        _ballShadowNode = new MeshInstance3D
-        {
-            Mesh = new CylinderMesh
-            {
-                TopRadius = BallGeometry.ShadowRadius(_ballRadius),
-                BottomRadius = BallGeometry.ShadowRadius(_ballRadius),
-                Height = 0.01f
-            },
-            MaterialOverride = new StandardMaterial3D
-            {
-                AlbedoColor = new Color(0f, 0f, 0f, 0.55f),
-                Transparency = BaseMaterial3D.TransparencyEnum.Alpha
-            }
-        };
-        AddChild(_ballShadowNode);
 
         // Audit F16: the aim pointer shows the resolved aim direction (movement, or cursor when no
         // gamepad is connected), not the body facing. Draw it as an arrow in front of the human.
