@@ -26,6 +26,14 @@ public partial class MainMenuNode : Control
         Gamepad
     }
 
+    /// <summary>Display order of the persisted pitch detail tiers in Settings.</summary>
+    private static readonly PitchQuality[] PitchDetailTiers =
+    {
+        PitchQuality.Low,
+        PitchQuality.Medium,
+        PitchQuality.High
+    };
+
     private readonly Color _accent = new(0.34f, 0.86f, 0.50f);
     private readonly Color _textColor = new(0.90f, 0.96f, 0.90f);
     private readonly Color _mutedColor = new(0.60f, 0.71f, 0.62f);
@@ -374,6 +382,23 @@ public partial class MainMenuNode : Control
             GameSettings.Save();
         };
         AddFieldRow("Resolution", resolutionOption);
+
+        var pitchDetailOption = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(0f, 40f),
+            SizeFlagsHorizontal = SizeFlags.ExpandFill
+        };
+        foreach (PitchQuality tier in PitchDetailTiers)
+            pitchDetailOption.AddItem(tier.ToString());
+        int pitchDetailIndex = Array.IndexOf(PitchDetailTiers, GameSettings.PitchDetail);
+        pitchDetailOption.Selected = pitchDetailIndex >= 0 ? pitchDetailIndex : PitchDetailTiers.Length - 1;
+        StyleOptionButton(pitchDetailOption);
+        pitchDetailOption.ItemSelected += index =>
+        {
+            GameSettings.SetPitchDetail(PitchDetailTiers[index]);
+            GameSettings.Save();
+        };
+        AddFieldRow("Pitch detail", pitchDetailOption);
 
         AddPageHeading("CONTROLS");
 

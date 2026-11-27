@@ -71,6 +71,10 @@ public partial class MatchClientNode : Node3D
 
     public override void _Ready()
     {
+        // Idempotent: a direct scene launch skips the menu, so the scene itself has to make sure the
+        // persisted render settings (pitch detail tier) are loaded before the pitch is built.
+        GameSettings.Load();
+
         MatchSetupOptions setup = GameSession.PendingMatch;
         _humanPlayerId = setup.HumanPlayerId;
         _halfDurationSeconds = setup.HalfDurationSeconds;
@@ -557,7 +561,11 @@ public partial class MatchClientNode : Node3D
 
     private void BuildLightingAndPitchVisuals()
     {
-        _pitchSurface = PitchVisualBuilder.Build(this, _engine.Pitch, -1f, 1f);
+        // The Settings page's "Pitch detail" row resolves the surface tier; the tier also owns the
+        // anti-aliasing choice (High = SMAA, Medium = FXAA, Low = off) per docs/football-grass.md §5.7.
+        PitchQualitySettings quality = PitchQualitySettings.For(GameSettings.PitchDetail);
+        _pitchSurface = PitchVisualBuilder.Build(this, _engine.Pitch, quality, -1f, 1f);
+        GetViewport().ScreenSpaceAA = quality.ScreenSpaceAA;
     }
 
     private void BuildPlayerAndBallVisuals()

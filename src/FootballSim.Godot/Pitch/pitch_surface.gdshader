@@ -1,4 +1,4 @@
-﻿shader_type spatial;
+shader_type spatial;
 
 // Pitch ground surface â€” docs/football-grass.md Â§5.3.
 //
@@ -31,8 +31,8 @@ uniform float apron_fade_width = 6.0;
 // ---------------------------------------------------------------------------------------------
 // Palette (sRGB source colours; the source_color hint converts them to linear for shading)
 // ---------------------------------------------------------------------------------------------
-uniform vec3 turf_light : source_color = vec3(0.183, 0.377, 0.187);
-uniform vec3 turf_dark : source_color = vec3(0.169, 0.349, 0.173);
+uniform vec3 turf_light : source_color = vec3(0.182, 0.396, 0.153);
+uniform vec3 turf_dark : source_color = vec3(0.172, 0.374, 0.145);
 uniform vec3 paint_color : source_color = vec3(0.878, 0.878, 0.845);
 uniform vec3 soil_color : source_color = vec3(0.290, 0.278, 0.192);
 uniform vec3 apron_color : source_color = vec3(0.145, 0.263, 0.137);
@@ -56,8 +56,8 @@ uniform float sheen_strength = 1.0;
 uniform float detail_scale_near = 0.75; // metres per detail texture repeat (fine grain)
 uniform float detail_scale_mid = 3.8;   // metres per detail texture repeat (tuft scale)
 uniform vec2 detail_parity_offset = vec2(0.37, 0.61);
-uniform float band_contrast = 0.09;     // albedo swing between mown bands
-uniform float mow_tilt = 0.085;         // tangent normal tilt of the leaning blades (tan of ~5 deg)
+uniform float band_contrast = 0.08;     // albedo swing between mown bands
+uniform float mow_tilt = 0.048;         // tangent normal tilt of the leaning blades (tan of ~3 deg)
 uniform float roughness_base = 0.86;
 uniform float roughness_detail_boost = 0.09;
 uniform float wear_strength = 1.0;

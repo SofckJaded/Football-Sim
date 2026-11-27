@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Godot;
 using FootballSim.Core;
 
@@ -111,6 +111,7 @@ public static class PitchSurfaceBuilder
         var apronMaterial = new ShaderMaterial { Shader = apronShader };
         apronMaterial.SetShaderParameter("apron_color", ApronColor);
         apronMaterial.SetShaderParameter("apron_far_color", new Color(0.128f, 0.224f, 0.137f));
+        apronMaterial.SetShaderParameter("macro_noise", textures.MacroNoise);
         var apron = new MeshInstance3D
         {
             Name = "PitchApron",
@@ -156,8 +157,8 @@ public static class PitchSurfaceBuilder
         material.SetShaderParameter("run_off_width", RunOffWidth);
         material.SetShaderParameter("apron_fade_width", ApronFadeWidth);
 
-        material.SetShaderParameter("turf_light", new Color(0.183f, 0.377f, 0.187f));
-        material.SetShaderParameter("turf_dark", new Color(0.169f, 0.349f, 0.173f));
+        material.SetShaderParameter("turf_light", new Color(0.182f, 0.396f, 0.153f));
+        material.SetShaderParameter("turf_dark", new Color(0.172f, 0.374f, 0.145f));
         material.SetShaderParameter("paint_color", new Color(0.878f, 0.878f, 0.845f));
         material.SetShaderParameter("soil_color", new Color(0.290f, 0.278f, 0.192f));
         material.SetShaderParameter("apron_color", ApronColor);

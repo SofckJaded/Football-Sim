@@ -113,13 +113,24 @@ public sealed class ControlBindings
 }
 
 /// <summary>
-/// Persisted player preferences (window resolution, match length, last position, key bindings).
-/// Stored in <c>user://settings.cfg</c> so it survives restarts and scene changes.
+/// Persisted player preferences (window resolution, pitch detail, match length, last position,
+/// key bindings). Stored in <c>user://settings.cfg</c> so it survives restarts and scene changes.
 /// </summary>
 public static class GameSettings
 {
     private const string SettingsPath = "user://settings.cfg";
-    private const int SettingsVersion = 2;
+
+    /// <summary>Current settings-file schema version written to <c>meta/version</c>.</summary>
+    private const int SettingsVersion = 3;
+
+    /// <summary>
+    /// Settings-file version that introduced the contextual gamepad X (Cross/Tackle) defaults.
+    /// Kept separate from <see cref="SettingsVersion"/> so a later schema bump (such as the pitch
+    /// detail key in version 3) never re-runs that one-time migration and silently discards a
+    /// user's custom gamepad bindings.
+    /// </summary>
+    private const int GamepadDefaultsVersion = 2;
+
     public const int DefaultWindowWidth = 1280;
     public const int DefaultWindowHeight = 720;
 
@@ -136,6 +147,14 @@ public static class GameSettings
     public static ControlBindings Controls { get; } = new();
     public static GamepadBindings Gamepad { get; } = new();
     public static Vector2I Resolution { get; private set; } = new(DefaultWindowWidth, DefaultWindowHeight);
+
+    /// <summary>
+    /// Render setting: pitch surface detail tier (docs/football-grass.md §5.7). Defaults to
+    /// <see cref="PitchQuality.High"/>, the desktop discrete-GPU target; the match and Free Training
+    /// scenes read it when they build the pitch.
+    /// </summary>
+    public static PitchQuality PitchDetail { get; private set; } = PitchQuality.High;
+
     public static int HalfLengthMinutes { get; private set; } = MatchPresets.DefaultHalfLengthMinutes;
     public static int LastPositionIndex { get; private set; } = MatchPositions.IndexOf(MatchPositions.DefaultPlayerId);
 
@@ -179,6 +198,14 @@ public static class GameSettings
             MatchPositions.All.Count - 1);
         DebugMode = (bool)config.GetValue("match", "debug_mode", false);
 
+        // Optional since settings version 3; files written before that stay valid and get the
+        // desktop discrete-GPU default instead of a migration.
+        string storedDetail = (string)config.GetValue("pitch", "detail", PitchQuality.High.ToString());
+        PitchDetail = Enum.TryParse(storedDetail, ignoreCase: true, out PitchQuality detail) &&
+                      Enum.IsDefined(detail)
+            ? detail
+            : PitchQuality.High;
+
         foreach (ControlAction action in ControlBindings.AllActions)
         {
             string stored = (string)config.GetValue("controls", action.ToString(), string.Empty);
@@ -186,10 +213,10 @@ public static class GameSettings
                 Controls.Assign(action, key);
         }
 
-        // Version 2 introduced the contextual gamepad X (Cross/Tackle). Older files may contain
-        // accidental swaps or an unbound tackle, so start those users from the new gamepad defaults.
+        // The contextual gamepad X (Cross/Tackle) defaults arrived in file version 2. The gate uses
+        // its own constant so later schema bumps never re-trigger it and wipe custom bindings.
         int version = (int)config.GetValue("meta", "version", 1);
-        if (version < SettingsVersion)
+        if (version < GamepadDefaultsVersion)
         {
             Gamepad.ResetToDefaults();
             return;
@@ -208,6 +235,7 @@ public static class GameSettings
         config.SetValue("meta", "version", SettingsVersion);
         config.SetValue("display", "width", Resolution.X);
         config.SetValue("display", "height", Resolution.Y);
+        config.SetValue("pitch", "detail", PitchDetail.ToString());
         config.SetValue("match", "half_minutes", HalfLengthMinutes);
         config.SetValue("match", "position_index", LastPositionIndex);
         config.SetValue("match", "debug_mode", DebugMode);
@@ -225,6 +253,12 @@ public static class GameSettings
     {
         int index = Math.Clamp(resolutionIndex, 0, Resolutions.Count - 1);
         Resolution = Resolutions[index];
+    }
+
+    /// <summary>Sets the pitch detail tier; callers persist it with <see cref="Save"/>.</summary>
+    public static void SetPitchDetail(PitchQuality value)
+    {
+        PitchDetail = value;
     }
 
     public static void SetHalfLengthMinutes(int minutes)

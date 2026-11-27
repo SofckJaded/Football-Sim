@@ -42,13 +42,20 @@ public partial class FreeTrainingNode : Node3D
 
     public override void _Ready()
     {
+        // Idempotent: a direct scene launch skips the menu, so the scene itself has to make sure the
+        // persisted render settings (pitch detail tier) are loaded before the pitch is built.
+        GameSettings.Load();
+
         TrainingDrill drill = TrainingDrillRegistry.Find(GameSession.PendingDrillId)
                               ?? TrainingDrillRegistry.Default;
         _session = new TrainingSession(drill);
         _ballRadius = _session.BallRadius;
 
-        // Practice uses exactly the same pitch map as a match (both goals and all markings).
-        _pitchSurface = PitchVisualBuilder.Build(this, _session.Pitch, -1f, 1f);
+        // Practice uses exactly the same pitch map as a match (both goals and all markings), and the
+        // same Settings-driven surface tier (which also owns the anti-aliasing choice).
+        PitchQualitySettings quality = PitchQualitySettings.For(GameSettings.PitchDetail);
+        _pitchSurface = PitchVisualBuilder.Build(this, _session.Pitch, quality, -1f, 1f);
+        GetViewport().ScreenSpaceAA = quality.ScreenSpaceAA;
         BuildPlayerAndBallVisuals();
         BuildCamera();
 

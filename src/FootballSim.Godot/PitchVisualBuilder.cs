@@ -73,7 +73,7 @@ public static class PitchVisualBuilder
             BackgroundColor = new Color(0.10f, 0.12f, 0.16f),
             Sky = sky,
             AmbientLightSource = Godot.Environment.AmbientSource.Sky,
-            AmbientLightSkyContribution = 0.8f,
+            AmbientLightSkyContribution = 0.62f,
             AmbientLightEnergy = 0.85f,
             ReflectedLightSource = Godot.Environment.ReflectionSource.Sky
         };
@@ -83,7 +83,7 @@ public static class PitchVisualBuilder
         {
             Name = "Sun",
             RotationDegrees = new Vector3(SunElevationDegrees, SunYawDegrees, 0f),
-            LightEnergy = 1.25f,
+            LightEnergy = 1.30f,
             ShadowEnabled = true,
             // 65 m zoom puts the far touchline 95-125 m from the camera: the old 100 m default cut
             // far-side player shadows off. 150 m with two splits fixes that and halves the shadow
