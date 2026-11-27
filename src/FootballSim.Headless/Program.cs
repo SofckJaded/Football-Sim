@@ -101,6 +101,12 @@ public static class Program
             case "--ablations":
                 return RunAblationEvidence(args) ? 0 : 1;
 
+            case "--world-soak":
+                return WorldCommands.RunSoak(args);
+
+            case "--world-career-sim":
+                return WorldCommands.RunCareerSim(args);
+
             default:
                 Console.WriteLine("FootballSim.Headless CLI Runner");                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --physics-lab");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --match-5v5 [on|legacy]");
@@ -127,6 +133,8 @@ public static class Program
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --routines [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --styles [seeds] [halfSeconds]");
                 Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --ablations [seeds] [halfSeconds]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --world-soak [seasons=20] [seed=20261127]");
+                Console.WriteLine("  dotnet run --project src/FootballSim.Headless -- --world-career-sim [seasons=10] [authentic|custom] [elite|regional|local|street|multisport] [potential]");
                 Console.WriteLine();
                 Console.WriteLine("Every match mode exits non-zero when the match did not actually reach full time");
                 Console.WriteLine("(audit F23: hitting the tick cap is no longer reported as a completed match).");
