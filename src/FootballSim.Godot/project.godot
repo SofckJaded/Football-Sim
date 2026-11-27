@@ -13,12 +13,18 @@ config_version=5
 config/name="FootballSimulation"
 run/main_scene="res://MainMenu.tscn"
 config/features=PackedStringArray("4.7", "C#", "Forward Plus")
+; Frame pacing: the simulation advances on a fixed 60 Hz tick and renders between ticks, so a 120 FPS
+; cap gives every tick two evenly spaced frames at a steady cadence without burning a full uncapped
+; frame rate. Vsync is off because the reference display is 180 Hz - with vsync on the engine would be
+; paced to 180 Hz and the 120 cap would produce uneven 1/2-vblank spacing instead of a clean 120.
+run/max_fps=120
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
 window/stretch/mode="canvas_items"
+window/vsync/vsync_mode=0
 
 [dotnet]
 

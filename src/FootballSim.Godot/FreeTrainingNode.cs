@@ -169,6 +169,11 @@ public partial class FreeTrainingNode : Node3D
     {
         _camera = BroadcastCamera.Create(this, CameraZoomHeight);
         _camera.MakeCurrent();
+
+        // Practice has no HUD, but the same small always-on performance readout as the match.
+        var canvas = new CanvasLayer();
+        AddChild(canvas);
+        FpsCounter.Attach(canvas);
     }
 
     private void SyncVisuals(float alpha, float deltaSeconds, float simulatedDelta)

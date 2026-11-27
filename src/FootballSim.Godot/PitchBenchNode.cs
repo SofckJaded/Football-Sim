@@ -53,7 +53,8 @@ public partial class PitchBenchNode : Node3D
         Interactive,
         Bench,
         Capture,
-        PanCapture
+        PanCapture,
+        CloseUp
     }
 
     private enum AaMode
@@ -89,6 +90,7 @@ public partial class PitchBenchNode : Node3D
     private bool _benchRequested;
     private bool _captureRequested;
     private bool _panCaptureRequested;
+    private bool _closeUpRequested;
     private bool _hideGround;
     private float? _zoomOverride;
     private AaMode? _aaOverride;
@@ -148,6 +150,10 @@ public partial class PitchBenchNode : Node3D
 
     public override void _Ready()
     {
+        // Measurement authority: the shipped game caps frames (application/run/max_fps); the harness
+        // must see the uncapped GPU/CPU cost, so it removes the cap for its own process only.
+        Engine.MaxFps = 0;
+
         ParseArguments(OS.GetCmdlineUserArgs());
 
         if (_unknownArguments.Count > 0)
@@ -174,9 +180,11 @@ public partial class PitchBenchNode : Node3D
         ApplyStartupState();
 
         _mode = ResolveMode();
-        int requestedModes = (_benchRequested ? 1 : 0) + (_captureRequested ? 1 : 0) + (_panCaptureRequested ? 1 : 0);
+        int requestedModes = (_benchRequested ? 1 : 0) + (_captureRequested ? 1 : 0) +
+                             (_panCaptureRequested ? 1 : 0) + (_closeUpRequested ? 1 : 0);
         if (requestedModes > 1)
-            GD.Print("BENCH note=multiple_modes picked=" + ModeName(_mode) + " priority=pan-capture,capture,bench");
+            GD.Print("BENCH note=multiple_modes picked=" + ModeName(_mode) +
+                     " priority=closeup,pan-capture,capture,bench");
 
         switch (_mode)
         {
@@ -188,6 +196,9 @@ public partial class PitchBenchNode : Node3D
                 break;
             case HarnessMode.PanCapture:
                 RunPanCaptureMode();
+                break;
+            case HarnessMode.CloseUp:
+                RunCloseUpMode();
                 break;
             default:
                 BuildHud();
@@ -278,6 +289,9 @@ public partial class PitchBenchNode : Node3D
                     break;
                 case "--pan-capture":
                     _panCaptureRequested = true;
+                    break;
+                case "--closeup":
+                    _closeUpRequested = true;
                     break;
                 case "--out":
                     if (TryTakeValue(arguments, ref i, out string outDirectory))
@@ -376,6 +390,7 @@ public partial class PitchBenchNode : Node3D
 
     private HarnessMode ResolveMode()
     {
+        if (_closeUpRequested) return HarnessMode.CloseUp;
         if (_panCaptureRequested) return HarnessMode.PanCapture;
         if (_captureRequested) return HarnessMode.Capture;
         if (_benchRequested) return HarnessMode.Bench;
@@ -387,6 +402,7 @@ public partial class PitchBenchNode : Node3D
         HarnessMode.Bench => "bench",
         HarnessMode.Capture => "capture",
         HarnessMode.PanCapture => "pan-capture",
+        HarnessMode.CloseUp => "closeup",
         _ => "interactive"
     };
 
@@ -408,6 +424,9 @@ public partial class PitchBenchNode : Node3D
         GD.Print("                             CPU+GPU frame stats, repeated with the ground hidden (A/B).");
         GD.Print("                             Prints the BENCH summary block and quits.");
         GD.Print("  --capture --out <dir>      Save <prefix>-18m/34m/65m/65m-corner.png, then quit.");
+        GD.Print("  --closeup --out <dir>      Close-range review stills at 1 m eye height, 1 m grazing,");
+        GD.Print("                             1 m looking down and 0.35 m macro (near-field quality check;");
+        GD.Print("                             close-up framing is out of scope for the broadcast plan).");
         GD.Print("  --pan-capture --out <dir>  20 s continuous pan through the bench keyframes; saves 8");
         GD.Print("                             <prefix>-pan-00.png .. -pan-07.png for the shimmer A/B.");
         GD.Print("  --out <dir>                Capture output directory (default: user://pitch_bench).");
@@ -998,6 +1017,68 @@ public partial class PitchBenchNode : Node3D
     }
 
     private static float SmoothStep01(float value) => value * value * (3f - 2f * value);
+
+    // ------------------------------------------------------------------ close-up review
+
+    private void RunCloseUpMode()
+    {
+        _mode = HarnessMode.CloseUp;
+        string outDirectory = NormalizeOutputDirectory(_captureOutDir);
+        Error directoryError = DirAccess.MakeDirRecursiveAbsolute(outDirectory);
+        if (directoryError != Error.Ok)
+        {
+            GD.PrintErr("PitchBench: cannot create capture directory '" + outDirectory +
+                        "' (err=" + directoryError + ")");
+            GetTree().Quit(1);
+            return;
+        }
+
+        GD.Print("BENCH running mode=closeup out=" + outDirectory +
+                 " prefix=" + _capturePrefix +
+                 " shots=1m-eye,1m-grazing,1m-down,035m-macro" +
+                 " aa=" + AaName(_aaMode) +
+                 " tier=" + _tier.ToString(CultureInfo.InvariantCulture));
+
+        CaptureCloseUpsAsync(outDirectory);
+    }
+
+    /// <summary>
+    /// Near-field review stills. These deliberately break the broadcast framing: docs/football-grass.md
+    /// scopes close-up quality out of G0-G3 (no blade geometry, no shells - that is the design-only G5
+    /// tier), so these shots show exactly what the ground material does when a camera gets within a metre
+    /// of the turf, and are the evidence for "lower quality at close range is acceptable" in the plan.
+    /// </summary>
+    private async void CaptureCloseUpsAsync(string outDirectory)
+    {
+        int failures = 0;
+
+        // 1 m eye height, gently down the pitch: a standing camera at grass level.
+        PlaceCloseUpCamera(new Vector3(0f, 1.0f, 6.0f), new Vector3(0f, 0f, 2.5f), 55f);
+        if (!await SaveViewportPngAsync(outDirectory, _capturePrefix + "-close-1m-eye.png")) failures++;
+
+        // 1 m eye height, nearly horizontal: mowing bands and sheen at a grazing angle.
+        PlaceCloseUpCamera(new Vector3(0f, 1.0f, 16f), new Vector3(0f, 0.55f, 0f), 55f);
+        if (!await SaveViewportPngAsync(outDirectory, _capturePrefix + "-close-1m-grazing.png")) failures++;
+
+        // 1 m straight down-ish onto paint and turf: macro on the markings SDF and wear.
+        PlaceCloseUpCamera(new Vector3(0.6f, 1.0f, 0.4f), new Vector3(0f, 0f, 0f), 45f);
+        if (!await SaveViewportPngAsync(outDirectory, _capturePrefix + "-close-1m-down.png")) failures++;
+
+        // 35 cm above the turf: texel-level check of the packed detail normal/albedo.
+        PlaceCloseUpCamera(new Vector3(0.25f, 0.35f, 0.45f), new Vector3(0f, 0f, 0f), 45f);
+        if (!await SaveViewportPngAsync(outDirectory, _capturePrefix + "-close-035m-macro.png")) failures++;
+
+        GD.Print("BENCH done");
+        GetTree().Quit(failures == 0 ? 0 : 1);
+    }
+
+    private void PlaceCloseUpCamera(Vector3 eye, Vector3 target, float fov)
+    {
+        _camera.Fov = Mathf.Clamp(fov, 10f, 100f);
+        _camera.Position = eye;
+        _camera.LookAt(target, Vector3.Up);
+        _camera.MakeCurrent();
+    }
 
     private async Task<bool> SaveViewportPngAsync(string directory, string fileName)
     {

@@ -615,6 +615,9 @@ public partial class MatchClientNode : Node3D
         _hud = new MatchHud();
         canvas.AddChild(_hud);
 
+        // Small always-on performance readout; the top-right corner is free of HUD elements.
+        FpsCounter.Attach(canvas);
+
         // Kept (not deleted) for the developer export above; invisible in normal play and in debug mode.
         _legacyHudLabel = new Label
         {

@@ -176,14 +176,14 @@ void fragment() {
         float fw = max(fwidth(d), 1e-4);
         float half_w = line_width * 0.5;
         float eff_half = max(half_w, fw * 0.65);
-        float aa = max(fw, 0.008);
+        float aa = max(fw, 0.0015);
         float cov_line = (1.0 - smoothstep(eff_half - aa, eff_half + aa, d))
                        * clamp(half_w / eff_half, LINE_AA_FLOOR, 1.0);
         // Filled spots share the same transition so they read as discs, not hollow rings.
         vec2 q = abs(wp);
         float spot_d = min(length(q) - arc_metrics.w,
                            length(q - vec2(half_pitch.x - arc_metrics.y, 0.0)) - arc_metrics.w);
-        float spot_fw = max(fwidth(spot_d), 0.004);
+        float spot_fw = max(fwidth(spot_d), 0.0015);
         float cov_spot = 1.0 - smoothstep(-spot_fw * 1.5, spot_fw * 1.5, spot_d);
         paint_cov = max(cov_line, cov_spot);
     }
@@ -233,7 +233,7 @@ void fragment() {
     vec2 view_xz = normalize(CAMERA_POSITION_WORLD.xz - wp);
     vec2 band_lean = band_sign * mow_lean_axis;
     float sheen_align = dot(view_xz, band_lean);
-    vec2 slope = band_lean * (mow_tilt * sheen_strength) + detail_slope * (1.0 - paint * 0.65);
+    vec2 slope = band_lean * (mow_tilt * sheen_strength) + detail_slope * (1.0 - paint * 0.45);
     slope *= (1.0 - edge_t);
     vec3 world_normal = normalize(vec3(slope.x, 1.0, slope.y));
     NORMAL = normalize((VIEW_MATRIX * vec4(world_normal, 0.0)).xyz);
