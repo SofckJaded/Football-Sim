@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Godot;
+using FootballSim.World.Bridge;
 using FootballSim.World.Career;
 using FootballSim.World.Core;
 using FootballSim.World.Players;
@@ -28,11 +29,11 @@ public partial class CareerHubNode : Control
         Inbox
     }
 
-    /// <summary>
-    /// Simulated seconds per half for the interim headless live-match button. The 3D handoff arrives in W7;
-    /// until then "Play Match" runs the real engine headlessly with short halves so the UI stays responsive.
-    /// </summary>
-    private const float InterimLiveMatchHalfSeconds = 45f;
+    /// <summary>Simulated seconds per half when the career player's match is played in the 3D match scene.</summary>
+    private const float CareerMatchHalfSeconds = 270f;
+
+    /// <summary>Simulated seconds per half for a short live bench cameo.</summary>
+    private const float CameoHalfSeconds = 60f;
 
     private static readonly string[] TabLabels =
     {
@@ -205,7 +206,11 @@ public partial class CareerHubNode : Control
         CareerUi.Heading(_content, "OVERVIEW");
         CareerUi.Paragraph(_content, DescribeLastEvent(), 13, CareerUi.MutedColor);
 
-        if (!string.IsNullOrEmpty(_lastMatchSummary))
+        if (!string.IsNullOrEmpty(GameSession.LastCareerMatchSummary))
+        {
+            CareerUi.Paragraph(_content, $"Last match — {GameSession.LastCareerMatchSummary}", 13, CareerUi.GoodColor);
+        }
+        else if (!string.IsNullOrEmpty(_lastMatchSummary))
         {
             CareerUi.Paragraph(_content, _lastMatchSummary, 13, CareerUi.GoodColor);
         }
@@ -258,7 +263,7 @@ public partial class CareerHubNode : Control
         HBoxContainer actions = CareerUi.Row(_content, separation: 10);
         CareerUi.Button(actions, "Advance Week", AdvanceWeek, primary: true);
         CareerUi.Button(actions, "Sim Match", SimMatch, enabled: awaitingMatch && hasFixture);
-        CareerUi.Button(actions, "Play Match (live engine)", PlayMatchLive, enabled: awaitingMatch && hasFixture);
+        CareerUi.Button(actions, "Play Match", PlayMatchLive, enabled: awaitingMatch && hasFixture);
 
         if (_session.HumanPlayer.ClubId.IsValid == false)
         {
@@ -269,7 +274,9 @@ public partial class CareerHubNode : Control
             _content,
             hasFixture && !awaitingMatch
                 ? "Advance until the clock stops on your matchday, then simulate or play the match."
-                : string.Empty,
+                : awaitingMatch
+                    ? "Play Match runs the real 3D match; Sim Match resolves it with the world quick sim."
+                    : string.Empty,
             12, CareerUi.MutedColor);
     }
 
@@ -765,20 +772,127 @@ public partial class CareerHubNode : Control
 
     private void PlayMatchLive()
     {
+        if (_lastEvent?.Kind != CareerEventKind.HumanMatchday)
+        {
+            _notice = "Advance to your matchday first.";
+            Refresh();
+            return;
+        }
+
         try
         {
-            CareerMatchResult result = _session.SimulateHumanLiveMatch(InterimLiveMatchHalfSeconds);
-            _lastMatchSummary = $"Live engine (short halves): {result}";
-            _lastEvent = _session.AdvanceToNextEventOrMatchday();
-            _tab = Tab.Overview;
-            Autosave();
-            Refresh();
+            WorldMatchSetup setup = _session.PrepareHumanLiveMatchSetup(CareerMatchHalfSeconds);
+            if (setup.HumanEnginePlayerId is null)
+            {
+                ShowBenchPopup();
+                return;
+            }
+
+            GameSession.PendingCareerMatch = setup;
+            GetTree().ChangeSceneToFile(GameSession.MatchScene);
         }
         catch (InvalidOperationException exception)
         {
             _notice = exception.Message;
             Refresh();
         }
+    }
+
+    /// <summary>
+    /// W7 bench-cameo flow: the human starts on the bench. He can let the match be simulated from the bench
+    /// (the quick sim models the substitution) or play a short live cameo with himself forced into the XI.
+    /// A true mid-match substitution inside a running engine is the W9 backlog item.
+    /// </summary>
+    private void ShowBenchPopup()
+    {
+        Control overlay = CreateOverlay(out VBoxContainer box);
+        CareerUi.Heading(box, "YOU'RE ON THE BENCH", 19);
+        WorldFixture? fixture = _session.HumanFixturesThisWeek().Count > 0
+            ? _session.HumanFixturesThisWeek()[0]
+            : _session.NextFixture();
+        string match = fixture is null
+            ? "today's match"
+            : $"{ClubName(fixture.HomeClubId)} v {ClubName(fixture.AwayClubId)}";
+        CareerUi.Paragraph(
+            box,
+            $"The manager has left you out of the starting XI for {match}. You can watch the match be " +
+            "simulated from the bench (the substitute's appearance is still modelled), or take a short live " +
+            "cameo with yourself forced on.",
+            13, CareerUi.MutedColor);
+
+        CareerUi.Button(box, "Sim Match from the Bench", () =>
+        {
+            overlay.QueueFree();
+            _session.DiscardLiveMatch();
+            SimMatch();
+        }, primary: true);
+
+        CareerUi.Button(box, "Play Cameo (short live segment)", () =>
+        {
+            overlay.QueueFree();
+            _session.DiscardLiveMatch();
+            try
+            {
+                WorldMatchSetup cameo = _session.PrepareHumanLiveMatchSetup(
+                    CameoHalfSeconds, forceHumanStarter: true);
+                GameSession.PendingCareerMatch = cameo;
+                GetTree().ChangeSceneToFile(GameSession.MatchScene);
+            }
+            catch (InvalidOperationException exception)
+            {
+                _notice = exception.Message;
+                Refresh();
+            }
+        });
+
+        CareerUi.Button(box, "Back", () =>
+        {
+            overlay.QueueFree();
+            _session.DiscardLiveMatch();
+            Refresh();
+        });
+    }
+
+    /// <summary>Builds a dark centred overlay over the hub and returns the VBox content host.</summary>
+    private Control CreateOverlay(out VBoxContainer box)
+    {
+        var overlay = new Control { MouseFilter = MouseFilterEnum.Stop };
+        overlay.SetAnchorsPreset(LayoutPreset.FullRect);
+        AddChild(overlay);
+
+        var background = new ColorRect { Color = new Color(0f, 0f, 0f, 0.62f) };
+        background.SetAnchorsPreset(LayoutPreset.FullRect);
+        overlay.AddChild(background);
+
+        var center = new CenterContainer();
+        center.SetAnchorsPreset(LayoutPreset.FullRect);
+        overlay.AddChild(center);
+
+        var panel = new PanelContainer { CustomMinimumSize = new Vector2(620f, 0f) };
+        var style = new StyleBoxFlat
+        {
+            BgColor = new Color(0.055f, 0.105f, 0.07f, 0.98f),
+            BorderColor = new Color(0.18f, 0.43f, 0.26f),
+            BorderWidthLeft = 1,
+            BorderWidthTop = 1,
+            BorderWidthRight = 1,
+            BorderWidthBottom = 1
+        };
+        style.SetCornerRadiusAll(16);
+        panel.AddThemeStyleboxOverride("panel", style);
+        center.AddChild(panel);
+
+        var margin = new MarginContainer();
+        margin.AddThemeConstantOverride("margin_left", 24);
+        margin.AddThemeConstantOverride("margin_right", 24);
+        margin.AddThemeConstantOverride("margin_top", 16);
+        margin.AddThemeConstantOverride("margin_bottom", 16);
+        panel.AddChild(margin);
+
+        box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 8);
+        margin.AddChild(box);
+        return overlay;
     }
 
     private void AnswerOffer(int messageId, bool accept)

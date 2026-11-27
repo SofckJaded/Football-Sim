@@ -10,6 +10,9 @@ using FootballSim.Input;
 using FootballSim.Locomotion;
 using FootballSim.Physics;
 using FootballSim.Presentation;
+using FootballSim.World.Bridge;
+using FootballSim.World.Career;
+using FootballSim.World.Simulation;
 
 namespace FootballSim.GodotClient;
 
@@ -65,6 +68,40 @@ public partial class MatchClientNode : Node3D
     private float _halfDurationSeconds = MatchSetupOptions.DefaultHalfDurationSeconds;
     private float _ballRadius = BallGeometry.DefaultRadius;
 
+    // ---------------------------------------------------------------------------------------------
+    // W7 career match state. All of it is null/inert for a quick match, which keeps that path identical.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>The career match being played, or null for a quick match.</summary>
+    private WorldMatchSetup? _careerMatch;
+
+    /// <summary>The career that owns the match.</summary>
+    private CareerSession? _careerSession;
+
+    /// <summary>True once the engine reached full time and the result was committed to the career.</summary>
+    private bool _careerCommitted;
+
+    /// <summary>The career pause overlay (Esc), or null while not paused.</summary>
+    private Control? _careerPauseOverlay;
+
+    /// <summary>True while the pause overlay is up; the match clock does not advance.</summary>
+    private bool _careerPaused;
+
+    /// <summary>True while "sim to full time" is fast-forwarding the engine tick-by-tick.</summary>
+    private bool _careerFastForward;
+
+    /// <summary>The career player's condition before kick-off (for the post-match fatigue delta).</summary>
+    private float _careerConditionBefore = 1f;
+
+    /// <summary>The HUD canvas layer, so career overlays sit above the in-match HUD.</summary>
+    private CanvasLayer _hudCanvas = null!;
+
+    /// <summary>True once the career result has been committed (dev boot-check accessor).</summary>
+    public bool CareerMatchCommittedForBootCheck => _careerCommitted;
+
+    /// <summary>True when this scene is playing a career match (dev boot-check accessor).</summary>
+    public bool IsCareerMatchForBootCheck => _careerMatch is not null;
+
     // Audit F22: bounded, diagnosed fixed-step clock instead of an unbounded raw accumulator.
     private readonly FixedStepClock _clock = new();
     private float _mouseAimActiveSeconds;
@@ -75,31 +112,82 @@ public partial class MatchClientNode : Node3D
         // persisted render settings (pitch detail tier) are loaded before the pitch is built.
         GameSettings.Load();
 
-        MatchSetupOptions setup = GameSession.PendingMatch;
-        _humanPlayerId = setup.HumanPlayerId;
-        _halfDurationSeconds = setup.HalfDurationSeconds;
-        _debugMode = setup.DebugMode;
-
-        var config = new PreMatchConfig
+        // Dev-only scene smoke check (W7 gate): --boot-quick-match / --boot-career-match configure the scene
+        // before it builds. With no such user argument this is a no-op.
+        if (GameSession.ApplyDevBootArgs(out string devBootError))
         {
-            Seed = 20260818UL,
-            PlayersPerTeam = 11,
-            HalfDurationSeconds = setup.HalfDurationSeconds,
-            DesignatedHumanPlayerId = setup.HumanPlayerId,
-            HomeProfile = TeamTacticalProfile.PossessionControl,
-            AwayProfile = TeamTacticalProfile.DirectCounterattack
-        };
+            if (devBootError.Length > 0)
+            {
+                GD.PrintErr($"MATCH_BOOT: dev boot setup failed {devBootError}");
+                Callable.From(() => GetTree().Quit(1)).CallDeferred();
+                return;
+            }
+        }
 
-        _engine = new MatchSimulationEngine(config);
+        _careerMatch = GameSession.PendingCareerMatch;
+        if (_careerMatch is not null)
+        {
+            _careerSession = GameSession.ActiveCareer;
+            if (_careerSession is null)
+            {
+                // A career match without its career is a broken handoff; fall back to the entry screen.
+                GD.PushError("Career match started without an active career; returning to the career entry screen.");
+                Callable.From(() => GetTree().ChangeSceneToFile(GameSession.CareerEntryScene)).CallDeferred();
+                return;
+            }
+
+            _humanPlayerId = _careerMatch.HumanEnginePlayerId;
+            _halfDurationSeconds = _careerMatch.Config.HalfDurationSeconds;
+            _debugMode = false;
+            _engine = WorldMatchBridge.CreateEngine(_careerMatch);
+            _careerConditionBefore = _careerSession.HumanPlayer.Condition01;
+        }
+        else
+        {
+            MatchSetupOptions setup = GameSession.PendingMatch;
+            _humanPlayerId = setup.HumanPlayerId;
+            _halfDurationSeconds = setup.HalfDurationSeconds;
+            _debugMode = setup.DebugMode;
+
+            var config = new PreMatchConfig
+            {
+                Seed = 20260818UL,
+                PlayersPerTeam = 11,
+                HalfDurationSeconds = setup.HalfDurationSeconds,
+                DesignatedHumanPlayerId = setup.HumanPlayerId,
+                HomeProfile = TeamTacticalProfile.PossessionControl,
+                AwayProfile = TeamTacticalProfile.DirectCounterattack
+            };
+
+            _engine = new MatchSimulationEngine(config);
+        }
+
         // Audit F22: never index the squad by player id — a short-handed or spectated match has fewer
         // players than the default striker's shirt number.
-        _inspectedPlayerId = MatchPositions.ResolveInspectedPlayerId(setup.HumanPlayerId, _engine.Players.Count);
+        _inspectedPlayerId = MatchPositions.ResolveInspectedPlayerId(_humanPlayerId, _engine.Players.Count);
         _ballRadius = _engine.BallRadius;
 
         BuildLightingAndPitchVisuals();
         BuildPlayerAndBallVisuals();
         BuildCameraAndHud();
         UpdateDebugStatus();
+
+        if (GameSession.DevBootQuickMatch)
+        {
+            GD.Print("MATCH_BOOT: quick scene ready");
+            SceneTree tree = GetTree();
+            tree.CreateTimer(1.0).Timeout += () =>
+            {
+                GD.Print("MATCH_BOOT: quick scene done");
+                tree.Quit();
+            };
+        }
+        else if (_careerMatch is not null && GameSession.DevBootCareerMatch)
+        {
+            GD.Print(
+                $"MATCH_BOOT: career scene ready clubs={_careerMatch.HomeClubName} v " +
+                $"{_careerMatch.AwayClubName} humanEngineId={_careerMatch.HumanEnginePlayerId}");
+        }
     }
 
     public override void _Process(double delta)
@@ -127,6 +215,14 @@ public partial class MatchClientNode : Node3D
             ? MouseAim.TryGetPitchPoint(_camera)
             : null;
 
+        // W7: the career pause overlay freezes the match clock (the engine is simply not stepped). The
+        // quick-match path never sets either flag, so it behaves exactly as before.
+        if (_careerMatch is not null && _careerPaused)
+        {
+            UpdatePresentation();
+            return;
+        }
+
         _controls.Read(_engine.LockedHumanController, frameDelta, mouseAimPoint);
 
         double timeScale = _engine.IsSpectatorFastForwardActive ? 4.0 : 1.0;
@@ -137,9 +233,25 @@ public partial class MatchClientNode : Node3D
             timeScale = _debugPaused ? 0.0 : timeScale * _debugTimeScale;
         }
 
-        int steps = _clock.Advance(delta, (float)timeScale);
-        for (int i = 0; i < steps; i++)
-            _engine.StepTick();
+        int steps;
+        if (_careerMatch is not null && _careerFastForward)
+        {
+            // "Sim to full time": step the engine as fast as a frame allows (the same fixed ticks, just
+            // delivered in bigger batches) instead of waiting on the render clock.
+            steps = 0;
+            const int ticksPerFrame = 2_500;
+            for (int i = 0; i < ticksPerFrame && _engine.Rules.Phase != MatchPhase.FullTime; i++)
+            {
+                _engine.StepTick();
+                steps++;
+            }
+        }
+        else
+        {
+            steps = _clock.Advance(delta, (float)timeScale);
+            for (int i = 0; i < steps; i++)
+                _engine.StepTick();
+        }
 
         // The pose solver advances on simulated time, not wall clock: paused frames pass zero, slow-mo a
         // fraction and 4x spectator fast-forward several fixed ticks, so the pose is always a function of
@@ -147,6 +259,11 @@ public partial class MatchClientNode : Node3D
         float simulatedDelta = steps * SimConstants.FixedDeltaTime;
         SyncVisualTransforms(_clock.Alpha, frameDelta, simulatedDelta);
         UpdatePresentation();
+
+        if (_careerMatch is not null && !_careerCommitted && _engine.Rules.Phase == MatchPhase.FullTime)
+        {
+            CommitCareerMatch();
+        }
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -155,6 +272,15 @@ public partial class MatchClientNode : Node3D
         {
             if (keyEvent.Keycode == Key.Escape)
             {
+                // W7: a career match opens its own pause menu; Esc never drops the career state on the floor.
+                if (_careerMatch is not null)
+                {
+                    if (_careerCommitted) FinishCareerMatch();
+                    else ToggleCareerPause();
+                    GetViewport().SetInputAsHandled();
+                    return;
+                }
+
                 GetTree().ChangeSceneToFile(GameSession.MainMenuScene);
                 GetViewport().SetInputAsHandled();
                 return;
@@ -611,8 +737,15 @@ public partial class MatchClientNode : Node3D
 
         var canvas = new CanvasLayer();
         AddChild(canvas);
+        _hudCanvas = canvas;
 
         _hud = new MatchHud();
+        if (_careerMatch is not null)
+        {
+            // W7: the career match shows the real club names on the scoreboard and in the phase banners.
+            _hud.SetTeamNames(_careerMatch.HomeClubName, _careerMatch.AwayClubName);
+        }
+
         canvas.AddChild(_hud);
 
         // Small always-on performance readout; the top-right corner is free of HUD elements.
@@ -632,4 +765,267 @@ public partial class MatchClientNode : Node3D
         AddChild(_debugView);
         _debugView.SetEnabled(_debugMode);
     }
+
+    // ---------------------------------------------------------------------------------------------
+    // W7 career matchday: commit, post-match summary, pause menu and the return to the hub.
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Commits the finished career match to the career: the bridge turns the engine output into the living
+    /// world's report, the session queues it, and the post-match summary is shown. The queued result is only
+    /// applied to the world on <see cref="FinishCareerMatch"/>'s advance, exactly like a quick-simulated match.
+    /// </summary>
+    private void CommitCareerMatch()
+    {
+        if (_careerMatch is null || _careerSession is null || _careerCommitted) return;
+
+        _careerFastForward = false;
+        HideCareerPause();
+
+        try
+        {
+            CareerMatchResult result = _careerSession.CommitHumanLiveMatchEngine(_engine, _careerMatch);
+            _careerCommitted = true;
+            GameSession.LastCareerMatchSummary = result.ToString();
+
+            if (GameSession.DevBootCareerMatch)
+            {
+                // Dev smoke check: prove the commit applies to the career, then exit (no autosave, so no
+                // developer career slots are touched).
+                GD.Print(
+                    $"MATCH_BOOT: career committed summary={GameSession.LastCareerMatchSummary} " +
+                    $"minutes={result.HumanLine?.Minutes.ToString() ?? "-"} " +
+                    $"rating={result.HumanLine?.Rating.ToString("0.0") ?? "-"}");
+                try
+                {
+                    _careerSession.AdvanceToNextEventOrMatchday();
+                    GD.Print(
+                        $"MATCH_BOOT: career applied playerAppearances=" +
+                        $"{_careerSession.HumanPlayer.CurrentSeason.Appearances} " +
+                        $"canSave={_careerSession.CanSave}");
+                }
+                catch (InvalidOperationException exception)
+                {
+                    GD.PrintErr($"MATCH_BOOT: apply failed {exception.Message}");
+                    GetTree().Quit(1);
+                    return;
+                }
+
+                GD.Print("MATCH_BOOT: career done");
+                GetTree().Quit();
+                return;
+            }
+
+            ShowCareerPostMatch(result);
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or ArgumentException)
+        {
+            GD.PushError($"Career match commit failed: {exception.Message}");
+            _careerCommitted = true;
+            ShowCareerError(exception.Message);
+        }
+    }
+
+    /// <summary>Shows the career post-match summary overlay.</summary>
+    private void ShowCareerPostMatch(CareerMatchResult result)
+    {
+        VBoxContainer box = CreateCareerOverlay(out _);
+        CareerUi.Heading(box, "FULL TIME", 20);
+        CareerUi.Paragraph(
+            box,
+            $"{result.HomeClubName}  {result.HomeGoals} – {result.AwayGoals}  {result.AwayClubName}",
+            18, CareerUi.Accent);
+
+        string outcome = result.HumanWon ? "Won" : result.HumanDrew ? "Drew" : "Lost";
+        CareerUi.Paragraph(
+            box,
+            $"{(result.HumanIsHome ? result.HomeClubName : result.AwayClubName)} — {outcome}.",
+            14);
+
+        if (result.HumanLine is { } line)
+        {
+            CareerUi.InfoRow(box, "Match rating", $"{line.Rating:0.0} / 10");
+            CareerUi.InfoRow(box, "Minutes", line.Minutes.ToString());
+            CareerUi.InfoRow(box, "Goals / assists", $"{line.Goals} / {line.Assists}");
+            CareerUi.InfoRow(
+                box,
+                "Shots / passes",
+                $"{line.Shots} shots, {line.PassesCompleted}/{line.PassesAttempted} passes");
+            CareerUi.InfoRow(box, "Tackles / saves", $"{line.Tackles} / {line.Saves}");
+            CareerUi.InfoRow(
+                box,
+                "Stamina",
+                $"{_careerConditionBefore * 100f:0}% → {line.EndingStamina01 * 100f:0}% " +
+                $"(cost {line.ConditionCost01 * 100f:0}%)");
+            CareerUi.InfoRow(box, "Manager's reaction", ManagerReaction(result, line));
+        }
+        else
+        {
+            CareerUi.Paragraph(
+                box,
+                "You did not get on the pitch. The manager kept the same eleven to the end.",
+                13, CareerUi.WarnColor);
+        }
+
+        CareerUi.Spacer(box);
+        CareerUi.Button(box, "Continue to Career Hub", FinishCareerMatch, primary: true);
+    }
+
+    private static string ManagerReaction(CareerMatchResult result, PlayerMatchLine line)
+    {
+        string verdict = line.Rating >= 8.0f ? "outstanding"
+            : line.Rating >= 7.0f ? "very good"
+            : line.Rating >= 6.0f ? "solid"
+            : line.Rating >= 5.0f ? "quiet"
+            : "below par";
+        string resultWord = result.HumanWon ? "the win" : result.HumanDrew ? "the draw" : "the defeat";
+        return $"\"A {verdict} personal performance in {resultWord}.\"";
+    }
+
+    /// <summary>Shows a commit-failure overlay with a safe way back to the hub.</summary>
+    private void ShowCareerError(string message)
+    {
+        VBoxContainer box = CreateCareerOverlay(out _);
+        CareerUi.Heading(box, "MATCH NOT RECORDED", 18);
+        CareerUi.Paragraph(box, message, 13, CareerUi.WarnColor);
+        CareerUi.Paragraph(
+            box,
+            "The career is still on this matchday, so you can play or simulate the fixture again from the hub.",
+            13, CareerUi.MutedColor);
+        CareerUi.Button(box, "Back to Career Hub", ReturnToCareerHubEarly, primary: true);
+    }
+
+    /// <summary>Builds a dark, centred overlay panel and returns the VBox its content goes into.</summary>
+    private VBoxContainer CreateCareerOverlay(out Control root)
+    {
+        var overlay = new Control { MouseFilter = Control.MouseFilterEnum.Stop };
+        overlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        _hudCanvas.AddChild(overlay);
+
+        var background = new ColorRect { Color = new Color(0f, 0f, 0f, 0.62f) };
+        background.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        overlay.AddChild(background);
+
+        var center = new CenterContainer();
+        center.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        overlay.AddChild(center);
+
+        var panel = new PanelContainer { CustomMinimumSize = new Vector2(660f, 0f) };
+        var style = new StyleBoxFlat
+        {
+            BgColor = new Color(0.055f, 0.105f, 0.07f, 0.98f),
+            BorderColor = new Color(0.18f, 0.43f, 0.26f),
+            BorderWidthLeft = 1,
+            BorderWidthTop = 1,
+            BorderWidthRight = 1,
+            BorderWidthBottom = 1
+        };
+        style.SetCornerRadiusAll(16);
+        panel.AddThemeStyleboxOverride("panel", style);
+        center.AddChild(panel);
+
+        var margin = new MarginContainer();
+        margin.AddThemeConstantOverride("margin_left", 26);
+        margin.AddThemeConstantOverride("margin_right", 26);
+        margin.AddThemeConstantOverride("margin_top", 18);
+        margin.AddThemeConstantOverride("margin_bottom", 18);
+        panel.AddChild(margin);
+
+        var box = new VBoxContainer();
+        box.AddThemeConstantOverride("separation", 8);
+        margin.AddChild(box);
+
+        root = overlay;
+        return box;
+    }
+
+    /// <summary>Esc / pause: show or hide the career pause menu.</summary>
+    private void ToggleCareerPause()
+    {
+        if (_careerPauseOverlay is not null)
+        {
+            HideCareerPause();
+            return;
+        }
+
+        VBoxContainer box = CreateCareerOverlay(out Control root);
+        _careerPauseOverlay = root;
+        _careerPaused = true;
+
+        CareerUi.Heading(box, "PAUSED", 20);
+        CareerUi.Paragraph(
+            box,
+            $"{_careerMatch?.HomeClubName} v {_careerMatch?.AwayClubName}, " +
+            $"{_engine.Rules.MatchClockSeconds / 60f:0}' at {_engine.Rules.HomeScore}-{_engine.Rules.AwayScore}.",
+            14, CareerUi.MutedColor);
+        CareerUi.Button(box, "Resume", HideCareerPause, primary: true);
+        CareerUi.Button(box, "Sim to Full Time", () =>
+        {
+            HideCareerPause();
+            _careerFastForward = true;
+        });
+        CareerUi.Button(box, "Return to Career Hub", ReturnToCareerHubEarly);
+    }
+
+    private void HideCareerPause()
+    {
+        if (_careerPauseOverlay is null) return;
+
+        _careerPauseOverlay.QueueFree();
+        _careerPauseOverlay = null;
+        _careerPaused = false;
+    }
+
+    /// <summary>
+    /// Applies the queued career result (the same applier a quick-simmed fixture uses), autosaves and returns
+    /// to the hub. Called from the post-match overlay, or from Esc after full time.
+    /// </summary>
+    private void FinishCareerMatch()
+    {
+        if (_careerSession is not null)
+        {
+            if (!_careerCommitted)
+            {
+                // Leaving before full time: the match is abandoned, not half-applied.
+                _careerSession.DiscardLiveMatch();
+            }
+            else
+            {
+                try
+                {
+                    _careerSession.AdvanceToNextEventOrMatchday();
+                }
+                catch (InvalidOperationException exception)
+                {
+                    GD.PushError($"Career advance after the match failed: {exception.Message}");
+                }
+            }
+
+            CareerSaveFiles.TryAutosave(_careerSession, out _);
+        }
+
+        GameSession.PendingCareerMatch = null;
+        _careerMatch = null;
+        GetTree().ChangeSceneToFile(GameSession.CareerHubScene);
+    }
+
+    /// <summary>
+    /// Leaves a career match without recording a result. The career keeps its live match prepared, so it must
+    /// be discarded before the hub takes over, or the career would stay locked (CanSave would be false).
+    /// </summary>
+    private void ReturnToCareerHubEarly()
+    {
+        if (_careerSession is not null)
+        {
+            if (!_careerCommitted) _careerSession.DiscardLiveMatch();
+            CareerSaveFiles.TryAutosave(_careerSession, out _);
+        }
+
+        GameSession.PendingCareerMatch = null;
+        _careerMatch = null;
+        GetTree().ChangeSceneToFile(GameSession.CareerHubScene);
+    }
+
+    /// <summary>Dev-only hook: continues the career match as if the post-match Continue button was pressed.</summary>
+    public void BootCheckContinueToHub() => FinishCareerMatch();
 }

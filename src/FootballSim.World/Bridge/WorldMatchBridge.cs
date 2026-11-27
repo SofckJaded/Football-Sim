@@ -109,6 +109,11 @@ public static class WorldMatchBridge
     /// <param name="humanPlayerId">The career player to lock, or null for a fully AI match.</param>
     /// <param name="halfDurationSeconds">Simulated seconds per half (2700 = a real 45-minute half).</param>
     /// <param name="matchSeed">Optional explicit engine seed (default: derived from the world seed and fixture).</param>
+    /// <param name="forceHumanStarter">
+    /// W7 bench-cameo support: when true and the human is not in the chosen XI, he replaces the outfield
+    /// starter with the weakest fit for his engine shirt (keeper shirt 1 is never replaced unless the human is
+    /// a keeper). The lineups on the setup are the forced XI, so the report maps his cameo correctly.
+    /// </param>
     /// <returns>The prepared match.</returns>
     /// <exception cref="ArgumentNullException">Any reference argument is null.</exception>
     /// <exception cref="ArgumentException">
@@ -122,7 +127,8 @@ public static class WorldMatchBridge
         SelectedLineup awayLineup,
         PlayerId? humanPlayerId = null,
         float halfDurationSeconds = 2700f,
-        ulong? matchSeed = null)
+        ulong? matchSeed = null,
+        bool forceHumanStarter = false)
     {
         ArgumentNullException.ThrowIfNull(world);
         ArgumentNullException.ThrowIfNull(fixture);
@@ -148,6 +154,17 @@ public static class WorldMatchBridge
 
         PlayerId[] homeShirts = AssignShirts(world, homeLineup.StartingXI);
         PlayerId[] awayShirts = AssignShirts(world, awayLineup.StartingXI);
+
+        if (forceHumanStarter && humanPlayerId is { IsValid: true } forcedHuman)
+        {
+            bool forcedIsHomeSide = world.Players[forcedHuman].ClubId == fixture.HomeClubId;
+            PlayerId[] target = forcedIsHomeSide ? homeShirts : awayShirts;
+            if (!ContainsShirt(target, forcedHuman))
+            {
+                int replaceShirt = WeakestOutfieldShirt(world, target);
+                target[replaceShirt] = forcedHuman;
+            }
+        }
 
         var homeSpecs = new MatchPlayerSpec[PlayersPerTeam];
         var awaySpecs = new MatchPlayerSpec[PlayersPerTeam];
@@ -425,6 +442,41 @@ public static class WorldMatchBridge
         TacticalRole.Striker => WorldRole.Striker,
         _ => WorldRole.CentralMidfielder
     };
+
+    /// <summary>True when a world player is already assigned to one of the engine shirts.</summary>
+    private static bool ContainsShirt(IReadOnlyList<PlayerId> shirts, PlayerId playerId)
+    {
+        for (int index = 0; index < shirts.Count; index++)
+        {
+            if (shirts[index] == playerId) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The outfield shirt whose assigned player fits his engine role least well (keeper shirt 1 excluded), used
+    /// as the slot a forced bench cameo takes. Ties break towards the highest shirt number, so the replacement
+    /// is deterministic.
+    /// </summary>
+    private static int WeakestOutfieldShirt(WorldState world, IReadOnlyList<PlayerId> shirts)
+    {
+        int weakest = -1;
+        float weakestScore = float.PositiveInfinity;
+
+        for (int index = 1; index < shirts.Count; index++)
+        {
+            WorldPlayer player = world.Players[shirts[index]];
+            float score = IdentityEvaluator.Suitability(player, WorldRoleFor(FormationRoleOf(index + 1)));
+            if (score < weakestScore || (score == weakestScore && index > weakest))
+            {
+                weakest = index;
+                weakestScore = score;
+            }
+        }
+
+        return weakest < 0 ? shirts.Count - 1 : weakest;
+    }
 
     /// <summary>Builds one engine player spec from a world player.</summary>
     private static MatchPlayerSpec BuildSpec(WorldState world, PlayerId playerId, TacticalRole role)

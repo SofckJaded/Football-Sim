@@ -59,6 +59,28 @@ public partial class MatchHud : Control
     private bool _charging;
     private bool _highModifier;
 
+    /// <summary>Home side's scoreboard label (the real club name in a career match, "HOME" otherwise).</summary>
+    private string _homeLabel = "HOME";
+
+    /// <summary>Away side's scoreboard label (the real club name in a career match, "AWAY" otherwise).</summary>
+    private string _awayLabel = "AWAY";
+
+    private string HomeLabel => _homeLabel.ToUpperInvariant();
+
+    private string AwayLabel => _awayLabel.ToUpperInvariant();
+
+    /// <summary>
+    /// W7: replaces the generic HOME/AWAY scoreboard labels with the real club names (a career match). The
+    /// quick-match path never calls it, so its HUD is byte-identical to before.
+    /// </summary>
+    /// <param name="homeName">Home club display name.</param>
+    /// <param name="awayName">Away club display name.</param>
+    public void SetTeamNames(string homeName, string awayName)
+    {
+        _homeLabel = string.IsNullOrWhiteSpace(homeName) ? "HOME" : homeName;
+        _awayLabel = string.IsNullOrWhiteSpace(awayName) ? "AWAY" : awayName;
+    }
+
     public override void _Ready()
     {
         MouseFilter = MouseFilterEnum.Ignore;
@@ -169,10 +191,10 @@ public partial class MatchHud : Control
         DrawRect(new Rect2(left + dividerOffset, top + dividerInset, 1f, ScoreboardHeight - dividerInset * 2f), divider);
         DrawRect(new Rect2(right - dividerOffset, top + dividerInset, 1f, ScoreboardHeight - dividerInset * 2f), divider);
 
-        DrawText("HOME", new Vector2(left + 20f, top + 6f), 8, TextMuted);
+        DrawText(HomeLabel, new Vector2(left + 20f, top + 6f), 8, TextMuted);
         DrawText(_homeScore.ToString(), new Vector2(left + 20f, top + 15f), 20, TextPrimary);
 
-        DrawTextRight("AWAY", new Vector2(right - 20f, top + 6f), 8, TextMuted);
+        DrawTextRight(AwayLabel, new Vector2(right - 20f, top + 6f), 8, TextMuted);
         DrawTextRight(_awayScore.ToString(), new Vector2(right - 20f, top + 15f), 20, TextPrimary);
 
         float centreWidth = right - dividerOffset - (left + dividerOffset);
@@ -276,14 +298,14 @@ public partial class MatchHud : Control
         if (_phase == MatchPhase.FullTime)
         {
             DrawBanner(viewport, new Vector2(340f, 102f), "FULL TIME",
-                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", "ESC  ·  MAIN MENU", 24, 11);
+                $"{HomeLabel}  {_homeScore}  –  {_awayScore}  {AwayLabel}", "ESC  ·  MAIN MENU", 24, 11);
             return;
         }
 
         if (_phase == MatchPhase.HalfTime)
         {
             DrawBanner(viewport, new Vector2(248f, 62f), "HALF TIME",
-                $"HOME  {_homeScore}  –  {_awayScore}  AWAY", string.Empty, 18, 10);
+                $"{HomeLabel}  {_homeScore}  –  {_awayScore}  {AwayLabel}", string.Empty, 18, 10);
         }
     }
 

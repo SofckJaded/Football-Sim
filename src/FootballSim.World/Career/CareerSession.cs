@@ -615,9 +615,14 @@ public sealed class CareerSession
     /// frontends and tests.
     /// </summary>
     /// <param name="halfDurationSeconds">Simulated seconds per half (2700 = a real 45-minute half).</param>
+    /// <param name="forceHumanStarter">
+    /// W7 bench cameo: when true and the player is only on the bench, he replaces the weakest outfield starter
+    /// so the live cameo segment includes him (the report and the career then record his appearance).
+    /// </param>
     /// <returns>The prepared engine match.</returns>
     /// <exception cref="InvalidOperationException">There is no human fixture this week, or one is already prepared.</exception>
-    public Bridge.WorldMatchSetup PrepareHumanLiveMatchSetup(float halfDurationSeconds = 2700f)
+    public Bridge.WorldMatchSetup PrepareHumanLiveMatchSetup(
+        float halfDurationSeconds = 2700f, bool forceHumanStarter = false)
     {
         Bridge.WorldMatchSetup? existing = _liveSetup;
         if (existing is not null) return existing;
@@ -631,7 +636,9 @@ public sealed class CareerSession
             context.HomeLineup,
             context.AwayLineup,
             _humanPlayerId,
-            halfDurationSeconds);
+            halfDurationSeconds,
+            matchSeed: null,
+            forceHumanStarter: forceHumanStarter);
         return _liveSetup;
     }
 
