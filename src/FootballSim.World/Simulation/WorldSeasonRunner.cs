@@ -86,6 +86,38 @@ public sealed class SeasonSummary
 }
 
 /// <summary>
+/// One externally resolved fixture supplied to <see cref="WorldSeasonRunner"/> instead of being quick-simulated
+/// by it (W4 career: the human's own match). The payload is the same <see cref="QuickSimResult"/> the quick
+/// sim would have produced — a live-match bridge fills it from the real match engine — plus the lineups the
+/// match was played with, because the applier needs to know who started.
+/// </summary>
+/// <param name="FixtureId">Fixture the result belongs to.</param>
+/// <param name="Result">The full match result (score, events, per-player lines).</param>
+/// <param name="HomeLineup">The home side's selected XI and bench used for the match.</param>
+/// <param name="AwayLineup">The away side's selected XI and bench used for the match.</param>
+public sealed record ExternalMatchResult(
+    MatchId FixtureId,
+    QuickSimResult Result,
+    SelectedLineup HomeLineup,
+    SelectedLineup AwayLineup);
+
+/// <summary>
+/// Per-season bookkeeping the save layer must persist so a reloaded runner continues exactly where the
+/// in-memory one left off (W4 save/load). The weekly loads are not part of it: they are rebuilt every week.
+/// </summary>
+/// <param name="FocusSeason">Season whose training focuses have already been stamped.</param>
+/// <param name="TrainingFocusSetThisSeason">Player ids already given an automatic focus this season.</param>
+/// <param name="InjuriesThisSeason">Injury counter the season summary reports.</param>
+/// <param name="YellowCardsThisSeason">Yellow-card counter the season summary reports.</param>
+/// <param name="RedCardsThisSeason">Red-card counter the season summary reports.</param>
+public sealed record WorldSeasonRunnerState(
+    int FocusSeason,
+    IReadOnlyList<PlayerId> TrainingFocusSetThisSeason,
+    int InjuriesThisSeason,
+    int YellowCardsThisSeason,
+    int RedCardsThisSeason);
+
+/// <summary>
 /// Plays a generated world through a whole season: the weekly loop (fixtures, cup round, growth tick), the
 /// end-of-season promotion/relegation play-offs and the rollover to the off-season. It is the W2 "full
 /// season" gate: six divisions of 18 clubs x 34 matchdays, the 108-club domestic cup, realistic scorelines
@@ -133,6 +165,12 @@ public sealed class WorldSeasonRunner
     private readonly HashSet<PlayerId> _trainingFocusSetThisSeason = new();
     private readonly Dictionary<PlayerId, WeeklyLoad> _weekLoads = new();
 
+    /// <summary>Fixtures a frontend has already resolved and the runner must apply instead of simulating.</summary>
+    private readonly Dictionary<MatchId, ExternalMatchResult> _externalResults = new();
+
+    /// <summary>Players whose training focus belongs to a frontend (the career human), never auto-derived.</summary>
+    private readonly HashSet<PlayerId> _manualTrainingFocus = new();
+
     private int _focusSeason = -1;
     private int _injuriesThisSeason;
     private int _yellowCardsThisSeason;
@@ -153,6 +191,116 @@ public sealed class WorldSeasonRunner
 
     /// <summary>The world this runner mutates.</summary>
     public WorldState World => _world;
+
+    /// <summary>
+    /// Registers an externally resolved result (the human's own match, W4/W5) for a fixture the runner would
+    /// otherwise quick-simulate. The runner records and applies it in its normal week slot, so the calendar,
+    /// growth tick, condition and manager feedback all see it exactly like a quick-simulated match.
+    /// </summary>
+    /// <param name="external">The resolved fixture and the lineups it was played with.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="external"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">The fixture is not part of this world, or is already played.</exception>
+    /// <exception cref="ArgumentException">
+    /// The result's clubs or the lineups do not belong to the fixture's two clubs.
+    /// </exception>
+    public void QueueExternalResult(ExternalMatchResult external)
+    {
+        ArgumentNullException.ThrowIfNull(external);
+
+        WorldFixture? fixture = FindFixture(external.FixtureId);
+        if (fixture is null)
+        {
+            throw new InvalidOperationException(
+                $"Fixture {external.FixtureId} is not part of the world's current season.");
+        }
+
+        if (fixture.IsPlayed)
+        {
+            throw new InvalidOperationException($"Fixture {external.FixtureId} already has a result.");
+        }
+
+        if (external.Result.HomeClubId != fixture.HomeClubId || external.Result.AwayClubId != fixture.AwayClubId)
+        {
+            throw new ArgumentException(
+                $"The external result names {external.Result.HomeClubId} v {external.Result.AwayClubId} but " +
+                $"fixture {fixture.Id} is {fixture.HomeClubId} v {fixture.AwayClubId}.",
+                nameof(external));
+        }
+
+        if (external.HomeLineup.ClubId != fixture.HomeClubId || external.AwayLineup.ClubId != fixture.AwayClubId)
+        {
+            throw new ArgumentException(
+                $"The lineups do not match fixture {fixture.Id}'s home and away clubs.", nameof(external));
+        }
+
+        _externalResults[fixture.Id] = external;
+    }
+
+    /// <summary>True when a fixture is waiting for its externally resolved result to be applied.</summary>
+    /// <param name="fixtureId">Fixture to test.</param>
+    public bool HasExternalResult(MatchId fixtureId) => _externalResults.ContainsKey(fixtureId);
+
+    /// <summary>Number of queued external results (a career matchday can queue a league and a cup fixture).</summary>
+    public int ExternalResultCount => _externalResults.Count;
+
+    /// <summary>Drops any queued external results (a discarded preview, or a save boundary).</summary>
+    public void ClearExternalResults() => _externalResults.Clear();
+
+    /// <summary>
+    /// Marks a player as manually focused: <see cref="AdvanceWeek"/> will never re-derive his
+    /// <see cref="WorldPlayer.TrainingFocus"/> from his emergent role. The career player's focus is the user's
+    /// choice, and this keeps a reloaded session from overriding it.
+    /// </summary>
+    /// <param name="playerId">Player whose focus the frontend owns.</param>
+    public void MarkTrainingFocusManual(PlayerId playerId)
+    {
+        if (!playerId.IsValid) throw new ArgumentOutOfRangeException(nameof(playerId));
+        _manualTrainingFocus.Add(playerId);
+    }
+
+    /// <summary>True when the player's training focus is frontend-owned.</summary>
+    /// <param name="playerId">Player to test.</param>
+    public bool IsTrainingFocusManual(PlayerId playerId) => _manualTrainingFocus.Contains(playerId);
+
+    /// <summary>Captures the runner's per-season bookkeeping for save/load (W4).</summary>
+    public WorldSeasonRunnerState CaptureState()
+    {
+        var focuses = new PlayerId[_trainingFocusSetThisSeason.Count];
+        _trainingFocusSetThisSeason.CopyTo(focuses);
+        Array.Sort(focuses, static (left, right) => left.Value.CompareTo(right.Value));
+
+        return new WorldSeasonRunnerState(
+            _focusSeason,
+            focuses,
+            _injuriesThisSeason,
+            _yellowCardsThisSeason,
+            _redCardsThisSeason);
+    }
+
+    /// <summary>
+    /// Restores the per-season bookkeeping captured by <see cref="CaptureState"/>. Call it on a runner that
+    /// has just been constructed over a loaded world, before the next <see cref="AdvanceWeek"/>.
+    /// </summary>
+    /// <param name="state">The captured state.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="state"/> is null.</exception>
+    public void RestoreState(WorldSeasonRunnerState state)
+    {
+        ArgumentNullException.ThrowIfNull(state);
+
+        _focusSeason = state.FocusSeason;
+        _injuriesThisSeason = state.InjuriesThisSeason;
+        _yellowCardsThisSeason = state.YellowCardsThisSeason;
+        _redCardsThisSeason = state.RedCardsThisSeason;
+
+        _trainingFocusSetThisSeason.Clear();
+        for (int index = 0; index < state.TrainingFocusSetThisSeason.Count; index++)
+        {
+            _trainingFocusSetThisSeason.Add(state.TrainingFocusSetThisSeason[index]);
+        }
+
+        _weekLoads.Clear();
+        _externalResults.Clear();
+    }
 
     /// <summary>
     /// Prepares one season: guards the calendar is at pre-season week 1, resets the per-season counters and
@@ -234,6 +382,15 @@ public sealed class WorldSeasonRunner
             {
                 if (fixture.Week != week || fixture.IsPlayed) continue;
 
+                if (TryTakeExternalResult(fixture, out ExternalMatchResult? external))
+                {
+                    fixture.RecordLeagueResult(external.Result.HomeGoals, external.Result.AwayGoals);
+                    ApplyResult(external.Result, external.HomeLineup, external.AwayLineup);
+                    leagueMatches++;
+                    goals += external.Result.HomeGoals + external.Result.AwayGoals;
+                    continue;
+                }
+
                 QuickSimResult result = SimulateFixture(fixture, out SelectedLineup homeLineup, out SelectedLineup awayLineup);
                 fixture.RecordLeagueResult(result.HomeGoals, result.AwayGoals);
                 ApplyResult(result, homeLineup, awayLineup);
@@ -250,6 +407,19 @@ public sealed class WorldSeasonRunner
             foreach (CupTie tie in currentRound.Ties)
             {
                 if (tie.Fixture.IsPlayed) continue;
+
+                if (TryTakeExternalResult(tie.Fixture, out ExternalMatchResult? external))
+                {
+                    tie.Fixture.RecordCupResult(
+                        external.Result.HomeGoals,
+                        external.Result.AwayGoals,
+                        external.Result.HomePenaltyGoals,
+                        external.Result.AwayPenaltyGoals);
+                    ApplyResult(external.Result, external.HomeLineup, external.AwayLineup);
+                    cupTies++;
+                    goals += external.Result.HomeGoals + external.Result.AwayGoals;
+                    continue;
+                }
 
                 QuickSimResult result = SimulateFixture(
                     tie.Fixture, out SelectedLineup homeLineup, out SelectedLineup awayLineup);
@@ -470,6 +640,8 @@ public sealed class WorldSeasonRunner
         bool seasonStart = _world.Week == WorldCalendar.PreSeasonFirstWeek;
         foreach (WorldPlayer player in _world.Players.All)
         {
+            // The human career's focus is the user's choice (W4): never re-derive it from a role.
+            if (_manualTrainingFocus.Contains(player.Id)) continue;
             if (!_trainingFocusSetThisSeason.Add(player.Id)) continue;
             if (!seasonStart && player.TrainingFocus != TrainingFocus.Balanced) continue;
 
@@ -544,6 +716,48 @@ public sealed class WorldSeasonRunner
 
         return WorldQuickSim.Simulate(
             _world, home, away, homeLineup, awayLineup, rng, knockout: fixture.IsCupTie);
+    }
+
+    /// <summary>
+    /// Takes a queued externally resolved result for this fixture, if any. The entry is consumed, so a
+    /// fixture is applied exactly once even if the loop is somehow revisited.
+    /// </summary>
+    private bool TryTakeExternalResult(WorldFixture fixture, out ExternalMatchResult external)
+    {
+        if (_externalResults.TryGetValue(fixture.Id, out ExternalMatchResult? queued) && queued is not null)
+        {
+            _externalResults.Remove(fixture.Id);
+            external = queued;
+            return true;
+        }
+
+        external = null!;
+        return false;
+    }
+
+    /// <summary>Looks a fixture of the current season up by match id (league fixtures first, then the cup).</summary>
+    private WorldFixture? FindFixture(MatchId fixtureId)
+    {
+        if (!fixtureId.IsValid) return null;
+
+        foreach (WorldLeague league in _world.Leagues)
+        {
+            IReadOnlyList<WorldFixture> fixtures = league.Fixtures;
+            for (int index = 0; index < fixtures.Count; index++)
+            {
+                if (fixtures[index].Id == fixtureId) return fixtures[index];
+            }
+        }
+
+        foreach (CupRoundBracket round in _world.Cup.Rounds)
+        {
+            foreach (CupTie tie in round.Ties)
+            {
+                if (tie.Fixture.Id == fixtureId) return tie.Fixture;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

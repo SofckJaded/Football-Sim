@@ -213,6 +213,20 @@ public sealed class WorldState
         return count;
     }
 
+    /// <summary>
+    /// Players whose club decisions belong to a frontend career (W4+) rather than to the AI market: their
+    /// moves are offered through the career inbox, so <see cref="Simulation.TransferMarket"/> must never
+    /// sign, buy or loan them behind the player's back. The set is empty for a pure AI world and is derived
+    /// career state (a save restores it by re-registering the human), so it is deliberately not part of the
+    /// world snapshot.
+    /// </summary>
+    public ISet<PlayerId> ExternallyManagedPlayers { get; } = new HashSet<PlayerId>();
+
+    /// <summary>True when a frontend career owns this player's transfer decisions.</summary>
+    /// <param name="playerId">Player to test.</param>
+    public bool IsExternallyManaged(PlayerId playerId) =>
+        playerId.IsValid && ExternallyManagedPlayers.Contains(playerId);
+
     /// <summary>Registers a league (called once, in tier order, by the world generator).</summary>
     public void AddLeague(WorldLeague league)
     {
@@ -252,13 +266,23 @@ public sealed class WorldState
         return result;
     }
 
-    /// <summary>Restores stream states from a save (streams not present keep their derived seed position).</summary>
+    /// <summary>
+    /// Restores stream states from a save (streams not present keep their derived seed position).
+    ///
+    /// <para><b>Seed-preserving.</b> Each stream is rebuilt from its documented derived seed
+    /// (<see cref="WorldRng.For"/>) and only then given the saved position. Rebuilding from the saved position
+    /// alone would make <see cref="WorldRng.Seed"/> equal the position and therefore change every future
+    /// <see cref="WorldRng.Fork(ulong)"/> — the world would diverge the first time a forked stream was used
+    /// (youth intakes, quick-sim fixtures) instead of resuming identically.</para>
+    /// </summary>
     public void RestoreRngStates(IReadOnlyDictionary<WorldRandomStream, ulong> states)
     {
         ArgumentNullException.ThrowIfNull(states);
         foreach (KeyValuePair<WorldRandomStream, ulong> pair in states)
         {
-            _streams[pair.Key] = new WorldRng(pair.Value);
+            WorldRng stream = WorldRng.For(Seed, pair.Key);
+            stream.State = pair.Value;
+            _streams[pair.Key] = stream;
         }
     }
 
@@ -277,6 +301,35 @@ public sealed class WorldState
         _nextPlayerId = Math.Max(_nextPlayerId, lastPlayerId);
         _nextMatchId = Math.Max(_nextMatchId, lastMatchId);
         _nextManagerId = Math.Max(_nextManagerId, lastManagerId);
+    }
+
+    /// <summary>
+    /// The next id each registry would hand out (i.e. the last allocated id). A save captures these exactly:
+    /// an id can have been allocated for an entity that no longer exists in the current season (a discarded
+    /// cup round), so the registries' maxima are not enough to resume without ever reusing an id.
+    /// </summary>
+    /// <returns>(last player id, last match id, last manager id), each 0 for a never-used counter.</returns>
+    public (int LastPlayerId, int LastMatchId, int LastManagerId) CaptureIdCounters() =>
+        (_nextPlayerId, _nextMatchId, _nextManagerId);
+
+    /// <summary>
+    /// Restores the exact id counters captured by <see cref="CaptureIdCounters"/> (W4 save/load). Unlike
+    /// <see cref="RestoreIdCounters"/> this never keeps a higher in-memory value, because a freshly
+    /// reconstructed world has empty counters and the save's value is the whole truth.
+    /// </summary>
+    /// <param name="lastPlayerId">Last allocated player id (non-negative).</param>
+    /// <param name="lastMatchId">Last allocated match id (non-negative).</param>
+    /// <param name="lastManagerId">Last allocated manager id (non-negative).</param>
+    /// <exception cref="ArgumentOutOfRangeException">Any counter is negative.</exception>
+    public void RestoreIdCountersExact(int lastPlayerId, int lastMatchId, int lastManagerId)
+    {
+        if (lastPlayerId < 0) throw new ArgumentOutOfRangeException(nameof(lastPlayerId));
+        if (lastMatchId < 0) throw new ArgumentOutOfRangeException(nameof(lastMatchId));
+        if (lastManagerId < 0) throw new ArgumentOutOfRangeException(nameof(lastManagerId));
+
+        _nextPlayerId = lastPlayerId;
+        _nextMatchId = lastMatchId;
+        _nextManagerId = lastManagerId;
     }
 
     /// <summary>Every fixture of the current season (all six leagues plus every resolved cup round).</summary>

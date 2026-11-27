@@ -363,6 +363,44 @@ public sealed class InjuryState
         TotalWeeksOut = 0;
         PermanentDamageApplied = 0;
     }
+
+    /// <summary>
+    /// Restores a saved mid-injury state exactly (W4 save/load). <see cref="Begin"/> cannot express a
+    /// partially served injury because it always starts the countdown at the full duration, so the save
+    /// layer needs this one explicit restore path; every field is validated before any mutation.
+    /// </summary>
+    /// <param name="kind">Injury kind, or <see cref="InjuryKind.None"/> for a fit player.</param>
+    /// <param name="severity">Injury severity, or <see cref="InjurySeverity.None"/> for a fit player.</param>
+    /// <param name="weeksOutRemaining">Weeks still to miss (0 when fit).</param>
+    /// <param name="totalWeeksOut">Total weeks the injury was expected to last (0 when fit).</param>
+    /// <param name="permanentDamageApplied">Permanent-damage events already applied for this injury.</param>
+    /// <exception cref="ArgumentOutOfRangeException">The values do not describe a representable injury state.</exception>
+    public void Restore(
+        InjuryKind kind,
+        InjurySeverity severity,
+        int weeksOutRemaining,
+        int totalWeeksOut,
+        int permanentDamageApplied)
+    {
+        if (weeksOutRemaining < 0) throw new ArgumentOutOfRangeException(nameof(weeksOutRemaining));
+        if (totalWeeksOut < 0) throw new ArgumentOutOfRangeException(nameof(totalWeeksOut));
+        if (permanentDamageApplied < 0) throw new ArgumentOutOfRangeException(nameof(permanentDamageApplied));
+        if (weeksOutRemaining > totalWeeksOut)
+            throw new ArgumentOutOfRangeException(nameof(weeksOutRemaining), "A served injury cannot exceed its total.");
+
+        Clear();
+
+        if (weeksOutRemaining == 0) return;
+        if (kind == InjuryKind.None) throw new ArgumentOutOfRangeException(nameof(kind), "An injury needs a kind.");
+        if (severity == InjurySeverity.None)
+            throw new ArgumentOutOfRangeException(nameof(severity), "An injury needs a severity.");
+
+        Kind = kind;
+        Severity = severity;
+        WeeksOutRemaining = weeksOutRemaining;
+        TotalWeeksOut = totalWeeksOut;
+        PermanentDamageApplied = permanentDamageApplied;
+    }
 }
 
 /// <summary>
@@ -520,6 +558,36 @@ public sealed class PlayerTrendHistory
 
     /// <summary>Clears the history (new season reset, save rebuild).</summary>
     public void Clear() => _snapshots.Clear();
+
+    /// <summary>
+    /// Replaces the whole window from a saved history (W4 save/load). Each snapshot must hold exactly
+    /// <c>AttributeMetadata.Count</c> current values in roster order; the newest <see cref="WindowWeeks"/> + 1
+    /// snapshots are kept, mirroring <see cref="Record"/>.
+    /// </summary>
+    /// <param name="snapshots">Weekly snapshots, oldest first.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="snapshots"/> is null.</exception>
+    /// <exception cref="ArgumentException">A snapshot has the wrong length.</exception>
+    public void Restore(IReadOnlyList<float[]> snapshots)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+
+        _snapshots.Clear();
+        for (int index = 0; index < snapshots.Count; index++)
+        {
+            float[] snapshot = snapshots[index]
+                ?? throw new ArgumentException($"Trend snapshot {index} is null.", nameof(snapshots));
+            if (snapshot.Length != AttributeMetadata.Count)
+            {
+                throw new ArgumentException(
+                    $"Trend snapshot {index} has {snapshot.Length} values; expected {AttributeMetadata.Count}.",
+                    nameof(snapshots));
+            }
+
+            _snapshots.Add((float[])snapshot.Clone());
+        }
+
+        while (_snapshots.Count > WindowWeeks + 1) _snapshots.RemoveAt(0);
+    }
 }
 
 /// <summary>

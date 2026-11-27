@@ -507,6 +507,8 @@ public static class TransferMarket
             if (player.IsRetired || player.Contract.IsOnLoan) continue;
             if (player.ClubId.IsValid) continue;
             if (player.Age > MaximumFreeAgentAge) continue;
+            // A frontend-managed career player only moves through his own inbox offers (W4).
+            if (world.IsExternallyManaged(player.Id)) continue;
 
             RosterGroup area = shortfall ?? BestAreaOf(player);
             if (RosterAnalyser.AreaScore(player, area) < MinimumFreeAgentAreaScore) continue;
@@ -541,6 +543,8 @@ public static class TransferMarket
             if (!world.Players.TryGet(target.PlayerId, out WorldPlayer? player) || player is null) continue;
             if (!player.ClubId.IsValid || player.ClubId != target.ClubId) continue;
             if (player.Contract.IsOnLoan || player.IsRetired) continue;
+            // A frontend-managed career player only moves through his own inbox offers (W4).
+            if (world.IsExternallyManaged(player.Id)) continue;
             if (!world.Clubs.TryGet(target.ClubId, out WorldClub? seller) || seller is null) continue;
             if (seller.Id == club.Id) continue;
 
@@ -585,6 +589,8 @@ public static class TransferMarket
             if (player.IsRetired || player.Contract.IsOnLoan) continue;
             if (player.Age is < LoanMinimumAge or > LoanMaximumAge) continue;
             if (player.CurrentSeason.Appearances >= LoanMaximumAppearances) continue;
+            // A frontend-managed career player only moves through his own inbox offers (W4).
+            if (world.IsExternallyManaged(player.Id)) continue;
 
             RosterGroup playerArea = RosterAnalyser.GroupOf(player);
             ClubId receiverId = FindLoanReceiver(world, player, playerArea);

@@ -1,4 +1,4 @@
-﻿using FootballSim.Core;
+using FootballSim.Core;
 using FootballSim.World.Core;
 
 namespace FootballSim.World.Players;
@@ -131,6 +131,10 @@ public static class PlayerGenerator
     /// <param name="id">Identity assigned to the player (does not influence any generated value).</param>
     /// <param name="firstName">Given name (does not influence any generated value; may be empty).</param>
     /// <param name="lastName">Family name (does not influence any generated value; may be empty).</param>
+    /// <param name="preferredFootOverride">
+    /// Optional strong-foot override for the creation wizard (W4 career). The foot is still rolled first and
+    /// then replaced, so the draw order — and therefore every other generated value — is unchanged.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="age"/> is outside 15..38, or <paramref name="backstory"/> is not a defined value.
     /// </exception>
@@ -141,7 +145,8 @@ public static class PlayerGenerator
         bool preferGoalkeeper = false,
         PlayerId id = default,
         string firstName = "",
-        string lastName = "")
+        string lastName = "",
+        Footedness? preferredFootOverride = null)
     {
         ValidateAge(age);
         ValidateBackstory(backstory);
@@ -152,7 +157,8 @@ public static class PlayerGenerator
         float talentAnchor = RollAuthenticTalentAnchor(rng);
         LatentAptitudes aptitudes = RollLatentAptitudes(rng, talentAnchor, preferGoalkeeper);
 
-        return BuildPlayer(rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName);
+        return BuildPlayer(
+            rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName, preferredFootOverride);
     }
 
     /// <summary>
@@ -168,6 +174,10 @@ public static class PlayerGenerator
     /// <param name="id">Identity assigned to the player (does not influence any generated value).</param>
     /// <param name="firstName">Given name (may be empty).</param>
     /// <param name="lastName">Family name (may be empty).</param>
+    /// <param name="preferredFootOverride">
+    /// Optional strong-foot override for the creation wizard (W4 career). The foot is still rolled first and
+    /// then replaced, so the draw order — and therefore every other generated value — is unchanged.
+    /// </param>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="age"/> is outside 15..38, or <paramref name="backstory"/> is not a defined value.
     /// </exception>
@@ -179,7 +189,8 @@ public static class PlayerGenerator
         bool preferGoalkeeper = false,
         PlayerId id = default,
         string firstName = "",
-        string lastName = "")
+        string lastName = "",
+        Footedness? preferredFootOverride = null)
     {
         ValidateAge(age);
         ValidateBackstory(backstory);
@@ -189,7 +200,8 @@ public static class PlayerGenerator
         WorldRng rng = WorldRng.For(seed, WorldRandomStream.Talent);
         LatentAptitudes aptitudes = customAptitudes.Clamped();
 
-        return BuildPlayer(rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName);
+        return BuildPlayer(
+            rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName, preferredFootOverride);
     }
 
     /// <summary>
@@ -229,7 +241,8 @@ public static class PlayerGenerator
         // Picked from a separate identity stream, so the choice consumes no talent draws at all.
         BackstoryKind backstory = PickNpcBackstory(seed, tier);
 
-        return BuildPlayer(rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName);
+        return BuildPlayer(
+            rng, aptitudes, age, backstory, preferGoalkeeper, id, firstName, lastName, preferredFootOverride: null);
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -317,7 +330,8 @@ public static class PlayerGenerator
         bool preferGoalkeeper,
         PlayerId id,
         string firstName,
-        string lastName)
+        string lastName,
+        Footedness? preferredFootOverride)
     {
         // Steps 3-4: ceilings then plasticities, before any backstory value is read.
         PlayerAttributeSet attributes = RollAttributes(rng, aptitudes);
@@ -327,6 +341,9 @@ public static class PlayerGenerator
             rng.NextFloat() < LeftFootedProbability ? Footedness.Left : Footedness.Right;
         float weakFoot01 = rng.NextRange(WeakFootMinimum, WeakFootMaximum);
         int birthWeek = rng.NextInt(BirthWeekMinimumInclusive, BirthWeekMaximumExclusive);
+
+        // The creation wizard may force a foot; the roll above is kept so the stream never moves.
+        if (preferredFootOverride is { } forcedFoot) preferredFoot = forcedFoot;
 
         // Step 6: only now read the backstory. It never changes a ceiling or a plasticity.
         BackstoryProfile profile = BackstoryProfiles[(int)backstory];

@@ -71,6 +71,21 @@ public sealed class SeasonRolloverSummary
 }
 
 /// <summary>
+/// The ecosystem's save-state: the private counters a reloaded session must continue from. Everything else
+/// the ecosystem owns is derived from the world (transfer log, squads, contracts) or rebuilt on demand (the
+/// cached name-uniqueness set).
+/// </summary>
+/// <param name="Initialized">True once the opening contracts were created for the world.</param>
+/// <param name="TransferLogCursor">Transfer-log length at the previous rollover (season-move counting).</param>
+/// <param name="InjuriesRecoveredSinceRollover">Weekly medical recoveries accumulated since the last rollover.</param>
+/// <param name="EmergencySequence">Monotonic emergency-intake counter used for deterministic generation forks.</param>
+public readonly record struct WorldEcosystemState(
+    bool Initialized,
+    int TransferLogCursor,
+    int InjuriesRecoveredSinceRollover,
+    int EmergencySequence);
+
+/// <summary>
 /// The living world's season loop (plan stage W3): the weekly ecosystem hook the season runner calls inside
 /// its week, plus the full off-season rollover that closes a season and opens the next one.
 ///
@@ -209,6 +224,27 @@ public sealed class WorldEcosystem : IWorldWeekSystem
         }
 
         _initialized = true;
+    }
+
+    /// <summary>
+    /// Captures the ecosystem counters for save/load (W4). A reloaded session constructs a fresh ecosystem and
+    /// restores this state before its next week, so emergency-intake generation and rollover telemetry
+    /// continue identically.
+    /// </summary>
+    public WorldEcosystemState CaptureState() =>
+        new(_initialized, _transferLogCursor, _injuriesRecoveredSinceRollover, _emergencySequence);
+
+    /// <summary>
+    /// Restores the state captured by <see cref="CaptureState"/>. Call it before the next weekly tick.
+    /// </summary>
+    /// <param name="state">The captured state.</param>
+    public void RestoreState(WorldEcosystemState state)
+    {
+        _initialized = state.Initialized;
+        _transferLogCursor = state.TransferLogCursor;
+        _injuriesRecoveredSinceRollover = state.InjuriesRecoveredSinceRollover;
+        _emergencySequence = state.EmergencySequence;
+        _usedNames = null;
     }
 
     // ---------------------------------------------------------------------------------------------
