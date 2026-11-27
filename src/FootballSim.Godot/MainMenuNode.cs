@@ -233,12 +233,25 @@ public partial class MainMenuNode : Control
         BeginPage(Page.Main, "MAIN MENU");
 
         AddMenuButton("1.  Match", ShowMatchSetup);
-        AddMenuButton("2.  Practice", ShowPractice);
-        AddMenuButton("3.  Settings", ShowSettings);
-        AddMenuButton("4.  Exit", () => GetTree().Quit());
+        AddMenuButton("2.  Career", OpenCareer);
+        AddMenuButton("3.  Practice", ShowPractice);
+        AddMenuButton("4.  Settings", ShowSettings);
+        AddMenuButton("5.  Exit", () => GetTree().Quit());
+
+        if (GameSession.HasActiveCareer)
+        {
+            AddParagraph(
+                $"Career in progress: {GameSession.ActiveCareer!.HumanPlayer.DisplayName}, " +
+                $"{GameSession.ActiveCareer.HumanClub?.Name ?? "free agent"} — season " +
+                $"{GameSession.ActiveCareer.Season}.",
+                13, _mutedColor);
+        }
 
         FocusFirstButtonDeferred();
     }
+
+    /// <summary>Opens the career entry flow (continue / load / new career).</summary>
+    private void OpenCareer() => GetTree().ChangeSceneToFile(GameSession.CareerEntryScene);
 
     // ---------------------------------------------------------------------
     // Match setup
